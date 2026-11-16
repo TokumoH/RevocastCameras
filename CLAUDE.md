@@ -71,6 +71,12 @@ Modelo pronto: [`docs/verificacoes/_modelo-registro-de-correcao.md`](docs/verifi
 
 Todo diretório criado (em `docs/` ou em qualquer outro lugar do repositório) deve ter um `README.md` explicando o conteúdo do diretório. O README é criado no mesmo commit que cria o diretório e atualizado no mesmo commit que adiciona, remove, renomeia ou move arquivos dele. O README segue as mesmas regras de dupla verificação e de commit só após aprovação.
 
+Exceções (decididas pelo usuário em [VER-004](docs/verificacoes/2026-11-16-004-readme-raiz.md)):
+
+- **`README.md` da raiz**: é a apresentação do projeto no GitHub. Contém **só descrição e projeção**, fora da estrutura abaixo. O conteúdo da raiz é coberto pelos READMEs de cada diretório e pelo `CLAUDE.md`.
+- **`.github/` sem `README.md`**: o GitHub mostra o `.github/README.md` na página inicial no lugar do `README.md` da raiz (prioridade: `.github/` → raiz → `docs/`). A pasta é documentada em [`.github/workflows/README.md`](.github/workflows/README.md).
+- As duas exceções estão codificadas em `scripts/check-docs.mjs` (a raiz não é conferida; `.github` está em `SEM_README`).
+
 Estrutura do README (adaptada do formato de documentação):
 
 1. **cabeçalho** — tabela com: Id, título (nome do diretório), tipo, data, usuário responsável, status (ativo, em construção ou descontinuado), commits, arquivos.

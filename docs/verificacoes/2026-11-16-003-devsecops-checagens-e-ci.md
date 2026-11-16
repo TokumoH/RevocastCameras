@@ -72,7 +72,7 @@ Não. O projeto tinha 2 commits de protótipo (`ef0207a`, `d099629`) sem nenhuma
 | [`.githooks/README.md`](../../.githooks/README.md) | todas | Novo |
 | [`.github/workflows/check.yml`](../../.github/workflows/check.yml#L1-L39) | 1–39 | Novo: CI do PR |
 | [`.github/workflows/README.md`](../../.github/workflows/README.md) | todas | Novo |
-| [`.github/README.md`](../../.github/README.md) | todas | Novo |
+| `.github/README.md` | todas | Novo (removido no [VER-004](2026-11-16-004-readme-raiz.md); link desativado) |
 | [`package.json`](../../package.json#L9-L16) | 9–16 | Scripts `prepare`, `typecheck`, `check-*`, `check` |
 | [`CLAUDE.md`](../../CLAUDE.md#L17) | 17 | Situação DevSecOps atualizada (antes: "nenhuma dessas checagens existe ainda") |
 | [`docs/README.md`](../README.md#L76) | 76 | Risco atualizado: README agora é checado |
@@ -157,7 +157,7 @@ Nits corrigidos (não zeram a contagem): nenhum.
 - **`npm audit` precisa de internet:** offline, o push é bloqueado. Nesse caso, usar `--no-verify` com consciência e deixar a CI conferir.
 - **Exclusão de branch também roda `npm run check`:** passa se o estado local estiver ok; um pequeno custo de tempo aceito para manter o hook simples.
 - **Diretórios legados** (`public`, `src`, `src/assets`) isentos de README até uma sugestão futura.
-- **`.github/README.md` vira a página inicial do repositório no GitHub** enquanto não houver `README.md` na raiz. Sugere-se um README de projeto em sugestão futura.
+- **`.github/README.md` vira a página inicial do repositório no GitHub** enquanto não houver `README.md` na raiz. Sugere-se um README de projeto em sugestão futura. *(Correção no [VER-004](2026-11-16-004-readme-raiz.md): a afirmação "enquanto não houver `README.md` na raiz" estava errada; o `.github/README.md` tem prioridade mesmo com README na raiz.)*
 - **Varredura por regex:** não detecta segredos fora dos formatos conhecidos.
 - **Actions fixadas por SHA** não se atualizam sozinhas; revisar na VARREDURA (objetivo 14).
 - Este clone ainda não tem `core.hooksPath` ativado (nenhum `npm install` foi rodado após a mudança). Ativação sugerida antes do próximo push: `node scripts/install-hooks.mjs`.

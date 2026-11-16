@@ -17,9 +17,15 @@
 
 Workflows do GitHub Actions. Hoje há um só, `check.yml`, que roda no PR as mesmas checagens do hook pre-push. Assim fica fechada a brecha do `git push --no-verify`, e nada entra na `master` sem passar pelas regras do [CORE](../../CLAUDE.md).
 
+Este README também documenta a pasta-mãe **`.github/`**, que por exceção não tem README próprio ([VER-004](../../docs/verificacoes/2026-11-16-004-readme-raiz.md)): o GitHub mostra o `.github/README.md` na página inicial do repositório no lugar do [`README.md` da raiz](../../README.md). Conteúdo de `.github/`:
+
+| Item de `.github/` | O que contém |
+|---|---|
+| `workflows/` | Este diretório: workflows do GitHub Actions |
+
 ## Origem
 
-Sugestão S3, aprovada pelo usuário como implementação com CI: "atenção para não esgotar os créditos do github". Registro: [VER-003](../../docs/verificacoes/2026-11-16-003-devsecops-checagens-e-ci.md).
+Sugestão S3, aprovada pelo usuário como implementação com CI: "atenção para não esgotar os créditos do github". Registro: [VER-003](../../docs/verificacoes/2026-11-16-003-devsecops-checagens-e-ci.md). A documentação de `.github/` passou para cá no [VER-004](../../docs/verificacoes/2026-11-16-004-readme-raiz.md).
 
 ## Organização
 
@@ -74,6 +80,7 @@ Estimativa de consumo: cerca de 1 minuto faturado por execução (o GitHub arred
 
 ## Riscos
 
+- Não criar `.github/README.md`: ele substituiria o README da raiz na página inicial. O `check-docs` bloqueia se ele for criado.
 - A execução real no GitHub não foi testada. Depende do primeiro PR.
 - Para tornar o check obrigatório no merge é preciso configurar uma regra de proteção da `master` no GitHub (Settings → Branches), fora do código.
 - As actions fixadas por SHA não se atualizam sozinhas. Revisar as versões periodicamente (objetivo 14 da VARREDURA).

@@ -1,7 +1,8 @@
 // check-docs: coerência da documentação (regras do CLAUDE.md, "Organização da documentação").
 // 1. Todo link Markdown relativo aponta para arquivo existente; âncoras #Lx-Ly não passam do fim
 //    do arquivo; âncoras de título existem.
-// 2. Todo diretório rastreado tem README.md (exceto os anteriores à regra, em LEGADO).
+// 2. Todo diretório rastreado tem README.md (exceto os anteriores à regra, em LEGADO, e os de
+//    SEM_README, que NÃO podem ter README). A raiz não é conferida: seu README é só apresentação.
 // 3. A tabela "## Onde" e o campo "Arquivos" de cada README batem com o conteúdo real do diretório.
 // 4. Registros em docs/verificacoes/ seguem AAAA-MM-DD-NNN-slug.md, com NNN único.
 import fs from "node:fs";
@@ -11,6 +12,14 @@ import { trackedFiles, trackedDirs, reporter } from "./_lib.mjs";
 // Diretórios criados antes da regra "todo diretório tem README" (commits ef0207a/d099629).
 // Remover daqui quando ganharem README.
 const LEGADO = new Set(["public", "src", "src/assets"]);
+
+// Diretórios que, por decisão registrada, não têm README próprio (motivo ao lado).
+// Os subdiretórios continuam exigindo README.
+const SEM_README = new Map([
+  // GitHub prioriza .github/README.md sobre o README.md da raiz (VER-004);
+  // a pasta é documentada em .github/workflows/README.md.
+  [".github", "docs/verificacoes/2026-11-16-004-readme-raiz.md"],
+]);
 
 const r = reporter("check-docs");
 const files = trackedFiles();
@@ -46,6 +55,10 @@ for (const f of mds) {
 for (const d of trackedDirs(files)) {
   if (LEGADO.has(d) || [...LEGADO].some((l) => d.startsWith(l + "/"))) continue;
   const readme = `${d}/README.md`;
+  if (SEM_README.has(d)) {
+    if (fs.existsSync(readme)) r.erro(`${readme} existe, mas ${d}/ está em SEM_README (ver ${SEM_README.get(d)})`);
+    continue;
+  }
   if (!fs.existsSync(readme)) { r.erro(`${d}/ sem README.md`); continue; }
   const real = new Set(
     files.filter((f) => path.posix.dirname(f) === d).map((f) => path.posix.basename(f))

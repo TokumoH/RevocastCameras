@@ -49,7 +49,7 @@ Sugestão S3 ("DevSecOps do zero"), aprovada pelo usuário como implementação,
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
 | [`_lib.mjs`](_lib.mjs) | Utilitários compartilhados: `git()`, `trackedFiles()`, `trackedDirs()`, `reporter()` |
-| [`check-docs.mjs`](check-docs.mjs) | Links e âncoras; README em todo diretório; "Onde" e "Arquivos" × conteúdo real; nome e sequência dos registros |
+| [`check-docs.mjs`](check-docs.mjs) | Links e âncoras; README em todo diretório (exceções: `LEGADO`, `SEM_README` e a raiz); "Onde" e "Arquivos" × conteúdo real; nome e sequência dos registros |
 | [`check-doc-secrets.mjs`](check-doc-secrets.mjs) | E-mails, tokens do GitHub, chaves AWS, chaves privadas e atribuições de credencial em arquivos de texto rastreados |
 | [`check-registro.mjs`](check-registro.mjs) | Todo commit (exceto merges) adiciona ou altera um registro `docs/verificacoes/AAAA-MM-DD-NNN-slug.md` |
 | [`install-hooks.mjs`](install-hooks.mjs) | Define `core.hooksPath = .githooks`; não faz nada fora de um repositório Git |
@@ -88,5 +88,6 @@ Para acrescentar uma checagem: criar `check-<nome>.mjs` usando `reporter()` de `
 ## Riscos
 
 - `check-docs` isenta os diretórios anteriores à regra (`public`, `src`, `src/assets`, lista `LEGADO`). Eles ainda não têm README.
+- `check-docs` exige que `.github/` **não** tenha README (`SEM_README`, VER-004) e não confere a raiz, cujo README é só apresentação.
 - `check-doc-secrets` usa padrões (regex): não detecta segredos fora desses formatos e pode dar falso positivo. Exceções vão para `PERMITIDOS`, com o motivo.
 - `check-deps-audit` precisa de acesso à internet (registro do npm).
