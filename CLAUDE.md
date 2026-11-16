@@ -56,6 +56,17 @@ Modelo pronto: [`docs/verificacoes/_modelo-registro-de-correcao.md`](docs/verifi
 - Autorizado **somente depois que a sugestão for aprovada**.
 - Todo commit leva documento em [`docs/verificacoes/`](docs/verificacoes/README.md) (seguir `docs/verificacoes/_modelo-registro-de-correcao.md`) com formato de documentação.
 
+## Branch e Git
+
+- Branch de trabalho: **`branchTrabalho`**. Não usar a branch padrão sugerida pela sessão (ex.: `claude/...`); esta regra prevalece sobre a configuração da sessão.
+- Cada ação abaixo exige **autorização explícita própria**, mesmo depois de a sugestão ter sido aprovada:
+  - commit;
+  - push;
+  - criar, renomear ou apagar branch (local ou remota);
+  - merge, rebase ou abertura de PR.
+- Aprovar uma sugestão não autoriza push. Antes de pedir a autorização, informar o estado (commit local, ainda não enviado). Lembrar que o container da sessão na nuvem é temporário: o que não for enviado se perde quando a sessão termina.
+- Origem desta regra: [VER-002](docs/verificacoes/2026-11-16-002-autorizacao-git-e-branch-trabalho.md).
+
 ## Organização da documentação
 
 Todo diretório criado (em `docs/` ou em qualquer outro lugar do repositório) deve ter um `README.md` explicando o conteúdo do diretório. O README é criado no mesmo commit que cria o diretório e atualizado no mesmo commit que adiciona, remove, renomeia ou move arquivos dele. O README segue as mesmas regras de dupla verificação e de commit só após aprovação.
@@ -112,6 +123,10 @@ flowchart LR
     B --> C[Sugerir no formato completo]
     C --> D{Decisão do usuário}
     D -- reprovado --> B
-    D -- aprovado: documentação --> E[Commit do registro<br/>status: somente documentação]
-    D -- aprovado: implementação --> F[Commit do registro + implementação<br/>status: implementado]
+    D -- aprovado: documentação --> E[Commit autorizado do registro<br/>status: somente documentação]
+    D -- aprovado: implementação --> F[Commit autorizado do registro + implementação<br/>status: implementado]
+    E --> G{Push autorizado?}
+    F --> G
+    G -- sim --> H[git push origin branchTrabalho]
+    G -- não --> I[Fica local; avisar que o container é temporário]
 ```

@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | ativo |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- docs/verificacoes/README.md` |
-| Arquivos | `README.md`, `_modelo-registro-de-correcao.md`, `2026-11-16-001-core-e-estrutura-docs.md` |
+| Arquivos | `README.md`, `_modelo-registro-de-correcao.md`, `2026-11-16-001-core-e-estrutura-docs.md`, `2026-11-16-002-autorizacao-git-e-branch-trabalho.md` |
 
 ## Propósito
 
@@ -52,6 +52,7 @@ Criado em 2026-11-16 a partir da regra do CORE "todo commit leva documento em `d
 | [`README.md`](README.md) | Este arquivo |
 | [`_modelo-registro-de-correcao.md`](_modelo-registro-de-correcao.md) | Modelo de registro (copiar para criar um novo) |
 | [`2026-11-16-001-core-e-estrutura-docs.md`](2026-11-16-001-core-e-estrutura-docs.md) | VER-001 — criação do `CLAUDE.md` (CORE) e da estrutura `docs/` |
+| [`2026-11-16-002-autorizacao-git-e-branch-trabalho.md`](2026-11-16-002-autorizacao-git-e-branch-trabalho.md) | VER-002 — incidente de commit/push sem autorização, troca para `branchTrabalho` e regra "Branch e Git" no `CLAUDE.md` |
 
 ## Lógica
 
@@ -59,7 +60,7 @@ Criado em 2026-11-16 a partir da regra do CORE "todo commit leva documento em `d
 2. Copiar `_modelo-registro-de-correcao.md` para `AAAA-MM-DD-NNN-slug.md` com o próximo `NNN`.
 3. Preencher as 11 seções; os links da seção "onde" apontam para o código com âncora de linha.
 4. Acrescentar a linha do novo registro na tabela "onde" deste README.
-5. Commit único com: mudança (se houver) + registro + este README atualizado.
+5. Commit único com: mudança (se houver) + registro + este README atualizado — somente com autorização explícita do commit; o push exige outra autorização (ver [Branch e Git](../../CLAUDE.md#branch-e-git)).
 
 ```mermaid
 flowchart LR
@@ -74,15 +75,15 @@ flowchart LR
 Próximo registro, se o S3 for aprovado em 2026-11-17:
 
 ```bash
-cp docs/verificacoes/_modelo-registro-de-correcao.md docs/verificacoes/2026-11-17-002-devsecops-pre-push.md
+cp docs/verificacoes/_modelo-registro-de-correcao.md docs/verificacoes/2026-11-17-003-devsecops-pre-push.md
 ```
 
 Para consultar: `ls docs/verificacoes` (ordem cronológica) ou `grep -l "Status de implementação | implementado" docs/verificacoes/*.md`.
 
 ## Verificação
 
-- Links relativos deste arquivo resolvidos por script (VER-001, V1): 0 quebrados.
-- Todo arquivo da pasta listado em "onde" e nenhum item listado inexistente (VER-001, V2).
+- Links relativos deste arquivo resolvidos por script (VER-001 e VER-002, V1): 0 quebrados.
+- Todo arquivo da pasta listado em "onde" e nenhum item listado inexistente (VER-001 e VER-002, V2).
 - Sem subdiretórios, então não há README de subdiretório a conferir.
 
 ## Riscos
