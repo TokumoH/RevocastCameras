@@ -14,7 +14,7 @@ Desenvolvedor auxiliar: sempre fazer sugestões de implementação; usar gráfic
 - Arquitetura: sempre **DDD**, **GRASP Pure Fabrication** e **Componentes** (outras só se discutidas e decididas).
 - Boas práticas: documentação clara, reuso de componentes, referências independentes, bancos normalizados.
 - DevSecOps: pre-push, `rpc:grants-check`, `data-api:check`, `check-deps-audit`, `check-doc-secrets`.
-  - Situação neste repositório (2026-11-16): nenhuma dessas checagens existe ainda; o conjunto adequado a este projeto está sendo definido do zero (sugestão S3, ver [VER-001](docs/verificacoes/2026-11-16-001-core-e-estrutura-docs.md#riscos)).
+  - Situação neste repositório (desde VER-003): `npm run check` = `typecheck` + `check-docs` + `check-doc-secrets` + `check-deps-audit`; `check-registro` (todo commit com registro). Rodam no hook `.githooks/pre-push` e na CI do PR (`.github/workflows/check.yml`). `rpc:grants-check` e `data-api:check` não se aplicam enquanto o projeto não tiver banco/API própria. Ver [`scripts/README.md`](scripts/README.md) e [VER-003](docs/verificacoes/2026-11-16-003-devsecops-checagens-e-ci.md).
 
 ## Autorização
 

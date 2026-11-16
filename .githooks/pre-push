@@ -1,0 +1,7 @@
+#!/bin/sh
+# pre-push: roda as checagens do projeto antes de enviar. Ver .githooks/README.md.
+# Para pular em emergência: git push --no-verify (a CI do PR roda as mesmas checagens).
+set -e
+refs=$(cat)
+printf '%s\n' "$refs" | node scripts/check-registro.mjs --pre-push
+npm run --silent check

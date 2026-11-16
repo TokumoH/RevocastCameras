@@ -73,4 +73,4 @@ Para achar como uma mudança foi verificada: abrir [`verificacoes/README.md`](ve
 
 ## Riscos
 
-- Nenhuma checagem automática garante ainda que novos diretórios tragam README (pendência S3).
+- Desde o VER-003, `npm run check-docs` (hook pre-push e CI) acusa diretórios sem README e READMEs incoerentes; os diretórios anteriores à regra (`public`, `src`, `src/assets`) estão isentos até ganharem README.

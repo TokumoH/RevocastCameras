@@ -1,0 +1,39 @@
+# CI: as mesmas checagens do hook pre-push, rodadas no PR (fecha a brecha do `git push --no-verify`).
+# Economia de minutos do GitHub Actions (ver .github/workflows/README.md):
+#  - só roda em pull_request para master e manualmente (sem gatilho em push);
+#  - cancela a execução anterior do mesmo PR (concurrency);
+#  - timeout de 5 min; um único job em ubuntu (multiplicador 1x); cache do npm.
+name: check
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # check-registro precisa da base do PR
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - name: check-registro
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: node scripts/check-registro.mjs --range "origin/${BASE_REF}..HEAD"

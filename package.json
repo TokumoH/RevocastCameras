@@ -6,7 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prepare": "node scripts/install-hooks.mjs",
+    "typecheck": "tsc --noEmit",
+    "check-docs": "node scripts/check-docs.mjs",
+    "check-doc-secrets": "node scripts/check-doc-secrets.mjs",
+    "check-deps-audit": "npm audit --audit-level=high",
+    "check-registro": "node scripts/check-registro.mjs",
+    "check": "npm run typecheck && npm run check-docs && npm run check-doc-secrets && npm run check-deps-audit"
   },
   "devDependencies": {
     "typescript": "~7.0.2",

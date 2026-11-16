@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | ativo |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- docs/verificacoes/README.md` |
-| Arquivos | `README.md`, `_modelo-registro-de-correcao.md`, `2026-11-16-001-core-e-estrutura-docs.md`, `2026-11-16-002-autorizacao-git-e-branch-trabalho.md` |
+| Arquivos | `README.md`, `_modelo-registro-de-correcao.md`, `2026-11-16-001-core-e-estrutura-docs.md`, `2026-11-16-002-autorizacao-git-e-branch-trabalho.md`, `2026-11-16-003-devsecops-checagens-e-ci.md` |
 
 ## Propósito
 
@@ -53,6 +53,7 @@ Criado em 2026-11-16 a partir da regra do CORE "todo commit leva documento em `d
 | [`_modelo-registro-de-correcao.md`](_modelo-registro-de-correcao.md) | Modelo de registro (copiar para criar um novo) |
 | [`2026-11-16-001-core-e-estrutura-docs.md`](2026-11-16-001-core-e-estrutura-docs.md) | VER-001 — criação do `CLAUDE.md` (CORE) e da estrutura `docs/` |
 | [`2026-11-16-002-autorizacao-git-e-branch-trabalho.md`](2026-11-16-002-autorizacao-git-e-branch-trabalho.md) | VER-002 — incidente de commit/push sem autorização, troca para `branchTrabalho` e regra "Branch e Git" no `CLAUDE.md` |
+| [`2026-11-16-003-devsecops-checagens-e-ci.md`](2026-11-16-003-devsecops-checagens-e-ci.md) | VER-003 — checagens DevSecOps (`scripts/`), hook pre-push e CI econômica |
 
 ## Lógica
 
@@ -72,21 +73,21 @@ flowchart LR
 
 ## Exemplo
 
-Próximo registro, se o S3 for aprovado em 2026-11-17:
+Próximo registro (exemplo hipotético de 2026-11-17):
 
 ```bash
-cp docs/verificacoes/_modelo-registro-de-correcao.md docs/verificacoes/2026-11-17-003-devsecops-pre-push.md
+cp docs/verificacoes/_modelo-registro-de-correcao.md docs/verificacoes/2026-11-17-004-readme-raiz.md
 ```
 
 Para consultar: `ls docs/verificacoes` (ordem cronológica) ou `grep -l "Status de implementação | implementado" docs/verificacoes/*.md`.
 
 ## Verificação
 
-- Links relativos deste arquivo resolvidos por script (VER-001 e VER-002, V1): 0 quebrados.
-- Todo arquivo da pasta listado em "onde" e nenhum item listado inexistente (VER-001 e VER-002, V2).
+- Links relativos deste arquivo resolvidos por script (`npm run check-docs`, desde o VER-003): 0 erros.
+- Todo arquivo da pasta listado em "onde" e nenhum item listado inexistente (`npm run check-docs`).
 - Sem subdiretórios, então não há README de subdiretório a conferir.
 
 ## Riscos
 
 - A sequência `NNN` é manual; dois branches paralelos podem usar o mesmo número — conferir no merge.
-- Nenhuma checagem automática garante ainda que todo commit traga registro (pendência S3).
+- Desde o VER-003, `check-registro` (hook pre-push e CI) exige registro em todo commit, e `check-docs` confere padrão de nome e `NNN` único. O hook pode ser pulado com `--no-verify`; a CI do PR cobre essa brecha.
