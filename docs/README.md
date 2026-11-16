@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | ativo |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- docs/README.md` |
-| Arquivos | `README.md`, `verificacoes/` |
+| Arquivos | `README.md`, `desenho/`, `verificacoes/` |
 
 ## Propósito
 
@@ -45,6 +45,7 @@ Criado em 2026-11-16 para cumprir as regras do CORE "todo commit leva documento 
 | Arquivo ou subdiretório | O que contém |
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
+| [`desenho/`](desenho/README.md) | Documentos de desenho do sistema (DES-NNN): arquitetura, escopo e etapas |
 | [`verificacoes/`](verificacoes/README.md) | Registros de correção/decisão (um por commit aprovado) e o modelo de registro |
 
 ## Lógica
