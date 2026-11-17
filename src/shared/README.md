@@ -11,11 +11,11 @@
 | Usuário responsável | TokumoH |
 | Status | em construção |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- src/shared/README.md` |
-| Arquivos | `README.md`, `styles/`, `ui/` |
+| Arquivos | `README.md`, `infra/`, `styles/`, `ui/` |
 
 ## Propósito
 
-Código reaproveitado por mais de uma tela: estilos (`styles/`) e componentes visuais (`ui/`).
+Código compartilhado: estilos (`styles/`) e componentes visuais (`ui/`), já usados pelo app, e configuração e cliente Supabase (`infra/`), que as telas passam a usar na E1.
 
 ## Origem
 
@@ -23,9 +23,9 @@ Criado na Tarefa 1 da etapa E0 ([PLA-001](../../docs/planos/2026-11-17-e0-fundac
 
 ## Organização
 
+- `infra/`: configuração (variáveis de ambiente) e cliente Supabase.
 - `styles/`: tokens e base visual do RevoCast.
 - `ui/`: componentes visuais e o logo.
-- A Tarefa 2 acrescenta `infra/` (configuração e cliente Supabase).
 
 ## Por que esta organização
 
@@ -43,6 +43,7 @@ Nada em `shared/` conhece telas; as telas é que dependem dele (referências ind
 | Arquivo ou subdiretório | O que contém |
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
+| [`infra/`](infra/) | `lerConfiguracao` e o cliente Supabase por tipo de sessão |
 | [`styles/`](styles/) | Tokens (claro e escuro) e base visual |
 | [`ui/`](ui/) | `Cartao`, `Logo`, `TelaProvisoria` e `logo.png` |
 
@@ -53,6 +54,7 @@ flowchart LR
     T[app/telas] --> U[shared/ui]
     U --> L[logo.png]
     M[main.tsx] --> S[shared/styles]
+    I[shared/infra] --> E[supabase-js]
 ```
 
 ## Exemplo
@@ -66,4 +68,4 @@ Para mudar a cor de destaque: editar `--pink` em `styles/tokens.css`.
 
 ## Riscos
 
-- `infra/` ainda não existe.
+- Os domínios (`src/domains/*`) ainda não existem; `infra/` ainda não é usado por nenhuma tela (o cliente passa a ser usado na E1).

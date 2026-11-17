@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Arquivos de variáveis de ambiente do Vite (.env, .env.production etc.); só o modelo é versionado
+.env
+.env.*
+!.env.example
+
+# Pasta transitória criada pelo Vitest (resultados de execução)
+.vitest/
