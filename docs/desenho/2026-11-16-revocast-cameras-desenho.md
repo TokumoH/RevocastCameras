@@ -6,7 +6,7 @@
 | Título | RevocastCameras: celular como câmera do OBS e comandos por gesto e por toque |
 | Data | 2026-11-16 |
 | Usuário responsável | TokumoH |
-| Status | rascunho em verificação (ver VER-005) |
+| Status | **aprovado** em 2026-11-17 (ver VER-005 e VER-006) |
 | Base | Sessão de desenho de 2026-11-16 |
 
 ## 1. Intenção e porquê
@@ -55,10 +55,10 @@ Votação na tela, avançar pauta, câmera de convidado por QR, clipe automátic
 | Totalmente grátis e sem cartão | requisito do projeto | Vercel Hobby + Supabase Free + STUN público; TURN só de reserva sem cartão (Metered Open Relay) |
 | Pausa do Supabase Free após ~1 semana de pouca atividade é aceitável | requisito do projeto | "Acordar o projeto" entra no checklist do episódio; sem tarefa para manter ativo |
 | Câmera do celular exige HTTPS | navegadores | Hospedagem na Vercel (HTTPS) |
-| Celular de gravação pode ser **qualquer modelo** (Android ou iPhone), filmando com a **câmera traseira** | requisito do projeto | A tela fica de costas para as apresentadoras: a **confirmação do gesto aparece no `/controle` e no painel**, não no celular de gravação. Celulares fracos precisam do reconhecimento no computador (seção 4.2). iPhone: trava de tela (Wake Lock) só a partir do iOS 16.4. |
+| Celular de gravação pode ser **qualquer modelo** (Android ou iPhone), filmando com a **câmera traseira** | requisito do projeto | A tela fica de costas para as apresentadoras: a **confirmação do gesto aparece no `/controle` e no painel**, não no celular de gravação. Celulares fracos precisam do reconhecimento no computador (seção 4.2). iPhone: manter a tela ligada pelo navegador (Wake Lock) só a partir do iOS 16.4; em aparelhos sem Wake Lock (ex.: iPhones que param no iOS 15), a reserva é configurar o aparelho para não apagar a tela: iPhone com Modo de Pouca Energia desligado e bloqueio automático em "Nunca"; Android com economia de bateria desligada e "Permanecer ativo" (Opções do desenvolvedor) enquanto carrega (seção 10.4). |
 | Computador do OBS: Windows, com suporte também a macOS e Linux; versão do OBS a confirmar | requisito do projeto | Versão mínima **OBS 30.2** (Hybrid MP4 e marcadores) no checklist; o palco lê a versão do OBS pelo obs-websocket (`GetVersion` → `obsVersion`; `window.obsstudio.pluginVersion` é só a versão do plugin de navegador, usada como indicação) e o painel avisa se faltar recurso |
 | O celular só deixa uma página usar a câmera por vez | navegadores móveis | Captura, gestos e envio de vídeo na **mesma página** |
-| Com a tela bloqueada ou em segundo plano, o navegador corta a câmera | Chrome/Safari móveis | "Tela preta" com a tela ligada (Wake Lock), não tela desligada |
+| Com a tela bloqueada ou em segundo plano, o navegador corta a câmera | Chrome/Safari móveis | "Tela preta" com a tela ligada (Wake Lock ou, sem ele, a configuração do aparelho da seção 10.4), não tela desligada |
 | Plano grátis do Supabase: 1 GB de arquivos, 50 MB por arquivo | Supabase | Limite de envio no painel |
 | Arquitetura DDD + GRASP Pure Fabrication + Componentes; banco normalizado | `CLAUDE.md` | Seções 6 e 7 |
 | DevSecOps do CORE | `CLAUDE.md` | `rpc:grants-check` e `data-api:check` passam a existir (seção 13) |
@@ -94,7 +94,7 @@ Votação na tela, avançar pauta, câmera de convidado por QR, clipe automátic
 | Opção | Trade-off | Escolha |
 |---|---|---|
 | **Páginas do app como Fonte de navegador no OBS**, usando `window.obsstudio` | Sem senha, sem túnel, sem a pergunta de "rede local" do Chrome; cena (ADVANCED) e clipe (BASIC) | ✅ **escolhida** |
-| obs-websocket a partir do navegador | Precisa de senha e da permissão de rede local | só para o **marcador** (não existe em `window.obsstudio`) |
+| obs-websocket a partir do navegador | Precisa de senha e da permissão de rede local | só para o **marcador** (não existe em `window.obsstudio`) e a **leitura da versão do OBS** (`GetVersion`) |
 | Agente local em Node | Mais uma peça instalada no PC | ❌ |
 
 ## 5. Visão geral
@@ -120,9 +120,10 @@ flowchart TB
       FS[Fonte de navegador: /obs/palco<br/>executa comandos · avisos · sons]
       O[OBS Studio]
       FS -- window.obsstudio --> O
-      FS -. obs-websocket, só marcador .-> O
+      FS -. obs-websocket: marcador e versão .-> O
     end
     CAM == vídeo WebRTC, mesma rede Wi-Fi ==> FV
+    CAM <-->|sinalização WebRTC · gestos, padrão| RT
     RT -- comandos --> FS
     RT <-->|sinalização WebRTC| FV
     FV -. gestos, se reconhecer no computador .-> RT
@@ -139,7 +140,7 @@ flowchart TB
 | **Captura** | Câmera, reconhecimento de gesto, confirmação, envio de vídeo | `Gesto`, `GestoConfirmado` (após segurar ~1 s) | celular de gravação, ou `/obs/camera` quando o dispositivo está configurado para reconhecer no computador |
 | **Integração OBS** | Camada anticorrupção: traduz `Comando` em chamadas do OBS | `ExecutorOBS` | palco (Fonte de navegador) |
 
-Linguagem ubíqua: **episódio**, **episódio ativo** (o episódio `ao_vivo`; sem nenhum, o episódio do modo teste gravado em `estudio_estado`), **aviso**, **som**, **cena**, **clipe**, **marcador**, **gesto**, **comando**, **no ar**, **palco** (página do OBS que executa comandos), **câmera** (celular de gravação), **controle** (tela de celular dos membros).
+Linguagem ubíqua: **episódio**, **episódio ativo** (o episódio `ao_vivo`; sem nenhum, o episódio do modo teste gravado em `estudio_estado`, desde que esteja em `rascunho`), **aviso**, **som**, **cena**, **clipe**, **marcador**, **gesto**, **comando**, **no ar**, **palco** (página do OBS que executa comandos), **câmera** (celular de gravação), **controle** (tela de celular dos membros).
 
 ### 6.1 Componentes e Pure Fabrication
 
@@ -154,7 +155,7 @@ As regras de domínio não conhecem Supabase, WebRTC, MediaPipe nem OBS. Cada te
 | `ReconhecedorDeGestos` | MediaPipe Gesture Recognizer em Web Worker | Captura (no celular ou em `/obs/camera`) |
 | `ArmazenamentoDeMidia` | Supabase Storage | Preparação, palco |
 | `AdaptadorOBS` | `window.obsstudio` + obs-websocket | Integração OBS |
-| `TravaDeTela` | Wake Lock API | Captura |
+| `ManterTelaLigada` | Wake Lock API (avisa na tela quando a API não existe ou é negada) | Captura |
 
 Estrutura de pastas proposta (espelha o site do RevoCast, que já usa `src/domains` + `src/shared`):
 
@@ -231,8 +232,8 @@ Mapa de gestos **padrão** (editável no painel). Os gestos de som começam como
 |---|---|
 | Login | Supabase Auth com **Google**. Entra quem quiser, mas só ganha papel se o e-mail estiver em `membros_permitidos`. |
 | Papéis | `admin` (gerencia membros), `equipe` (prepara e opera), `apresentadora` (controle ao vivo); dispositivos pareados, sem login de pessoa: `camera`, `obs_palco` e `obs_camera`. |
-| Modelo de autorização | Os papéis do app (`admin`, `equipe`, `apresentadora`, `camera`, `obs_palco`, `obs_camera`) **não são papéis do Postgres**: toda sessão logada, inclusive qualquer conta Google fora da lista e qualquer sessão anônima (a *anon key* é pública), usa o papel `authenticated`. Por isso o papel do app é sempre conferido **dentro** do banco, por duas funções auxiliares `SECURITY DEFINER`: `papel_atual()` (junção do e-mail da sessão não anônima com `membros_permitidos`; nulo se não houver par) e `dispositivo_atual()` (dispositivo com `usuario_anonimo_id = auth.uid()` e `revogado_em` nulo). Elas são usadas nas políticas de RLS, em `realtime.messages`, em `storage.objects` e no começo de cada função. |
-| Banco | **RLS em todas as tabelas**, com políticas baseadas em `papel_atual()`/`dispositivo_atual()`. Tabelas acessadas **só por funções** (`codigos_pareamento`) ficam com RLS ativa, **sem nenhuma política** (nega tudo) e com `REVOKE ALL` de `anon`/`authenticated`; nenhuma outra tabela fica sem política. Toda função: `SECURITY DEFINER` com `search_path` fixo, `REVOKE EXECUTE` de `public` e `anon`, `GRANT EXECUTE` só a `authenticated`, e conferência interna do papel do app (nega no resto). Exceções, que não conferem papel: as próprias `papel_atual()` e `dispositivo_atual()`; o gatilho que cria o perfil em `membros` no primeiro login (quando ainda não há papel); e `parear_dispositivo(código)`, que aceita qualquer `authenticated` porque quem a chama ainda não é dispositivo, e só tem efeito com um código válido. |
+| Modelo de autorização | Os papéis do app (`admin`, `equipe`, `apresentadora`, `camera`, `obs_palco`, `obs_camera`) **não são papéis do Postgres**: toda sessão logada, inclusive qualquer conta Google fora da lista e qualquer sessão anônima (a *anon key* é pública), usa o papel `authenticated`. Por isso o papel do app é sempre conferido **dentro** do banco, por duas funções auxiliares `SECURITY DEFINER`: `papel_atual()` (junção do e-mail da sessão não anônima com `membros_permitidos`, **aceito só se a identidade vier do provedor Google com e-mail verificado**, por exemplo `auth.jwt()->'app_metadata'->>'provider' = 'google'` e `email_confirmed_at` não nulo; nulo nos demais casos) e `dispositivo_atual()` (dispositivo com `usuario_anonimo_id = auth.uid()` e `revogado_em` nulo). Elas são usadas nas políticas de RLS, em `realtime.messages`, em `storage.objects` e no começo de cada função. |
+| Banco | **RLS em todas as tabelas**, com políticas baseadas em `papel_atual()`/`dispositivo_atual()`. Tabelas acessadas **só por funções** (`codigos_pareamento`) ficam com RLS ativa, **sem nenhuma política** (nega tudo) e com `REVOKE ALL` de `anon`/`authenticated`; nenhuma outra tabela fica sem política. Toda função: `SECURITY DEFINER` com `search_path` fixo, `REVOKE EXECUTE` de `public` e `anon`, `GRANT EXECUTE` só a `authenticated`, e conferência interna do papel do app (nega no resto). Exceções, que não conferem papel: as próprias `papel_atual()` e `dispositivo_atual()`; o gatilho que cria o perfil em `membros` no primeiro login (quando ainda não há papel); e `parear_dispositivo(código)`, que aceita qualquer `authenticated` porque quem a chama ainda não é dispositivo, e só tem efeito com um código válido e com **sessão anônima** (`is_anonymous = true` no JWT). `dispositivo_atual()` também só vale para sessão anônima, então uma mesma sessão nunca é membro e dispositivo ao mesmo tempo. |
 | Tempo real | **Canais privados** (`private: true`): `estudio`, `episodio:<id>:controle` e `episodio:<id>:video`, com políticas em `realtime.messages` por papel e tipo de dispositivo (as políticas distinguem o canal, não o conteúdo da mensagem; por isso o estado no ar, que contém o texto dos avisos, fica só em `:controle`). Acesso público ao Realtime **desligado** nas configurações. |
 | Pareamento | `criar_codigo_pareamento(tipo, rotulo, dispositivo_id opcional, camera_id opcional)` (só `equipe`/`admin`; `camera_id` é obrigatório para `obs_camera`; com `dispositivo_id`, gera novo código para parear de novo um dispositivo existente) devolve um código aleatório de 128 bits; o banco guarda o hash. A câmera abre `/camera#<código>` (fragmento não vai a servidores), entra com **login anônimo do Supabase** e chama `parear_dispositivo(código)`, que vincula o usuário anônimo ao dispositivo, marca o código como usado e falha se o código estiver expirado ou usado. Se a sessão anônima que chama já estiver ligada a outro dispositivo, esse vínculo antigo é desfeito (o outro dispositivo fica sem sessão até ser pareado de novo). Parear de novo um dispositivo (com `dispositivo_id`) **limpa `revogado_em`** e troca o `usuario_anonimo_id`: a sessão anônima antiga perde acesso na hora no banco, e os canais abertos seguem a regra de Revogação. |
 | Sessão dos dispositivos | O login anônimo do Supabase guarda a sessão (com renovação automática) no armazenamento local do navegador, com **uma chave de armazenamento por tipo de dispositivo** (`storageKey` distinto no cliente Supabase de cada rota: `/camera`, `/obs/palco`, `/obs/camera`). Isso é obrigatório porque todas as Fontes de navegador do OBS dividem o mesmo perfil e o mesmo domínio: sem chaves separadas, o pareamento de uma Fonte substituiria a sessão da outra. **Recarregar** a página ou reiniciar o OBS **não exige parear de novo**; o `#código` só é usado na primeira vez. |
@@ -240,12 +241,12 @@ Mapa de gestos **padrão** (editável no painel). Os gestos de som começam como
 | Estado no ar | Membros publicam presença em `:controle`, e o `obs_palco` a lê; o palco publica de novo o estado no ar sempre que alguém entra no canal e a cada 30 s, para quem abre o `/controle` ou o painel no meio do programa. |
 | Todos os dispositivos | Leem `estudio` e **só publicam presença** nele (o painel mostra quem está conectado); seguem o **episódio ativo**. |
 | Dispositivo `camera` | Lê o próprio registro em `dispositivos` (`reconhecer_no`) ao conectar e de novo ao receber em `estudio` o aviso de mudança de configuração; envia e recebe em `:video` (sinalização WebRTC e gestos, quando reconhece no celular). Não acessa `:controle`, avisos, mídias nem membros. |
-| Dispositivo `obs_camera` | Lê o registro da câmera indicada em `camera_id` (`reconhecer_no`) ao conectar e ao receber o aviso de mudança de configuração; envia e recebe em `:video` (sinalização e gestos, quando o reconhecimento é no computador). Não acessa `:controle`, avisos nem mídias. |
+| Dispositivo `obs_camera` | Lê o próprio registro (`camera_id`) e o da câmera indicada (`reconhecer_no`) ao conectar e ao receber o aviso de mudança de configuração; envia e recebe em `:video` (sinalização e gestos, quando o reconhecimento é no computador). Não acessa `:controle`, avisos nem mídias. |
 | Dispositivo `obs_palco` | Recebe em `:video` (gestos) e em `:controle` (comandos e presença, com `extension = 'presence'`); publica o estado no ar em `:controle`; lê avisos, sons, cenas, `midias`, `mapa_gestos` e `episodios` (estado e `gestos_ligados`); **lê os arquivos do bucket privado de mídias** (política em `storage.objects`); insere em `registro_acoes`. Não escreve na preparação. |
-| Membros | Todo membro (qualquer papel) **lê** `episodios`, `avisos`, `sons`, `cenas`, `midias`, `mapa_gestos`, `estudio_estado` e `registro_acoes`, e altera os gestos por `definir_gestos_ligados`. `equipe`/`admin` leem `membros` (`id`, `nome`, para o registro de ações e a aba Membros); `admin` lê e escreve `membros_permitidos`. `admin`/`equipe`/`apresentadora` enviam e recebem em `:controle` (comandos e presença) e leem `estudio` (com presença); **só `equipe`/`admin` enviam broadcast em `estudio`** (mudança de episódio ativo, mudança de configuração de dispositivo e avisos de revogação), separado da presença pela coluna `extension` das políticas; só `equipe`/`admin` escrevem a preparação e `estudio_estado`, e leem e escrevem o bucket de mídias (leitura necessária para a prévia na Biblioteca e para sobrescrever arquivos), leem `dispositivos`, revogam por `revogar_dispositivo(id)` e escolhem onde reconhecer por `definir_reconhecimento(dispositivo_id, local)`. |
+| Membros | Todo membro (qualquer papel) **lê** `episodios`, `avisos`, `sons`, `cenas`, `midias`, `mapa_gestos`, `estudio_estado` e `registro_acoes`, e altera os gestos por `definir_gestos_ligados`. `equipe`/`admin` leem `membros` (`id`, `email`, `nome`: o registro de ações mostra o nome, e a aba Membros liga cada e-mail da lista ao `id` da sessão, necessário para o aviso de revogação de membro); `admin` lê e escreve `membros_permitidos`. `admin`/`equipe`/`apresentadora` enviam e recebem em `:controle` (comandos e presença) e leem `estudio` (com presença); **só `equipe`/`admin` enviam broadcast em `estudio`** (mudança de episódio ativo, mudança de configuração de dispositivo e avisos de revogação), separado da presença pela coluna `extension` das políticas; só `equipe`/`admin` escrevem a preparação e `estudio_estado`, e leem e escrevem o bucket de mídias (leitura necessária para a prévia na Biblioteca e para sobrescrever arquivos), leem `dispositivos`, revogam por `revogar_dispositivo(id)` e escolhem onde reconhecer por `definir_reconhecimento(dispositivo_id, local)`. |
 | Dispositivos do OBS | Um por Fonte de navegador, pareados **uma vez** por computador. Sem episódio ativo, ficam em espera. |
-| Revogação | No banco vale **na hora**: `revogar_dispositivo` marca `revogado_em` e **invalida os códigos de pareamento pendentes** daquele dispositivo (senão um código gerado antes desfaria a revogação); quando o e-mail sai da lista, as políticas passam a negar. No tempo real, a autorização de um canal é conferida ao entrar e fica válida durante a conexão (é refeita ao reconectar ou na renovação do token; validade do JWT: 10 min); o vídeo WebRTC já aberto também continua. Por isso o painel publica um **aviso de revogação** em `estudio`; o cliente revogado (`camera`, `obs_palco`, `obs_camera` ou membro) sai dos canais, encerra a sessão e fecha o `RTCPeerConnection`, e os demais aparelhos descartam mensagens desse remetente **e fecham o `RTCPeerConnection` com ele** (`obs_camera` ao revogar a `camera`, e o inverso), ignorando novas ofertas dele; assim o vídeo direto, que não passa pelo Supabase, também é cortado pelo lado que não foi revogado. Esse descarte **só vale para clientes que cooperam**: o Broadcast não autentica o remetente de cada mensagem (ele vem no conteúdo), então o corte garantido de um cliente revogado é a revalidação na renovação do token; por isso a validade do JWT é reduzida para **10 min** nas configurações do Supabase. Pelo mesmo motivo, `membro_id`/`dispositivo_id` em `registro_acoes` é a autoria **declarada pelo cliente**. |
-| Segredos | Só a chave pública (*anon key*) vai para o navegador. Nenhuma chave de serviço no app. Senha do obs-websocket fica no armazenamento local da Fonte de navegador do OBS. |
+| Revogação | No banco vale **na hora**: `revogar_dispositivo` marca `revogado_em` e **invalida os códigos de pareamento pendentes** daquele dispositivo (senão um código gerado antes desfaria a revogação); quando o e-mail sai da lista, as políticas passam a negar. No tempo real, a autorização de um canal é conferida ao entrar e fica válida durante a conexão (é refeita ao reconectar ou na renovação do token; validade do JWT: 10 min); o vídeo WebRTC já aberto também continua. Por isso o painel publica um **aviso de revogação** em `estudio`, que identifica a **sessão** revogada (`usuario_anonimo_id` do dispositivo, ou o membro), não só o `dispositivo_id`: toda mensagem dos canais leva o `auth.uid()` do remetente. Ao **parear de novo** um dispositivo (por exemplo, trocar o celular da câmera), o aviso cita só a sessão antiga, e o aparelho novo, com outra sessão e o mesmo `dispositivo_id`, continua funcionando; o cliente revogado (`camera`, `obs_palco`, `obs_camera` ou membro) sai dos canais, encerra a sessão e fecha o `RTCPeerConnection`, e os demais aparelhos descartam mensagens dessa sessão **e fecham o `RTCPeerConnection` com ele** (`obs_camera` ao revogar a `camera`, e o inverso), ignorando novas ofertas dele; assim o vídeo direto, que não passa pelo Supabase, também é cortado pelo lado que não foi revogado. Esse descarte **só vale para clientes que cooperam**: o Broadcast não autentica o remetente de cada mensagem (ele vem no conteúdo), então o corte garantido de um cliente revogado é a revalidação na renovação do token; por isso a validade do JWT é reduzida para **10 min** nas configurações do Supabase. Pelo mesmo motivo, `membro_id`/`dispositivo_id` em `registro_acoes` é a autoria **declarada pelo cliente**. |
+| Segredos | Só a chave pública (*publishable key*, chamada de *anon key* em projetos antigos) vai para o navegador. Nenhuma chave de serviço no app. Senha do obs-websocket fica no armazenamento local da Fonte de navegador do OBS. |
 | Vídeo | WebRTC criptografado de ponta a ponta (DTLS-SRTP). |
 | Entradas | Links de aviso aceitam só `https://`; textos exibidos sem HTML (sem `innerHTML`). |
 
@@ -295,7 +296,7 @@ sequenceDiagram
     C->>C: MediaPipe a ~10 quadros/s (Web Worker)
     C->>C: mesmo gesto por ≥ 1 s e fora do intervalo de 3 s
     C->>R: gesto {ILoveYou} no canal :video
-    P->>P: lê episodios.gestos_ligados no banco; desligado → ignora
+    P->>P: lê episodios.gestos_ligados no banco, desligado → ignora
     P->>P: consulta o mapa de gestos → ação "clipe"
     P->>R: "🤟 reconhecido → clipe" no canal :controle (imediato)
     P->>P: clipe já pendente? se sim, ignora o repetido
@@ -323,7 +324,8 @@ A câmera publica oferta/resposta/candidatos no canal `episodio:<id>:video` do e
 
 1. Acordar o projeto no Supabase, se estiver pausado.
 2. No OBS: Replay Buffer configurado (tempo sugerido: 60 s) e **iniciado**, gravação em **Hybrid MP4** e **iniciada** (o clipe exige o Replay Buffer ativo e o marcador exige a gravação em andamento), Fontes de navegador `/obs/palco` (permissão **ADVANCED**, áudio controlado pelo OBS) e `/obs/camera`, cada uma criada **uma única vez** e colocada nas demais cenas **por referência** (colar referência ou cena aninhada), nunca por cópia (duas cópias dividem a mesma sessão e executariam cada comando duas vezes); `/obs/palco` presente em **todas** as cenas, senão sons e avisos somem ao trocar de cena; "Desligar a fonte quando não estiver visível" desmarcado nas duas. Servidor **WebSocket do OBS** ativado (porta 4455, com senha) e a senha informada no palco pelo "Interagir" da Fonte (usada pelo marcador e por `GetVersion`).
-3. Conferir se a câmera e as Fontes do OBS aparecem como conectadas (parear só se for aparelho novo); usar o modo teste para enquadrar e testar sons, avisos e gestos; iniciar o ao vivo no painel.
+3. No celular de gravação, se a página `/camera` avisar que não consegue manter a tela ligada (Wake Lock ausente ou negado): no **iPhone**, desligar o Modo de Pouca Energia (ele força o bloqueio em 30 s) e pôr o bloqueio automático em "Nunca"; no **Android**, desligar a economia de bateria e ativar "Permanecer ativo" em Opções do desenvolvedor, com o celular no carregador (o tempo de tela máximo do Android não é "nunca"). A página mostra essas instruções no próprio aviso.
+4. Conferir se a câmera e as Fontes do OBS aparecem como conectadas (parear só se for aparelho novo); usar o modo teste para enquadrar e testar sons, avisos e gestos; iniciar o ao vivo no painel.
 
 ## 11. Tecnologias
 
@@ -332,7 +334,7 @@ A câmera publica oferta/resposta/candidatos no canal `episodio:<id>:video` do e
 | Interface | React 19 + Vite + TypeScript | Mesma base do site do RevoCast |
 | Dados, login, tempo real, arquivos | `@supabase/supabase-js` | |
 | Gestos | `@mediapipe/tasks-vision` (Gesture Recognizer) | Modelo e WASM servidos pelo próprio app (sem CDN externo em produção) |
-| OBS | `window.obsstudio` + `obs-websocket-js` (só marcador, `CreateRecordChapter`) | |
+| OBS | `window.obsstudio` + `obs-websocket-js` (marcador, `CreateRecordChapter`, e versão, `GetVersion`) | |
 | QR code | biblioteca pequena de geração de QR | a definir na implementação |
 | Testes | Vitest (unidade), testes SQL de RLS no Supabase, Playwright (fluxos) | |
 | Hospedagem | Vercel Hobby | |
@@ -342,8 +344,8 @@ A câmera publica oferta/resposta/candidatos no canal `episodio:<id>:video` do e
 
 Feitos antes da E0, fora do código (nenhum exige cartão):
 
-1. Projeto no **Supabase** (plano Free): anotar URL e *anon key*; ativar o provedor **Google** e o **login anônimo**; **desligar o provedor Email** (vem ligado por padrão); desligar o acesso público ao Realtime; reduzir a validade do JWT para 10 min.
-2. Credencial **OAuth do Google** (Google Cloud Console, sem faturamento) com o endereço de retorno do Supabase.
+1. Projeto no **Supabase** (plano Free): anotar URL e chave pública (*publishable key* ou *anon key*); ativar o provedor **Google** e o **login anônimo**; **desligar o provedor Email** (vem ligado por padrão), manter **"Confirm email" ligado** e a **vinculação manual de identidades desligada** (assim uma sessão anônima não consegue se apropriar do e-mail de um membro); desligar o acesso público ao Realtime; reduzir a validade do JWT para 10 min; em Auth → URL Configuration, definir a **Site URL** com o domínio da Vercel e incluir nas **Redirect URLs** `https://<domínio da Vercel>/**` e `http://localhost:<porta>/**` (com curinga, para o login voltar à página de origem, como `/controle` ou `/painel`); um endereço fora da lista faz o retorno cair na Site URL (produção), mesmo em desenvolvimento.
+2. Credencial **OAuth do Google** (Google Cloud Console, sem faturamento) com o endereço de retorno do Supabase, e a **tela de consentimento publicada em produção** (em "Teste", só usuários de teste cadastrados entram; os escopos `openid`, `email` e `profile` não exigem verificação).
 3. Projeto na **Vercel** (Hobby) ligado ao repositório, com as variáveis de ambiente da seção 13.
 4. E-mail do primeiro `admin`, usado pela migração inicial.
 5. Opcional: conta grátis no Metered (Open Relay) para o TURN de reserva.
@@ -352,7 +354,7 @@ Feitos antes da E0, fora do código (nenhum exige cartão):
 
 - O protótipo (`send.html`, `receive.html`, `src/`, `public/`) sai; o histórico do Git guarda. Com isso, a lista `LEGADO` de `scripts/check-docs.mjs` fica vazia e os novos diretórios ganham README.
 - Novas checagens do CORE: **`rpc:grants-check`** (toda função tem `REVOKE` de `public`/`anon` e `GRANT` só a `authenticated`, nenhuma `SECURITY DEFINER` sem `search_path`, e toda função, exceto `papel_atual`, `dispositivo_atual`, o gatilho de criação de perfil e `parear_dispositivo`, chama `papel_atual()` ou `dispositivo_atual()`) e **`data-api:check`** (toda tabela tem RLS ativa; toda tabela tem políticas, exceto as de uma lista explícita de tabelas só-funções, como `codigos_pareamento`, que devem ter `REVOKE ALL` de `anon`/`authenticated`), lendo `supabase/migrations`.
-- Variáveis de ambiente (públicas; ver seção 12): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`; opcionais: `VITE_TURN_URL`, `VITE_TURN_USUARIO`, `VITE_TURN_SENHA` (credencial do Metered, que é por natureza exposta ao navegador).
+- Variáveis de ambiente (públicas; ver seção 12): `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (a chave pública, seja *publishable* ou *anon*); opcionais: `VITE_TURN_URL`, `VITE_TURN_USUARIO`, `VITE_TURN_SENHA` (credencial do Metered, que é por natureza exposta ao navegador).
 - `README.md` da raiz continua só descrição e projeção.
 - Cada etapa entra com registro em `docs/verificacoes/`.
 
@@ -377,15 +379,16 @@ Cada etapa termina usável e verificável.
 | Rede da faculdade bloquear WebRTC | Mesma rede Wi-Fi (ou roteador/hotspot do PC); TURN de reserva do Metered |
 | Gesto falso durante a conversa (de qualquer pessoa na imagem) | Interruptor gestos ligados/desligados + segurar 1 s + intervalo 3 s + histórico no painel |
 | Bateria e desempenho do celular de gravação | Carregador no tripé; tela preta; reconhecimento a ~10 quadros/s; celular fraco: reconhecer no computador (seção 4.2) |
-| iPhone pausar a câmera | Tela preta evita bloqueio; detectar `mute`/`ended` e pedir a câmera de novo |
+| iPhone pausar a câmera | Tela preta com Wake Lock evita o bloqueio; sem Wake Lock (iOS < 16.4, ou negado), a configuração do aparelho do checklist (iPhone: sem Modo de Pouca Energia e bloqueio "Nunca"; Android: "Permanecer ativo"); detectar `mute`/`ended` e pedir a câmera de novo |
 | Fonte de navegador do OBS sem WebRTC ou sem `window.obsstudio` em alguma versão ou sistema (Windows/macOS/Linux) | Versão mínima OBS 30.2 no checklist; o palco detecta e o painel avisa; testar nos três sistemas na E3/E4 |
 | Marcador via obs-websocket bloqueado pela política de rede local do navegador embutido | Marcador é secundário; reserva: atalho de teclado do OBS |
 | Pausa do Supabase esquecida | Item 1 do checklist do episódio |
+| iPhone apagar a sessão do celular de gravação após ~7 dias sem uso do site (ITP do Safari) | Parear de novo com um novo QR pelo painel (reaproveita o mesmo dispositivo) |
 | Limites grátis (1 GB arquivos, Realtime) | Limite de 50 MB por envio; mostrar uso no painel |
 
 ## 16. O que fica para a implementação
 
-- Biblioteca de QR code e de roteamento. As rotas são **por caminho** (`/painel`, `/camera`, `/obs/palco`…), com *rewrite* de SPA na Vercel; o fragmento (`#`) fica reservado para o código de pareamento. Por isso o app **não** usa o roteamento por hash do site do RevoCast.
+- Biblioteca de QR code e de roteamento. As rotas são **por caminho** (`/painel`, `/camera`, `/obs/palco`…), com *rewrite* de SPA na Vercel; o fragmento (`#`) das **rotas de dispositivo** (`/camera`, `/obs/*`) fica reservado para o código de pareamento; o cliente Supabase usa `flowType: 'pkce'`, então o retorno do login Google nas rotas de membro vem em `?code=`, não no fragmento. Por isso o app **não** usa o roteamento por hash do site do RevoCast.
 - Detalhes visuais dentro dos tokens do RevoCast.
 - Nomes exatos de funções SQL e de mensagens do canal, desde que respeitem a seção 8 (inclusive as chaves de armazenamento separadas por tipo de dispositivo).
 - Tempo exato de espera do clipe (padrão 5 s) e do Replay Buffer (sugestão 60 s), configuráveis.
