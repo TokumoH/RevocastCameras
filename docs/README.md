@@ -75,4 +75,4 @@ Para achar como uma mudança foi verificada: abrir [`verificacoes/README.md`](ve
 
 ## Riscos
 
-- Desde o VER-003, `npm run check-docs` (hook pre-push e CI) acusa diretórios sem README e READMEs incoerentes; os diretórios anteriores à regra (`public`, `src`, `src/assets`) estão isentos até ganharem README.
+- Desde o VER-003, `npm run check-docs` (hook pre-push e CI) acusa diretórios sem README e READMEs incoerentes; desde a E0 ([VER-008](verificacoes/2026-11-17-008-e0-limpeza-e-esqueleto.md)) nenhum diretório é isento por ser anterior à regra (`LEGADO` vazio); `.github/` segue sem README por decisão do VER-004 (`SEM_README`).

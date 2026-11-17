@@ -58,7 +58,7 @@ sequenceDiagram
     U->>H: refs a enviar (stdin)
     H->>R: mesmas refs
     R-->>H: 0 ok / 1 commit sem registro
-    H->>C: typecheck, docs, segredos, audit
+    H->>C: typecheck, testes, docs, segredos, audit
     C-->>H: 0 ok / 1 falha
     H-->>U: push segue ou é bloqueado
 ```

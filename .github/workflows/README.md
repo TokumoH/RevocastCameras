@@ -65,7 +65,7 @@ Segurança: `permissions: contents: read`, `persist-credentials: false`, actions
 ## Lógica
 
 1. Um PR para `master` é aberto ou atualizado, ou alguém dispara manualmente em Actions → check → Run workflow.
-2. O job instala as dependências e roda `npm run check` (typecheck, docs, segredos, audit).
+2. O job instala as dependências e roda `npm run check` (typecheck, testes, docs, segredos, audit).
 3. Em PR, roda o `check-registro` sobre os commits do PR (merges ignorados).
 4. Qualquer falha deixa o PR com check vermelho.
 

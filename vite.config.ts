@@ -1,13 +1,13 @@
-import { defineConfig } from "vite";
-import { resolve } from "path";
+import { defineConfig } from 'vitest/config'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  build: {
-    rollupOptions: {
-      input: {
-        send: resolve(__dirname, "send.html"),
-        receive: resolve(__dirname, "receive.html"),
-      },
-    },
+  plugins: [react()],
+  test: {
+    include: [
+      'src/**/*.test.{ts,tsx}',
+      'supabase/tests/**/*.test.ts',
+      'scripts/tests/**/*.test.mjs',
+    ],
   },
-});
+})

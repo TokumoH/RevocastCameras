@@ -1,0 +1,40 @@
+/* Modo claro: tokens do site do RevoCast (TokumoH/RevoCast_Site, tokens.css); o valor de --dots vem do base.css do site;
+   --card, --on-accent e a versão escura são deste projeto (o site não tem modo escuro). Para mudar a paleta, altere só este arquivo. */
+:root {
+  color-scheme: light;
+  --ink: #1b1b22;
+  --paper: #fffaf4;
+  --pink: #d83868;
+  --pink-soft: #ffd6e3;
+  --cyan: #27bfe8;
+  --cyan-soft: #d2f1fb;
+  --sand: #d8b888;
+  --sand-soft: #f6e6cf;
+  --gray: #686868;
+  --dots: rgba(27, 27, 34, 0.09);
+  --card: #ffffff;
+  --on-accent: #1b1b22; /* texto sobre rosa e ciano; igual nos dois modos */
+
+  --radius: 20px;
+  --border: 3px solid var(--ink);
+  --shadow: 6px 6px 0 var(--ink);
+
+  --font-display: "Lilita One", "Trebuchet MS", sans-serif;
+  --font-body: "Nunito", system-ui, sans-serif;
+  --font-hand: "Caveat", cursive;
+}
+
+/* Versão escura: papel vira tinta e a tinta vira papel; rosa e ciano seguem como destaque. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ink: #fffaf4;
+    --paper: #1b1b22;
+    --pink-soft: #5a2036;
+    --cyan-soft: #123a47;
+    --sand-soft: #46392a;
+    --gray: #b4b4bc;
+    --dots: rgba(255, 250, 244, 0.08);
+    --card: #26262f;
+  }
+}

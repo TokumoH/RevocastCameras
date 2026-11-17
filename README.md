@@ -7,7 +7,7 @@
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white)
-![WebRTC](https://img.shields.io/badge/WebRTC-PeerJS-333333?logo=webrtc)
+![WebRTC](https://img.shields.io/badge/WebRTC-333333?logo=webrtc)
 ![OBS](https://img.shields.io/badge/OBS-Studio-302E31?logo=obsstudio&logoColor=white)
 
 </div>

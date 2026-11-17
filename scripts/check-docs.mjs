@@ -2,7 +2,7 @@
 // 1. Todo link Markdown relativo aponta para arquivo existente; âncoras #Lx-Ly não passam do fim
 //    do arquivo; âncoras de título existem.
 // 2. Todo diretório rastreado tem README.md (exceto os anteriores à regra, em LEGADO, e os de
-//    SEM_README, que NÃO podem ter README). A raiz não é conferida: seu README é só apresentação.
+//    SEM_README, que NÃO podem ter README; LEGADO está vazia desde VER-008). A raiz não é conferida.
 // 3. A tabela "## Onde" e o campo "Arquivos" de cada README batem com o conteúdo real do diretório.
 // 4. Registros em docs/verificacoes/ seguem AAAA-MM-DD-NNN-slug.md, com NNN único.
 import fs from "node:fs";
@@ -10,8 +10,8 @@ import path from "node:path";
 import { trackedFiles, trackedDirs, reporter } from "./_lib.mjs";
 
 // Diretórios criados antes da regra "todo diretório tem README" (commits ef0207a/d099629).
-// Remover daqui quando ganharem README.
-const LEGADO = new Set(["public", "src", "src/assets"]);
+// Vazia desde VER-008: public e src/assets saíram com o protótipo; src ganhou README.
+const LEGADO = new Set();
 
 // Diretórios que, por decisão registrada, não têm README próprio (motivo ao lado).
 // Os subdiretórios continuam exigindo README.

@@ -1,0 +1,63 @@
+*,
+*::before,
+*::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  overflow-x: clip;
+  color: var(--ink);
+  font: 400 17px/1.65 var(--font-body);
+  background: var(--paper) radial-gradient(var(--dots) 1.2px, transparent 1.2px) 0 0 / 22px 22px;
+}
+h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 400; line-height: 1.05; }
+h1 { font-size: clamp(36px, 7vw, 64px); }
+p { margin: 0; }
+a { color: inherit; }
+img { max-width: 100%; height: auto; }
+:focus-visible { outline: 3px solid var(--cyan); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+
+/* Cartão-adesivo */
+.cartao {
+  display: grid;
+  gap: 14px;
+  justify-items: start;
+  padding: 28px;
+  background: var(--card);
+  border: var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.cartao--rosa { background: var(--pink-soft); }
+.cartao--ciano { background: var(--cyan-soft); }
+.cartao--areia { background: var(--sand-soft); }
+
+/* Botão */
+.botao {
+  display: inline-block;
+  padding: 10px 22px;
+  color: var(--on-accent);
+  font: 400 20px/1.2 var(--font-display);
+  text-decoration: none;
+  background: var(--pink);
+  border: var(--border);
+  border-radius: 999px;
+  box-shadow: 4px 4px 0 var(--ink);
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.botao:hover { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 var(--ink); }
+.botao:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--ink); }
+.botao--ciano { background: var(--cyan); }
+
+/* Tela provisória centralizada */
+.tela {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+.tela .cartao { width: min(480px, 100%); }
+.tela__logo { width: 120px; }

@@ -5,7 +5,7 @@ Modelo de registro de correção. Como usar:
 1. Copie este arquivo para `AAAA-MM-DD-NNN-slug.md` nesta mesma pasta
    (data do commit, número sequencial de 3 dígitos, slug em minúsculas com hífens).
 2. Preencha todas as seções; não remova seções. Se uma seção não se aplicar, escreva "Não se aplica" e o motivo.
-3. Links para arquivos são relativos a esta pasta (ex.: `../../src/send.ts#L10-L20`).
+3. Links para arquivos são relativos a esta pasta (ex.: `../../package.json#L10-L20`).
 4. Adicione o novo arquivo à tabela "onde" de `README.md` desta pasta, no mesmo commit.
 5. Não escreva segredos, tokens, e-mails ou dados pessoais neste registro.
 Apague este comentário no arquivo copiado.
@@ -52,7 +52,7 @@ Apague este comentário no arquivo copiado.
 
 | Arquivo | Linhas | O que mudou |
 |---|---|---|
-| [`src/send.ts`](../../src/send.ts#L1-L10) | 1–10 | <descrição — exemplo de formato; substitua pelo arquivo real> |
+| [`package.json`](../../package.json#L1-L10) | 1–10 | <descrição — exemplo de formato; substitua pelo arquivo real> |
 
 ## Lógica
 
