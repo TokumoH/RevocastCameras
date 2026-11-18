@@ -11,11 +11,11 @@
 | Usuário responsável | TokumoH |
 | Status | ativo |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- scripts/README.md` |
-| Arquivos | `README.md`, `_lib.mjs`, `check-docs.mjs`, `check-doc-secrets.mjs`, `check-registro.mjs`, `install-hooks.mjs` |
+| Arquivos | `README.md`, `_lib.mjs`, `check-docs.mjs`, `check-doc-secrets.mjs`, `check-registro.mjs`, `check-deps-audit.mjs`, `install-hooks.mjs`, `tests/` |
 
 ## Propósito
 
-Checagens automáticas que transformam as regras do [CORE](../CLAUDE.md) em verificações executáveis: documentação coerente, nenhum segredo versionado e registro em `docs/verificacoes/` para todo commit. São chamadas pelos scripts do `package.json`, pelo hook [`.githooks/pre-push`](../.githooks/README.md) e pela CI ([`.github/workflows/check.yml`](../.github/workflows/README.md)).
+Checagens automáticas que transformam as regras do [CORE](../CLAUDE.md) em verificações executáveis: documentação coerente, nenhum segredo versionado, dependências sem vulnerabilidade alta ou crítica (fora das exceções com prazo) e registro em `docs/verificacoes/` para todo commit. São chamadas pelos scripts do `package.json`, pelo hook [`.githooks/pre-push`](../.githooks/README.md) e pela CI ([`.github/workflows/check.yml`](../.github/workflows/README.md)).
 
 ## Origem
 
@@ -26,7 +26,7 @@ Sugestão S3 ("DevSecOps do zero"), aprovada pelo usuário como implementação,
 - `_lib.mjs`: utilitários compartilhados (Git sem shell, lista de arquivos e diretórios rastreados, relatório de erros). O prefixo `_` indica que é biblioteca, não comando.
 - `check-*.mjs`: uma regra por arquivo. Cada um encerra com código 0 (ok) ou 1 (erro), e o 2 é reservado para uso incorreto.
 - `install-hooks.mjs`: ativa os hooks versionados (chamado pelo `prepare` do npm).
-- Só Node.js, sem dependências externas.
+- Só Node.js nas checagens, sem dependências externas; os testes de `tests/` usam o Vitest do projeto.
 
 ## Por que esta organização
 
@@ -52,7 +52,9 @@ Sugestão S3 ("DevSecOps do zero"), aprovada pelo usuário como implementação,
 | [`check-docs.mjs`](check-docs.mjs) | Links e âncoras; README em todo diretório (exceções: `SEM_README` e a raiz; a lista `LEGADO` existe, mas está vazia); "Onde" e "Arquivos" × conteúdo real; nome e sequência dos registros |
 | [`check-doc-secrets.mjs`](check-doc-secrets.mjs) | E-mails, tokens do GitHub, chaves AWS, chaves privadas e atribuições de credencial em arquivos de texto rastreados |
 | [`check-registro.mjs`](check-registro.mjs) | Todo commit (exceto merges) adiciona ou altera um registro `docs/verificacoes/AAAA-MM-DD-NNN-slug.md` |
+| [`check-deps-audit.mjs`](check-deps-audit.mjs) | `npm audit` (completo, com `--include=dev`, e de produção) sem aviso alto ou crítico; exceções explícitas em `EXCECOES` (id GHSA, pacote, gravidade, motivo, data de revisão em UTC), válidas só para aquele pacote e gravidade, fora da produção, sem correção que não suba versão principal e no prazo; relatório inválido ou inconsistente (pacote a pacote) reprova (VER-012) |
 | [`install-hooks.mjs`](install-hooks.mjs) | Define `core.hooksPath = .githooks`; não faz nada fora de um repositório Git |
+| [`tests/`](tests/README.md) | Testes (Vitest) das checagens, com relatórios de exemplo |
 
 ## Lógica
 
@@ -63,7 +65,7 @@ flowchart LR
     HOOK --> PKG
     CI[.github/workflows/check.yml] --> PKG
     CI --> CR2[check-registro --range base..HEAD]
-    CD & CS & CR & CR2 --> LIB[_lib.mjs]
+    CD & CS & CR & CR2 & AU --> LIB[_lib.mjs]
 ```
 
 1. `npm install` executa o `prepare`, que chama o `install-hooks.mjs` e ativa `.githooks/`.
@@ -76,13 +78,11 @@ flowchart LR
 npm run check-docs
 ```
 
-Saída esperada sem problemas: `check-docs: 0 erro(s) — N arquivos .md, M registro(s)`. Com um diretório novo sem README: `ERRO [check-docs] pasta/ sem README.md` e código de saída 1.
-
-Para acrescentar uma checagem: criar `check-<nome>.mjs` usando `reporter()` de `_lib.mjs`, registrar em `package.json` (e em `check`, se for parte do conjunto) e listar aqui em "Onde".
+Saída esperada sem problemas: `check-docs: 0 erro(s) — N arquivos .md, M registro(s)`. Com um diretório novo sem README: `ERRO [check-docs] pasta/ sem README.md` e código de saída 1. Para acrescentar uma checagem: criar `check-<nome>.mjs` usando `reporter()` de `_lib.mjs`, registrar em `package.json` (e em `check`, se for parte do conjunto) e listar aqui em "Onde".
 
 ## Verificação
 
-- Cada checagem foi rodada no estado atual (0 erros) e sabotada para provar que detecta a falha. Detalhes no VER-003, seção "Verificação".
+- Cada checagem foi rodada no estado atual (0 erros) e sabotada para provar que detecta a falha. Detalhes no VER-003, seção "Verificação" (o `check-deps-audit` com exceções, no VER-012).
 - Todo arquivo deste diretório está listado em "Onde" (conferido pelo próprio `check-docs`).
 
 ## Riscos
@@ -90,4 +90,4 @@ Para acrescentar uma checagem: criar `check-<nome>.mjs` usando `reporter()` de `
 - A lista `LEGADO` do `check-docs` está vazia desde a E0 ([VER-008](../docs/verificacoes/2026-11-17-008-e0-limpeza-e-esqueleto.md)): nenhum diretório é isento por ser anterior à regra.
 - `check-docs` exige que `.github/` **não** tenha README (`SEM_README`, VER-004) e não confere a raiz, cujo README é só apresentação.
 - `check-doc-secrets` usa padrões (regex): não detecta segredos fora desses formatos e pode dar falso positivo. Exceções vão para `PERMITIDOS`, com o motivo.
-- `check-deps-audit` precisa de acesso à internet (registro do npm).
+- `check-deps-audit` precisa de acesso à internet (registro do npm). Cada exceção em `EXCECOES` tem prazo (data em UTC): ao vencer, a checagem volta a falhar e a exceção precisa ser revista (renovada com motivo e registro, ou removida).
