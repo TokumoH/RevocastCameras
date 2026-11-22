@@ -50,7 +50,7 @@ Sugestão S3 ("DevSecOps do zero"), aprovada pelo usuário como implementação,
 | [`README.md`](README.md) | Este arquivo |
 | [`_lib.mjs`](_lib.mjs) | Utilitários compartilhados: `git()`, `trackedFiles()`, `trackedDirs()`, `reporter()` |
 | [`check-docs.mjs`](check-docs.mjs) | Links e âncoras; README em todo diretório (exceções: `SEM_README` e a raiz; a lista `LEGADO` existe, mas está vazia); "Onde" e "Arquivos" × conteúdo real; nome e sequência dos registros |
-| [`check-doc-secrets.mjs`](check-doc-secrets.mjs) | E-mails, tokens do GitHub, chaves AWS, chaves privadas e atribuições de credencial em arquivos de texto rastreados |
+| [`check-doc-secrets.mjs`](check-doc-secrets.mjs) | E-mails, tokens do GitHub, chaves AWS, chaves privadas e atribuições de credencial em arquivos de texto rastreados (inclusive `.sql`, `.toml` e `.env.example`), conferindo cada ocorrência da linha; `PERMITIDOS` libera só o fim `@revocast.test` (domínio de teste sob o TLD `.test`, RFC 2606), sem diferenciar maiúsculas |
 | [`check-registro.mjs`](check-registro.mjs) | Todo commit (exceto merges) adiciona ou altera um registro `docs/verificacoes/AAAA-MM-DD-NNN-slug.md` |
 | [`check-deps-audit.mjs`](check-deps-audit.mjs) | `npm audit` (completo, com `--include=dev`, e de produção) sem aviso alto ou crítico; exceções explícitas em `EXCECOES` (id GHSA, pacote, gravidade, motivo, data de revisão em UTC), válidas só para aquele pacote e gravidade, fora da produção, sem correção que não suba versão principal e no prazo; relatório inválido ou inconsistente (pacote a pacote) reprova (VER-012) |
 | [`install-hooks.mjs`](install-hooks.mjs) | Define `core.hooksPath = .githooks`; não faz nada fora de um repositório Git |
@@ -89,5 +89,5 @@ Saída esperada sem problemas: `check-docs: 0 erro(s) — N arquivos .md, M regi
 
 - A lista `LEGADO` do `check-docs` está vazia desde a E0 ([VER-008](../docs/verificacoes/2026-11-17-008-e0-limpeza-e-esqueleto.md)): nenhum diretório é isento por ser anterior à regra.
 - `check-docs` exige que `.github/` **não** tenha README (`SEM_README`, VER-004) e não confere a raiz, cujo README é só apresentação.
-- `check-doc-secrets` usa padrões (regex): não detecta segredos fora desses formatos e pode dar falso positivo. Exceções vão para `PERMITIDOS`, com o motivo.
+- `check-doc-secrets` usa padrões (regex): não detecta segredos fora desses formatos e pode dar falso positivo. Exceções vão para `PERMITIDOS`, com o motivo; hoje só `@revocast.test` (VER-010), comparado pelo fim da ocorrência.
 - `check-deps-audit` precisa de acesso à internet (registro do npm). Cada exceção em `EXCECOES` tem prazo (data em UTC): ao vencer, a checagem volta a falhar e a exceção precisa ser revista (renovada com motivo e registro, ou removida).

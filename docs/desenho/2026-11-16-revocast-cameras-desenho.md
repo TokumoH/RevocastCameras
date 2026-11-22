@@ -8,6 +8,7 @@
 | Usuário responsável | TokumoH |
 | Status | **aprovado** em 2026-11-17 (ver VER-005 e VER-006) |
 | Base | Sessão de desenho de 2026-11-16 |
+| Ajustes | VER-010: seção 7 (`membros_permitidos`), seção 11 (Testes e Banco versionado) e seção 12 (item 4), conforme as decisões 1 e 2 do [PLA-001](../planos/2026-11-17-e0-fundacao.md) |
 
 ## 1. Intenção e porquê
 
@@ -201,7 +202,7 @@ erDiagram
 
 | Tabela | Colunas principais | Regras |
 |---|---|---|
-| `membros_permitidos` | `email` (PK, minúsculo), `papel` (`admin`/`equipe`/`apresentadora`), `criado_por` | Só `admin` escreve. É a **lista de acesso** e a fonte única do papel. O primeiro `admin` é inserido pela migração inicial (e-mail definido nos pré-requisitos, seção 12). |
+| `membros_permitidos` | `email` (PK, minúsculo), `papel` (`admin`/`equipe`/`apresentadora`), `criado_por` | Só `admin` escreve. É a **lista de acesso** e a fonte única do papel. O primeiro `admin` é inserido à mão no editor SQL do Supabase, com o comando de [`supabase/README.md`](../../supabase/README.md) e o e-mail dos pré-requisitos (seção 12); a migração não contém e-mail, para que nenhum dado pessoal fique no repositório (ajustado no VER-010). |
 | `membros` | `id` (= `auth.users.id`), `email` (único), `nome` | Perfil criado no primeiro login de qualquer conta Google (**só para contas não anônimas**: o gatilho ignora `is_anonymous = true`, usado pelos dispositivos). **Não é chave estrangeira** para `membros_permitidos` e **não guarda papel**: o papel vem de uma junção por e-mail que pode não achar par. Sem par, a pessoa não tem papel e a RLS nega tudo. Assim, mudar ou remover um e-mail da lista vale **na hora no banco** (o perfil fica, sem acesso), e quem entrou antes de ser liberado ganha acesso assim que for adicionado. Canais de tempo real já abertos seguem a seção 8 (Revogação). |
 | `midias` | `id`, `tipo` (`som`/`imagem`), `nome`, `caminho` (Storage), `mime`, `tamanho_bytes` (≤ 50 MB), `enviado_por` | Leitura: membros; escrita: `equipe`/`admin`. |
 | `sons` | `id`, `midia_id` (FK `midias`, tipo `som`), `rotulo`, `emoji`, `volume` (0–1), `ordem` | |
@@ -336,9 +337,9 @@ A câmera publica oferta/resposta/candidatos no canal `episodio:<id>:video` do e
 | Gestos | `@mediapipe/tasks-vision` (Gesture Recognizer) | Modelo e WASM servidos pelo próprio app (sem CDN externo em produção) |
 | OBS | `window.obsstudio` + `obs-websocket-js` (marcador, `CreateRecordChapter`, e versão, `GetVersion`) | |
 | QR code | biblioteca pequena de geração de QR | a definir na implementação |
-| Testes | Vitest (unidade), testes SQL de RLS no Supabase, Playwright (fluxos) | |
+| Testes | Vitest (unidade), testes de RLS em PGlite com simulação do Supabase, Playwright (fluxos) | Os testes de RLS rodam no hook e na CI, sem conta nem Docker (ajustado no VER-010) |
 | Hospedagem | Vercel Hobby | |
-| Banco versionado | Supabase CLI (`supabase/migrations`) | |
+| Banco versionado | Migrações no formato da Supabase CLI (`supabase/migrations`), aplicadas pelo editor SQL do Supabase | Sem login da CLI nem senha do banco; antes do primeiro `supabase db push`, `supabase migration repair --status applied 20261117000000` (ajustado no VER-010) |
 
 ## 12. Pré-requisitos de configuração
 
@@ -347,7 +348,7 @@ Feitos antes da E0, fora do código (nenhum exige cartão):
 1. Projeto no **Supabase** (plano Free): anotar URL e chave pública (*publishable key* ou *anon key*); ativar o provedor **Google** e o **login anônimo**; **desligar o provedor Email** (vem ligado por padrão), manter **"Confirm email" ligado** e a **vinculação manual de identidades desligada** (assim uma sessão anônima não consegue se apropriar do e-mail de um membro); desligar o acesso público ao Realtime; reduzir a validade do JWT para 10 min; em Auth → URL Configuration, definir a **Site URL** com o domínio da Vercel e incluir nas **Redirect URLs** `https://<domínio da Vercel>/**` e `http://localhost:<porta>/**` (com curinga, para o login voltar à página de origem, como `/controle` ou `/painel`); um endereço fora da lista faz o retorno cair na Site URL (produção), mesmo em desenvolvimento.
 2. Credencial **OAuth do Google** (Google Cloud Console, sem faturamento) com o endereço de retorno do Supabase, e a **tela de consentimento publicada em produção** (em "Teste", só usuários de teste cadastrados entram; os escopos `openid`, `email` e `profile` não exigem verificação).
 3. Projeto na **Vercel** (Hobby) ligado ao repositório, com as variáveis de ambiente da seção 13.
-4. E-mail do primeiro `admin`, usado pela migração inicial.
+4. E-mail do primeiro `admin`, inserido à mão no editor SQL depois de aplicar a migração inicial (comando em `supabase/README.md`; o e-mail nunca é versionado) (ajustado no VER-010).
 5. Opcional: conta grátis no Metered (Open Relay) para o TURN de reserva.
 
 ## 13. Impacto no processo do repositório

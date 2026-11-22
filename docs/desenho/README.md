@@ -24,7 +24,7 @@ Criado para o recomeço do projeto do zero (sessão de desenho de 2026-11-16), c
 ## Organização
 
 - Um arquivo por desenho: `AAAA-MM-DD-slug-desenho.md`, com Id `DES-NNN` no cabeçalho.
-- Desenhos aprovados não são reescritos: mudanças grandes geram um novo desenho que referencia o anterior; ajustes pequenos são registrados em `docs/verificacoes/`.
+- Desenhos aprovados não são reescritos: mudanças grandes geram um novo desenho que referencia o anterior; o desenho só recebe ajustes pequenos aprovados pelo responsável, feitos no próprio desenho, com a nota "(ajustado no VER-NNN)" em cada passagem alterada e a linha "Ajustes" no cabeçalho citando o registro, e são registrados em `docs/verificacoes/` (primeiro caso: VER-010, no DES-001).
 
 ## Por que esta organização
 
@@ -38,6 +38,7 @@ Criado para o recomeço do projeto do zero (sessão de desenho de 2026-11-16), c
 | Desenho dentro de `docs/verificacoes/` | Registro é por commit; o desenho orienta várias etapas e commits |
 | `docs/superpowers/specs/` | Dois diretórios a mais (cada um com README) sem ganho |
 | Desenho no `README.md` da raiz | O README da raiz é só descrição e projeção |
+| Ajuste pequeno só no registro, sem tocar o desenho | O desenho continuaria afirmando o que já não vale, e quem o lê como referência seguiria a versão antiga |
 
 ## Onde
 
