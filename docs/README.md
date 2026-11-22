@@ -47,7 +47,7 @@ Criado em 2026-11-16 para cumprir as regras do CORE "todo commit leva documento 
 | [`README.md`](README.md) | Este arquivo |
 | [`desenho/`](desenho/README.md) | Documentos de desenho do sistema (DES-NNN): arquitetura, escopo e etapas |
 | [`planos/`](planos/README.md) | Planos de implementação por etapa (PLA-NNN) |
-| [`verificacoes/`](verificacoes/README.md) | Registros de correção/decisão (um por commit aprovado) e o modelo de registro |
+| [`verificacoes/`](verificacoes/README.md) | Registros de correção/decisão (um por commit, de item aprovado) e o modelo de registro |
 
 ## Lógica
 

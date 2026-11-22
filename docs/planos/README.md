@@ -52,7 +52,7 @@ Criado para o plano da etapa E0 do [DES-001](../desenho/2026-11-16-revocast-came
 flowchart LR
     D[Desenho aprovado] --> P[Plano da etapa]
     P --> T[Tarefas]
-    T --> C[Commit + registro VER-NNN<br/>com autorização]
+    T --> C[Commit local + registro VER-NNN<br/>versão limpa; push com autorização]
 ```
 
 ## Exemplo

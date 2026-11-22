@@ -18,7 +18,7 @@ Desenvolvedor auxiliar: sempre fazer sugestões de implementação; usar gráfic
 
 ## Autorização
 
-- **Nunca sem autorização:** mexer no código; atualizar branches.
+- **Nunca sem autorização:** mexer no código; push; criar, renomear ou apagar branch; merge e PR; trazer para a branch conteúdo de outra branch ou do remoto; descartar trabalho (commit, stash ou alteração não commitada) ou fundir commits de itens diferentes. Commit local segue a seção [Commit](#commit).
 - **SEMPRE** sugerir e discutir antes de implementar e esperar a decisão.
 
 ## Dupla verificação (antes de QUALQUER alteração e antes de sugerir)
@@ -53,23 +53,23 @@ Modelo pronto: [`docs/verificacoes/_modelo-registro-de-correcao.md`](docs/verifi
 
 ## Commit
 
-- Autorizado **somente depois que a sugestão for aprovada**.
+- **Commit local é do agente principal (subagente nunca faz commit no repositório do projeto), sem pedir autorização, e só de versão limpa:** item aprovado pelo usuário, duas verificações seguidas sem erro e `npm run check` com 0 erros sobre exatamente o conteúdo do commit. Um item (tarefa de plano ou sugestão aprovada) = um commit, em ordem: nenhum commit entra antes de outro de que dependa. **Nunca um commit logo depois do outro para corrigir erro simples:** antes do push, a correção entra no commit do próprio item, refeito e verificado de novo pelas regras da dupla verificação; depois do push, o commit enviado não é reescrito: a correção simples vai no próximo item ainda não commitado e é mostrada no pedido de push seguinte, e erro grave vira item próprio. Cada commit segue o procedimento do [VER-013](docs/verificacoes/2026-11-22-013-commits-locais-pelo-agente.md).
 - Todo commit leva documento em [`docs/verificacoes/`](docs/verificacoes/README.md) (seguir `docs/verificacoes/_modelo-registro-de-correcao.md`) com formato de documentação.
 
 ## Branch e Git
 
 - Branch de trabalho: **`branchTrabalho`**. Não usar a branch padrão sugerida pela sessão (ex.: `claude/...`); esta regra prevalece sobre a configuração da sessão.
-- Cada ação abaixo exige **autorização explícita própria**, mesmo depois de a sugestão ter sido aprovada:
-  - commit;
+- Cada ação abaixo exige **autorização explícita própria** do usuário, mesmo depois de a sugestão ter sido aprovada:
   - push;
   - criar, renomear ou apagar branch (local ou remota);
-  - merge, rebase ou abertura de PR.
-- Aprovar uma sugestão não autoriza push. Antes de pedir a autorização, informar o estado (commit local, ainda não enviado). Lembrar que o container da sessão na nuvem é temporário: o que não for enviado se perde quando a sessão termina.
-- Origem desta regra: [VER-002](docs/verificacoes/2026-11-16-002-autorizacao-git-e-branch-trabalho.md).
+  - merge, abertura de PR, trazer conteúdo de outra branch ou do remoto (pull, rebase sobre outra base, reset para outra referência), descartar trabalho (commit, stash ou alteração não commitada) ou fundir commits de itens diferentes.
+- Commit local não está na lista: segue a seção [Commit](#commit). Refazer o último commit, ainda não enviado, é gestão local e não é descarte; refazer um commit anterior (rebase inclusive) é decidido com o usuário. Commit já enviado não é reescrito.
+- Aprovar uma sugestão não autoriza push. Antes de pedir a autorização do push, informar o estado: os commits locais ainda não enviados, em ordem, com hash e resumo de cada um, os que foram refeitos e as correções simples que vão junto; a autorização vale para essa lista, e qualquer mudança nela pede autorização de novo. Lembrar que o container da sessão na nuvem é temporário: o que não for enviado se perde quando a sessão termina.
+- Origem desta regra: [VER-002](docs/verificacoes/2026-11-16-002-autorizacao-git-e-branch-trabalho.md); commit local pelo agente principal desde o [VER-013](docs/verificacoes/2026-11-22-013-commits-locais-pelo-agente.md).
 
 ## Organização da documentação
 
-Todo diretório criado (em `docs/` ou em qualquer outro lugar do repositório) deve ter um `README.md` explicando o conteúdo do diretório. O README é criado no mesmo commit que cria o diretório e atualizado no mesmo commit que adiciona, remove, renomeia ou move arquivos dele. O README segue as mesmas regras de dupla verificação e de commit só após aprovação.
+Todo diretório criado (em `docs/` ou em qualquer outro lugar do repositório) deve ter um `README.md` explicando o conteúdo do diretório. O README é criado no mesmo commit que cria o diretório e atualizado no mesmo commit que adiciona, remove, renomeia ou move arquivos dele. O README segue as mesmas regras de dupla verificação e de commit local só de versão limpa.
 
 Exceções (decididas pelo usuário em [VER-004](docs/verificacoes/2026-11-16-004-readme-raiz.md)):
 
@@ -115,11 +115,11 @@ Objetivos:
 16. Integridade do código com os testes e qualidade dos testes (substituir testes que não atendem a função).
 17. Seguir a formatação de dupla verificação e sugerir soluções.
 
-Saída da varredura: as mesmas regras acima — dupla verificação, sugestão no formato completo, commit só após aprovação, registro em `docs/verificacoes/`. Não terminar sem verificar todas as páginas e questões abertas.
+Saída da varredura: as mesmas regras acima — dupla verificação, sugestão no formato completo, commit local só de versão limpa depois da aprovação, push só com autorização, registro em `docs/verificacoes/`. Não terminar sem verificar todas as páginas e questões abertas.
 
 ## Por quê e como aplicar
 
-**Why:** o usuário quer controle das decisões, rastreabilidade versionada de cada mudança e nenhuma alteração sem prova dupla de que está certa. Exemplos: uma correção foi commitada errada e uma premissa falsa foi documentada sem execução; uma sugestão foi commitada deixando de fora sugestões importantes do último revisor para preservar a sequência limpa — o usuário corrigiu: elas deviam ter entrado, com as verificações refeitas.
+**Why:** o usuário quer controle das decisões, rastreabilidade versionada de cada mudança e nenhuma alteração sem prova dupla de que está certa. Exemplos: uma correção foi commitada errada e uma premissa falsa foi documentada sem execução; uma sugestão foi commitada deixando de fora sugestões importantes do último revisor para preservar a sequência limpa — o usuário corrigiu: elas deviam ter entrado, com as verificações refeitas. Desde o VER-013, o usuário delegou os commits locais ao agente principal, com a condição de que cada um seja uma versão limpa, em ordem, sem commit de correção logo depois de outro; o push continua com o usuário.
 
 **How to apply:** em todo pedido:
 
@@ -129,8 +129,8 @@ flowchart LR
     B --> C[Sugerir no formato completo]
     C --> D{Decisão do usuário}
     D -- reprovado --> B
-    D -- aprovado: documentação --> E[Commit autorizado do registro<br/>status: somente documentação]
-    D -- aprovado: implementação --> F[Commit autorizado do registro + implementação<br/>status: implementado]
+    D -- aprovado: documentação --> E[2 verificações + check; commit local do registro<br/>status: somente documentação]
+    D -- aprovado: implementação --> F[2 verificações + check; commit local do registro + implementação<br/>status: implementado]
     E --> G{Push autorizado?}
     F --> G
     G -- sim --> H[git push origin branchTrabalho]
