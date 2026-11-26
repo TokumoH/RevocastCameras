@@ -78,3 +78,40 @@ describe('obterServicosDeMembro', () => {
     expect(createClient).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('obterServicosDePreparacao', () => {
+  test('mesmo cliente de membro: uma página com as duas composições cria 1 cliente', async () => {
+    vi.stubEnv('VITE_SUPABASE_URL', URL_OK)
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', CHAVE_OK)
+    vi.resetModules()
+    const { obterServicosDeMembro, obterServicosDePreparacao } = await import('./servicos')
+    const preparacao = obterServicosDePreparacao()
+    obterServicosDeMembro()
+    expect(obterServicosDePreparacao()).toBe(preparacao)
+    expect(createClient).toHaveBeenCalledTimes(1)
+    expect(createClient.mock.calls[0][2]).toMatchObject({ auth: { storageKey: 'revocast-auth-membro' } })
+    expect(Object.keys(preparacao).sort()).toEqual(['armazenamento', 'cenas', 'episodios', 'gestos', 'midias', 'sons'])
+  })
+
+  test('na outra ordem também: 1 cliente', async () => {
+    vi.stubEnv('VITE_SUPABASE_URL', URL_OK)
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', CHAVE_OK)
+    vi.resetModules()
+    const { obterServicosDeMembro, obterServicosDePreparacao } = await import('./servicos')
+    obterServicosDeMembro()
+    obterServicosDePreparacao()
+    expect(createClient).toHaveBeenCalledTimes(1)
+  })
+
+  test('configuração inválida: as duas lançam ErroDeConfiguracao e nenhum cliente é criado', async () => {
+    vi.stubEnv('VITE_SUPABASE_URL', 'http://abc.supabase.co')
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', CHAVE_OK)
+    vi.resetModules()
+    const servicos = await import('./servicos')
+    const { ErroDeConfiguracao: Erro } = await import('../shared/infra/configuracao')
+    expect(() => servicos.obterServicosDePreparacao()).toThrow(Erro)
+    expect(() => servicos.obterServicosDeMembro()).toThrow(Erro)
+    expect(() => servicos.obterServicosDePreparacao()).toThrow(/VITE_SUPABASE_URL/)
+    expect(createClient).not.toHaveBeenCalled()
+  })
+})

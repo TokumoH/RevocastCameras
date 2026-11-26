@@ -4,33 +4,33 @@ import { ehPapel } from '../../domains/acesso/papeis'
 import type { Papel } from '../../domains/acesso/papeis'
 import { ErroDeAcesso } from '../../domains/acesso/portas'
 import type { MotivoDoErro, RepositorioDeAcesso, ServicoDeAutenticacao } from '../../domains/acesso/portas'
+import { classificarErro } from './errosSupabase'
 
 /** Texto fixo do aviso de `sair()`: nunca leva e-mail, token nem o objeto de erro. */
 const AVISO_SAIR = 'sair: o servidor não confirmou a saída; a sessão local foi apagada'
 
-/** Códigos do PostgREST para JWT inválido (`PGRST301`) e expirado (`PGRST303`). */
-const JWT_RECUSADO = ['PGRST301', 'PGRST303']
-
 /**
- * Traduz um erro do PostgREST (`{ code, message }` + status HTTP) para um `ErroDeAcesso`. A ordem vale:
- * (1) 401 ou JWT recusado → `sessao_expirada`, antes do `42501`, porque o PostgREST devolve `42501`
- * com 401 quando a requisição sai como `anon` (sessão apagada em outra aba, por exemplo);
+ * Traduz um erro do PostgREST (`{ code, message }` + status HTTP) para um `ErroDeAcesso`. Desde a E2, a
+ * classificação é a comum (`classificarErro`, em `errosSupabase.ts`, D10 do PLA-003), sem mudar a E1.
+ * A ordem vale:
+ * (1) 401 ou JWT recusado (`PGRST301`/`PGRST303`) → `sessao_expirada`, antes do `42501`, porque o
+ * PostgREST devolve `42501` com 401 quando a requisição sai como `anon` (sessão apagada em outra aba);
  * (2) `23505` → `duplicado`; (3) `23514` → `invalido`; (4) `42501` → `negado`;
  * (5) sem código e status 0 (o `postgrest-js` 2.119.0 devolve assim a falha do `fetch`) → `rede`;
- * (6) o resto → `outro`. A mensagem do servidor (que pode citar o e-mail) é descartada.
+ * (6) o resto → `outro`, inclusive `23503` e `22P02`, que a classificação comum chama de `em_uso` e
+ * `invalido` (motivos da Preparação que a E1 não usa; teste `e1-traduzir-erro-sem-mudanca`).
+ * A mensagem do servidor (que pode citar o e-mail) é descartada.
  */
 export function traduzirErro(erro: { code?: string; message?: string } | null, status?: number): ErroDeAcesso {
-  const codigo = erro?.code ?? ''
-  return new ErroDeAcesso(motivoDoErro(codigo, status))
+  return new ErroDeAcesso(motivoDoErro(erro, status))
 }
 
-function motivoDoErro(codigo: string, status: number | undefined): MotivoDoErro {
-  if (status === 401 || JWT_RECUSADO.includes(codigo)) return 'sessao_expirada'
-  if (codigo === '23505') return 'duplicado'
-  if (codigo === '23514') return 'invalido'
-  if (codigo === '42501') return 'negado'
-  if (codigo === '' && status === 0) return 'rede'
-  return 'outro'
+function motivoDoErro(erro: { code?: string } | null, status: number | undefined): MotivoDoErro {
+  const motivo = classificarErro(erro, status)
+  // em_uso não existe na E1; e o invalido da E1 sempre foi só o 23514 (CHECK).
+  if (motivo === 'em_uso') return 'outro'
+  if (motivo === 'invalido' && erro?.code === '22P02') return 'outro'
+  return motivo
 }
 
 /** Adaptador da porta `ServicoDeAutenticacao` sobre o `auth` do supabase-js (cliente de membro). */

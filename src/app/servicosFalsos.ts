@@ -1,8 +1,9 @@
 /**
  * Serviços e dependências falsos para os testes de tela (só para testes: não importa `vitest` nem Supabase).
- * Implementam as portas do domínio Acesso e imitam o que o supabase-js faz e muda a tela: `sair()` põe a
- * sessão em `null` e emite a mudança de sessão (o `SIGNED_OUT`) **antes** de resolver, como o `signOut`
- * real, que só resolve depois do `POST /auth/v1/logout`.
+ * Implementam as portas do domínio Acesso (e, desde a E2, as da Preparação, vazias: `preparacaoVazia`)
+ * e imitam o que o supabase-js faz e muda a tela: `sair()` põe a sessão em `null` e emite a mudança de
+ * sessão (o `SIGNED_OUT`) **antes** de resolver, como o `signOut` real, que só resolve depois do
+ * `POST /auth/v1/logout`.
  */
 import type { MembroPermitido, PerfilDeMembro } from '../domains/acesso/listaDeAcesso'
 import type { Papel } from '../domains/acesso/papeis'
@@ -10,7 +11,34 @@ import { ErroDeAcesso } from '../domains/acesso/portas'
 import type { RepositorioDeAcesso, ServicoDeAutenticacao, ServicosDeMembro } from '../domains/acesso/portas'
 import type { RetornoDoLogin } from '../domains/acesso/retornoDoLogin'
 import type { UsuarioDaSessao } from '../domains/acesso/sessao'
+import type { ServicosDePreparacao } from '../domains/preparacao/portas'
 import type { Dependencias } from './dependencias'
+
+/**
+ * Serviços da Preparação sem nada: listas vazias; escritas, envio, remoção e prévia resolvem sem efeito
+ * (a prévia, com texto vazio). Para os testes de tela que não usam a Preparação (as telas da E1).
+ */
+export function preparacaoVazia(): ServicosDePreparacao {
+  const nada = async () => {}
+  return {
+    midias: { listar: async () => [], registrar: nada, remover: nada, contarAvisosComImagem: async () => 0 },
+    sons: { listar: async () => [], incluir: nada, alterar: nada },
+    cenas: { listar: async () => [], incluir: nada, alterar: nada, remover: nada },
+    episodios: {
+      listar: async () => [],
+      incluir: nada,
+      alterar: nada,
+      remover: nada,
+      listarAvisos: async () => [],
+      incluirAviso: nada,
+      alterarAviso: nada,
+      alterarOrdemDoAviso: nada,
+      removerAviso: nada,
+    },
+    gestos: { listar: async () => [], alterar: nada },
+    armazenamento: { enviar: nada, remover: nada, urlDePrevia: async () => '' },
+  }
+}
 
 export function usuarioGoogle(email: string, id: string = `id-${email}`): UsuarioDaSessao {
   return { id, email, anonimo: false, provedor: 'google' }
@@ -134,6 +162,7 @@ export function criarFalsos(
           chamadas.obterServicos++
           return servicos
         },
+        obterPreparacao: () => preparacaoVazia(),
         navegar: (caminho) => {
           chamadas.navegar.push(caminho)
         },

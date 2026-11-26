@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { SEM_RETORNO } from '../domains/acesso/retornoDoLogin'
 import { caminhoDaArea, dependenciasDoNavegador, urlDeRetorno } from './dependencias'
-import { obterServicosDeMembro } from './servicos'
+import { obterServicosDeMembro, obterServicosDePreparacao } from './servicos'
 
 function visibilidade(estado: DocumentVisibilityState) {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => estado })
@@ -29,6 +29,7 @@ describe('dependencias', () => {
     expect(dep.busca).toBe('?code=abc')
     expect(dep.fragmento).toBe('#x=1')
     expect(dep.obterServicos).toBe(obterServicosDeMembro)
+    expect(dep.obterPreparacao).toBe(obterServicosDePreparacao)
   })
 
   test('limpar-tira-so-os-parametros-de-retorno', () => {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { ErroDeAcesso } from '../../domains/acesso/portas'
 import { criarAutenticacaoSupabase, criarRepositorioDeAcessoSupabase, traduzirErro } from './acessoSupabase'
+import { classificarErro } from './errosSupabase'
 
 interface Resposta {
   data?: unknown
@@ -341,6 +342,14 @@ describe('traduzirErro', () => {
       expect(traduzido, JSON.stringify([erro, status])).toBeInstanceOf(ErroDeAcesso)
       expect(traduzido.motivo, JSON.stringify([erro, status])).toBe(motivo)
     }
+  })
+
+  test('e1-traduzir-erro-sem-mudanca', () => {
+    // A E2 trouxe classificarErro (errosSupabase.ts); traduzirErro usa ele, mas a E1 continua igual.
+    expect(traduzirErro({ code: '22P02' }, 400).motivo).toBe('outro')
+    expect(traduzirErro({ code: '23503' }, 409).motivo).toBe('outro')
+    expect(classificarErro({ code: '22P02' }, 400)).toBe('invalido')
+    expect(classificarErro({ code: '23503' }, 409)).toBe('em_uso')
   })
 
   test('a mensagem não leva o e-mail nem o texto do servidor', () => {

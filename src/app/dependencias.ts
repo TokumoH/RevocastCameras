@@ -1,8 +1,9 @@
 import type { Area } from '../domains/acesso/papeis'
 import type { ServicosDeMembro } from '../domains/acesso/portas'
+import type { ServicosDePreparacao } from '../domains/preparacao/portas'
 import { PARAMETROS_DE_RETORNO } from '../domains/acesso/retornoDoLogin'
 import type { RetornoDoLogin } from '../domains/acesso/retornoDoLogin'
-import { obterServicosDeMembro } from './servicos'
+import { obterServicosDeMembro, obterServicosDePreparacao } from './servicos'
 
 /**
  * O que as telas de membro precisam do mundo de fora (navegador e Supabase). Os testes passam falsos
@@ -11,6 +12,11 @@ import { obterServicosDeMembro } from './servicos'
 export interface Dependencias {
   /** Lança `ErroDeConfiguracao`; só é chamado nas rotas de membro. */
   obterServicos: () => ServicosDeMembro
+  /**
+   * Serviços da Preparação (E2), sobre o mesmo cliente de `obterServicos`. Preguiçoso como ele: só é
+   * chamado dentro da guarda de membro, então as rotas de dispositivo nunca criam cliente.
+   */
+  obterPreparacao: () => ServicosDePreparacao
   navegar: (caminho: string) => void
   /** `window.location.origin` */
   origem: string
@@ -36,10 +42,11 @@ export function urlDeRetorno(origem: string, area: Area | null): string {
   return origem + (area === null ? '/entrar' : caminhoDaArea(area))
 }
 
-/** Dependências reais. Não cria o cliente Supabase: `obterServicos` é preguiçoso. */
+/** Dependências reais. Não cria o cliente Supabase: `obterServicos` e `obterPreparacao` são preguiçosos. */
 export function dependenciasDoNavegador(): Dependencias {
   return {
     obterServicos: obterServicosDeMembro,
+    obterPreparacao: obterServicosDePreparacao,
     navegar: (caminho) => window.location.replace(caminho),
     origem: window.location.origin,
     busca: window.location.search,

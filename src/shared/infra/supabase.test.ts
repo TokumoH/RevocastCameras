@@ -4,7 +4,7 @@ const createClient = vi.hoisted(() => vi.fn((..._args: unknown[]) => ({ marcador
 vi.mock('@supabase/supabase-js', () => ({ createClient }))
 
 import { chaveDeArmazenamento, criarClienteSupabase, opcoesDeAuth, type TipoDeSessao } from './supabase'
-import { TEMPO_LIMITE_SUPABASE_MS } from './tempoLimite'
+import { limitarRestEAuth, TEMPO_LIMITE_SUPABASE_MS } from './tempoLimite'
 
 const tipos: TipoDeSessao[] = ['membro', 'camera', 'obs_palco', 'obs_camera']
 
@@ -105,5 +105,17 @@ describe('criarClienteSupabase', () => {
       '/auth/v1/token': 'TimeoutError',
       '/storage/v1/object/a': 'pendente',
     })
+  })
+})
+
+describe('Storage fora do tempo-limite (E2, D8)', () => {
+  test('storage-fora-do-tempo-limite', () => {
+    const url = 'https://abc.supabase.co'
+    const limitar = limitarRestEAuth(url)
+    // o envio (XMLHttpRequest, com acompanhamento próprio) e a URL assinada da prévia ficam sem os 15 s
+    expect(limitar(`${url}/storage/v1/object/midias/x`)).toBe(false)
+    expect(limitar(`${url}/storage/v1/object/sign/midias/x`)).toBe(false)
+    // controle: o PostgREST das tabelas da Preparação continua com tempo-limite
+    expect(limitar(`${url}/rest/v1/midias`)).toBe(true)
   })
 })
