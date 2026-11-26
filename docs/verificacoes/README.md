@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | ativo |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- docs/verificacoes/README.md` |
-| Arquivos | `README.md`, `_modelo-registro-de-correcao.md`, `2026-11-16-001-core-e-estrutura-docs.md`, `2026-11-16-002-autorizacao-git-e-branch-trabalho.md`, `2026-11-16-003-devsecops-checagens-e-ci.md`, `2026-11-16-004-readme-raiz.md`, `2026-11-16-005-desenho-recomeco.md`, `2026-11-16-006-desenho-verificado.md`, `2026-11-17-007-plano-e0.md`, `2026-11-17-008-e0-limpeza-e-esqueleto.md`, `2026-11-17-009-e0-supabase-cliente.md`, `2026-11-22-010-e0-banco.md`, `2026-11-22-011-e0-checagens-banco.md`, `2026-11-18-012-audit-excecao-com-prazo.md`, `2026-11-22-013-commits-locais-pelo-agente.md`, `2026-11-26-014-plano-e1.md`, `2026-11-26-015-e1-dominio-acesso.md`, `2026-11-26-016-e1-banco-membros.md`, `2026-11-26-017-e1-adaptadores-acesso.md`, `2026-11-26-018-e1-entrada-e-guarda.md`, `2026-11-26-019-e1-painel-e-membros.md`, `2026-11-26-020-e1-conferencia-e-guia.md`, `2026-11-26-021-tempo-limite-supabase.md`, `2026-11-26-022-remove-excecao-picomatch.md` |
+| Arquivos | `README.md`, `_modelo-registro-de-correcao.md`, `2026-11-16-001-core-e-estrutura-docs.md`, `2026-11-16-002-autorizacao-git-e-branch-trabalho.md`, `2026-11-16-003-devsecops-checagens-e-ci.md`, `2026-11-16-004-readme-raiz.md`, `2026-11-16-005-desenho-recomeco.md`, `2026-11-16-006-desenho-verificado.md`, `2026-11-17-007-plano-e0.md`, `2026-11-17-008-e0-limpeza-e-esqueleto.md`, `2026-11-17-009-e0-supabase-cliente.md`, `2026-11-22-010-e0-banco.md`, `2026-11-22-011-e0-checagens-banco.md`, `2026-11-18-012-audit-excecao-com-prazo.md`, `2026-11-22-013-commits-locais-pelo-agente.md`, `2026-11-26-014-plano-e1.md`, `2026-11-26-015-e1-dominio-acesso.md`, `2026-11-26-016-e1-banco-membros.md`, `2026-11-26-017-e1-adaptadores-acesso.md`, `2026-11-26-018-e1-entrada-e-guarda.md`, `2026-11-26-019-e1-painel-e-membros.md`, `2026-11-26-020-e1-conferencia-e-guia.md`, `2026-11-26-021-tempo-limite-supabase.md`, `2026-11-26-022-remove-excecao-picomatch.md`, `2026-11-26-023-plano-e2.md` |
 
 ## Propósito
 
@@ -73,6 +73,7 @@ Criado em 2026-11-16 a partir da regra do CORE "todo commit leva documento em `d
 | [`2026-11-26-020-e1-conferencia-e-guia.md`](2026-11-26-020-e1-conferencia-e-guia.md) | VER-020 — E1, Tarefa 6: conferência no navegador dos dois builds (sem variáveis e com variáveis de mentira, Supabase interceptado; claro e escuro; 320, 390 e 1280 px), guia "Login Google (E1)" em `supabase/README.md` para o responsável (banco, Google Cloud, Supabase Auth sem curinga de host nas Redirect URLs, Vercel e conferência real) e a fila pendurada observada, sem tempo-limite, como decisão pendente |
 | [`2026-11-26-021-tempo-limite-supabase.md`](2026-11-26-021-tempo-limite-supabase.md) | VER-021 — tempo-limite de 15 s no `fetch` do cliente Supabase, só para `/rest/v1/` e `/auth/v1/` (Storage fora): uma chamada sem resposta vira erro de rede e a tela de falha com "Tentar de novo"; resolve a fila pendurada do VER-020 |
 | [`2026-11-26-022-remove-excecao-picomatch.md`](2026-11-26-022-remove-excecao-picomatch.md) | VER-022 — remoção da exceção `GHSA-fc5q-39xc-vjpf` (`picomatch`) de `EXCECOES` do `check-deps-audit`: o aviso não existe mais no registro do npm; 023 reservado ao próximo registro |
+| [`2026-11-26-023-plano-e2.md`](2026-11-26-023-plano-e2.md) | VER-023 — plano de implementação da etapa E2 (PLA-003): domínio Preparação, Biblioteca com o bucket privado `midias`, cenas, gestos, episódios e avisos |
 
 ## Lógica
 
@@ -95,7 +96,7 @@ flowchart LR
 Próximo registro (exemplo hipotético de 2026-11-30):
 
 ```bash
-cp docs/verificacoes/_modelo-registro-de-correcao.md docs/verificacoes/2026-11-30-024-exemplo.md
+cp docs/verificacoes/_modelo-registro-de-correcao.md docs/verificacoes/2026-11-30-032-exemplo.md
 ```
 
 Para consultar: `ls docs/verificacoes` (ordem cronológica) ou `grep -l "Status de implementação | implementado" docs/verificacoes/*.md`.

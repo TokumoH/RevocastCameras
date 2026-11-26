@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | ativo |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- docs/planos/README.md` |
-| Arquivos | `README.md`, `2026-11-17-e0-fundacao.md`, `2026-11-26-e1-entrada-e-membros.md` |
+| Arquivos | `README.md`, `2026-11-17-e0-fundacao.md`, `2026-11-26-e1-entrada-e-membros.md`, `2026-11-26-e2-preparar-episodio.md` |
 
 ## Propósito
 
@@ -46,6 +46,7 @@ Criado para o plano da etapa E0 do [DES-001](../desenho/2026-11-16-revocast-came
 | [`README.md`](README.md) | Este arquivo |
 | [`2026-11-17-e0-fundacao.md`](2026-11-17-e0-fundacao.md) | PLA-001 — etapa E0: limpeza, esqueleto, cliente Supabase, banco com RLS testada e checagens do banco |
 | [`2026-11-26-e1-entrada-e-membros.md`](2026-11-26-e1-entrada-e-membros.md) | PLA-002 — etapa E1: domínio Acesso, login Google com PKCE, guarda por papel, tela de erro de configuração, painel vazio com abas e aba Membros; migração nova só de políticas (nenhum admin altera nem remove a própria linha da lista) |
+| [`2026-11-26-e2-preparar-episodio.md`](2026-11-26-e2-preparar-episodio.md) | PLA-003 — etapa E2: domínio Preparação, Biblioteca (envio de sons e imagens ao bucket privado `midias`, com tipo pelos bytes, 50 MB, uso de 1 GB, progresso, cancelamento e corte por inatividade), cenas, mapa de gestos, episódios e avisos; simulação do Storage e checagens aceitando só as políticas de `storage.objects` da Biblioteca; migração nova do bucket e das políticas |
 
 ## Lógica
 
