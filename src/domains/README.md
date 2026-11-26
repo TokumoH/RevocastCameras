@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | em construção |
 | Commits | commit que introduz este arquivo — `git log --diff-filter=A --format=%h -- src/domains/README.md` |
-| Arquivos | `README.md`, `arquitetura.test.ts`, `acesso/` |
+| Arquivos | `README.md`, `arquitetura.test.ts`, `acesso/`, `preparacao/` |
 
 ## Propósito
 
@@ -19,12 +19,12 @@ Guarda os domínios do RevoCast Câmeras (DDD): regras de negócio puras e as **
 
 ## Origem
 
-Criado na Tarefa 1 da etapa E1 ([PLA-002](../../docs/planos/2026-11-26-e1-entrada-e-membros.md)), que faz nascer o primeiro domínio, `acesso/`. A pasta já estava prevista no [DES-001](../../docs/desenho/2026-11-16-revocast-cameras-desenho.md) (§6) e no [PLA-001](../../docs/planos/2026-11-17-e0-fundacao.md) ("novos domínios entram em `src/domains/<domínio>/`").
+Criado na Tarefa 1 da etapa E1 ([PLA-002](../../docs/planos/2026-11-26-e1-entrada-e-membros.md)), que faz nascer o primeiro domínio, `acesso/`. O segundo, `preparacao/`, nasce na Tarefa 1 da E2 ([PLA-003](../../docs/planos/2026-11-26-e2-preparar-episodio.md), decisão D1). A pasta já estava prevista no [DES-001](../../docs/desenho/2026-11-16-revocast-cameras-desenho.md) (§6) e no [PLA-001](../../docs/planos/2026-11-17-e0-fundacao.md) ("novos domínios entram em `src/domains/<domínio>/`").
 
 ## Organização
 
-- Uma subpasta por domínio (`acesso/` hoje; episódios, cenas e pareamento nas etapas seguintes), cada uma com o seu `README.md`.
-- Dentro do domínio: um arquivo por conceito (`papeis.ts`, `email.ts`, …), um arquivo de portas (`portas.ts`) e os serviços de domínio (`resolverAcesso.ts`), cada um com o `.test.ts` ao lado.
+- Uma subpasta por domínio (`acesso/` desde a E1; `preparacao/` desde a E2, com mídias, sons, cenas, gestos, episódios e avisos; o pareamento entra em `acesso/` na E3, como no DES-001 §6.1), cada uma com o seu `README.md`.
+- Dentro do domínio: um arquivo por conceito ou agregado (`papeis.ts`, `email.ts`, `midia.ts`, `cenas.ts`, …), um arquivo de portas (`portas.ts`) e os serviços de domínio (`resolverAcesso.ts`, `biblioteca.ts`), cada um com o `.test.ts` ao lado.
 - `arquitetura.test.ts`, na raiz da pasta, vale para **todos** os domínios: lê o texto de cada arquivo `.ts`, `.tsx`, `.mts`, `.cts`, `.js` ou `.jsx` (menos os `.test.*`) e recusa import de `react`, `@supabase/*`, `shared/` ou `app/`.
 
 ## Por que esta organização
@@ -47,6 +47,7 @@ O domínio é a parte que muda menos e que mais precisa de prova: deixá-lo sem 
 | [`README.md`](README.md) | Este arquivo |
 | [`arquitetura.test.ts`](arquitetura.test.ts) | 3 testes: o glob acha os arquivos; nenhum arquivo de domínio importa React, Supabase, `shared/` ou `app/`; o detector reconhece as formas de import proibidas |
 | [`acesso/`](acesso/) | Domínio Acesso: papéis, e-mail, lista de acesso, estados da sessão, retorno do login, portas e `resolverAcesso` |
+| [`preparacao/`](preparacao/) | Domínio Preparação: tipos aceitos pelos bytes, limites de 50 MB e 1 GB, caminho no Storage, cenas, mapa de gestos, episódios e avisos, mídia em uso, portas e o serviço da Biblioteca (`enviarMidia`, `excluirMidia`) |
 
 ## Lógica
 
@@ -59,18 +60,18 @@ flowchart RL
 ```
 
 1. O domínio declara o que precisa (portas) e decide (regras e serviços), sem importar nada de fora.
-2. `shared/infra` implementa as portas com o Supabase (E1, Tarefa 3).
+2. `shared/infra` implementa as portas com o Supabase (Acesso: E1, Tarefa 3; Preparação: E2, Tarefa 4).
 3. `app/` cria os adaptadores e entrega ao domínio (composição), e mostra o resultado nas telas.
 4. `arquitetura.test.ts` roda no `npm test` e falha se um arquivo de domínio importar React, Supabase, `shared/` ou `app/`.
 
 ## Exemplo
 
-Para saber quem pode abrir `/painel`: `acesso/papeis.ts`, função `podeAbrir('painel', papel)`. Para criar um domínio novo: `src/domains/<dominio>/` com `README.md` (11 seções), as regras e as portas; o teste de arquitetura passa a cobri-lo sem configuração.
+Para saber quem pode abrir `/painel`: `acesso/papeis.ts`, função `podeAbrir('painel', papel)`. Para saber se um arquivo pode entrar na Biblioteca: `preparacao/midia.ts`, função `conferirArquivo`. Para criar um domínio novo: `src/domains/<dominio>/` com `README.md` (11 seções), as regras e as portas; o teste de arquitetura passa a cobri-lo sem configuração.
 
 ## Verificação
 
-- `npx vitest run src/domains`: 7 arquivos, 46 testes.
-- Sabotagem do teste de arquitetura: `import type { SupabaseClient } from '@supabase/supabase-js'` em `acesso/portas.ts` → o teste falha citando `./acesso/portas.ts` (VER-015).
+- `npx vitest run src/domains`: 13 arquivos, 112 testes (7 arquivos e 46 testes até a E1; `preparacao/` soma 6 arquivos e 66 testes).
+- Sabotagem do teste de arquitetura: `import type { SupabaseClient } from '@supabase/supabase-js'` em `acesso/portas.ts` → o teste falha citando `./acesso/portas.ts` (VER-015); o mesmo import em `preparacao/portas.ts` derruba o teste (VER-024).
 - Links relativos, "Onde", campo "Arquivos" e README do subdiretório conferidos por `npm run check-docs`.
 
 ## Riscos

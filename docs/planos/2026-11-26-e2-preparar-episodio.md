@@ -247,7 +247,7 @@ export interface ArmazenamentoDeMidia {
 export interface ServicosDePreparacao { midias: RepositorioDeMidias; sons: RepositorioDeSons; cenas: RepositorioDeCenas; episodios: RepositorioDeEpisodios; gestos: RepositorioDeGestos; armazenamento: ArmazenamentoDeMidia }
 
 // biblioteca.ts
-export interface ArquivoEscolhido { nome: string; tamanho: number; inicio: Uint8Array; corpo: Blob }
+export interface ArquivoEscolhido { nome: string; inicio: Uint8Array; corpo: Blob } // tamanho vem de corpo.size (VER-024)
 export type ResultadoDoEnvio = { ok: true; midia: NovaMidia } | { ok: false; motivo: RecusaDoArquivo }
 export async function enviarMidia(s: ServicosDePreparacao, a: ArquivoEscolhido, ctx: { usoAtualBytes: number; membroId: string; gerarId: () => string; ordemDoSom: number }, opcoes: OpcoesDoEnvio): Promise<ResultadoDoEnvio>
 export async function excluirMidia(s: ServicosDePreparacao, m: Midia): Promise<{ arquivoFicou: boolean }>
