@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | ativo |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- docs/planos/README.md` |
-| Arquivos | `README.md`, `2026-11-17-e0-fundacao.md` |
+| Arquivos | `README.md`, `2026-11-17-e0-fundacao.md`, `2026-11-26-e1-entrada-e-membros.md` |
 
 ## Propósito
 
@@ -45,6 +45,7 @@ Criado para o plano da etapa E0 do [DES-001](../desenho/2026-11-16-revocast-came
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
 | [`2026-11-17-e0-fundacao.md`](2026-11-17-e0-fundacao.md) | PLA-001 — etapa E0: limpeza, esqueleto, cliente Supabase, banco com RLS testada e checagens do banco |
+| [`2026-11-26-e1-entrada-e-membros.md`](2026-11-26-e1-entrada-e-membros.md) | PLA-002 — etapa E1: domínio Acesso, login Google com PKCE, guarda por papel, tela de erro de configuração, painel vazio com abas e aba Membros; migração nova só de políticas (nenhum admin altera nem remove a própria linha da lista) |
 
 ## Lógica
 
@@ -57,7 +58,7 @@ flowchart LR
 
 ## Exemplo
 
-Para saber quais testes provam as regras de acesso do banco: abrir o PLA-001, Tarefa 3, tabela de testes do passo 2.
+Para saber quais testes provam as regras de acesso do banco: abrir o PLA-001, Tarefa 3, tabela de testes do passo 2. Para saber como a E1 trata quem não está na lista de acesso: abrir o PLA-002, "Foco da revisão", item 1, e seguir os nomes dos testes até a tarefa dona.
 
 ## Verificação
 

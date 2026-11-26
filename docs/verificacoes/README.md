@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | ativo |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- docs/verificacoes/README.md` |
-| Arquivos | `README.md`, `_modelo-registro-de-correcao.md`, `2026-11-16-001-core-e-estrutura-docs.md`, `2026-11-16-002-autorizacao-git-e-branch-trabalho.md`, `2026-11-16-003-devsecops-checagens-e-ci.md`, `2026-11-16-004-readme-raiz.md`, `2026-11-16-005-desenho-recomeco.md`, `2026-11-16-006-desenho-verificado.md`, `2026-11-17-007-plano-e0.md`, `2026-11-17-008-e0-limpeza-e-esqueleto.md`, `2026-11-17-009-e0-supabase-cliente.md`, `2026-11-22-010-e0-banco.md`, `2026-11-22-011-e0-checagens-banco.md`, `2026-11-18-012-audit-excecao-com-prazo.md`, `2026-11-22-013-commits-locais-pelo-agente.md` |
+| Arquivos | `README.md`, `_modelo-registro-de-correcao.md`, `2026-11-16-001-core-e-estrutura-docs.md`, `2026-11-16-002-autorizacao-git-e-branch-trabalho.md`, `2026-11-16-003-devsecops-checagens-e-ci.md`, `2026-11-16-004-readme-raiz.md`, `2026-11-16-005-desenho-recomeco.md`, `2026-11-16-006-desenho-verificado.md`, `2026-11-17-007-plano-e0.md`, `2026-11-17-008-e0-limpeza-e-esqueleto.md`, `2026-11-17-009-e0-supabase-cliente.md`, `2026-11-22-010-e0-banco.md`, `2026-11-22-011-e0-checagens-banco.md`, `2026-11-18-012-audit-excecao-com-prazo.md`, `2026-11-22-013-commits-locais-pelo-agente.md`, `2026-11-26-014-plano-e1.md` |
 
 ## Propósito
 
@@ -64,6 +64,7 @@ Criado em 2026-11-16 a partir da regra do CORE "todo commit leva documento em `d
 | [`2026-11-22-011-e0-checagens-banco.md`](2026-11-22-011-e0-checagens-banco.md) | VER-011 — E0, Tarefa 4: checagens de banco `rpc:grants-check` e `data-api:check` no `npm run check`, aplicando as migrações num PGlite com a simulação do Supabase e lendo o catálogo |
 | [`2026-11-18-012-audit-excecao-com-prazo.md`](2026-11-18-012-audit-excecao-com-prazo.md) | VER-012 — `check-deps-audit` com exceções explícitas e com prazo (aviso do `picomatch` sem correção); VER-010 e VER-011 reservados às Tarefas 3 e 4 da E0 |
 | [`2026-11-22-013-commits-locais-pelo-agente.md`](2026-11-22-013-commits-locais-pelo-agente.md) | VER-013 — commits locais pelo agente principal, só de versões limpas; push continua com o usuário |
+| [`2026-11-26-014-plano-e1.md`](2026-11-26-014-plano-e1.md) | VER-014 — plano de implementação da etapa E1 (PLA-002): entrada com Google, guarda por papel e aba Membros; autonomia concedida pelo responsável |
 
 ## Lógica
 
@@ -83,10 +84,10 @@ flowchart LR
 
 ## Exemplo
 
-Próximo registro (exemplo hipotético de 2026-11-23):
+Próximo registro (exemplo hipotético de 2026-11-30):
 
 ```bash
-cp docs/verificacoes/_modelo-registro-de-correcao.md docs/verificacoes/2026-11-23-014-exemplo.md
+cp docs/verificacoes/_modelo-registro-de-correcao.md docs/verificacoes/2026-11-30-021-exemplo.md
 ```
 
 Para consultar: `ls docs/verificacoes` (ordem cronológica) ou `grep -l "Status de implementação | implementado" docs/verificacoes/*.md`.
