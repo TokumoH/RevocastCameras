@@ -1,10 +1,16 @@
-// Banco de testes: PGlite (Postgres em WASM) com a simulação do Supabase e a migração inicial.
+// Banco de testes: PGlite (Postgres em WASM) com a simulação do Supabase e todas as migrações, em ordem.
 // Uso por arquivo de teste: criarBanco() e semearDados() no beforeAll, db.close() no afterAll e
 // cada teste dentro de uma transação (begin no beforeEach, rollback no afterEach).
 import { PGlite } from '@electric-sql/pglite'
 import simulacao from './simulacao-supabase.sql?raw'
 import donoMigracao from './dono-migracao.sql?raw'
-import migracao from '../migrations/20261117000000_fundacao.sql?raw'
+
+// Todas as migrações, em ordem de nome (o prefixo AAAAMMDDHHMMSS é a ordem de aplicação, como na Supabase CLI).
+const MIGRACOES: { arquivo: string; sql: string }[] = Object.entries(
+  import.meta.glob('../migrations/*.sql', { query: '?raw', import: 'default', eager: true }) as Record<string, string>,
+)
+  .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  .map(([caminho, sql]) => ({ arquivo: caminho.slice(caminho.lastIndexOf('/') + 1), sql }))
 
 /** Claims do JWT de uma sessão do Supabase (só os campos que a migração lê). */
 export type Claims = {
@@ -43,8 +49,8 @@ export const ID_PALCO = '00000000-0000-4000-8000-00000000d002'
 export const ID_OBS_CAMERA = '00000000-0000-4000-8000-00000000d003'
 
 /**
- * Cria o banco em memória e aplica a simulação do Supabase e o dono das migrações (como superusuário) e a
- * migração como postgres_sim, sem superusuário nem BYPASSRLS (ver dono-migracao.sql). Assim uma regressão que
+ * Cria o banco em memória e aplica a simulação do Supabase e o dono das migrações (como superusuário) e as
+ * migrações (todas, em ordem de nome) como postgres_sim, sem superusuário nem BYPASSRLS (ver dono-migracao.sql). Assim uma regressão que
  * só aparece com dono comum (por exemplo, FORCE ROW LEVEL SECURITY em dispositivos) quebra os testes. Depois o
  * banco volta ao superusuário, que os testes usam para semear e tirar retratos.
  */
@@ -56,7 +62,7 @@ export async function criarBanco(opcoes: { exporTabelasNovas?: boolean; aplicarM
   if (opcoes.aplicarMigracao === false) return db
   await db.exec('set role postgres_sim')
   try {
-    await db.exec(migracao)
+    for (const { sql } of MIGRACOES) await db.exec(sql)
   } finally {
     await db.exec('reset role')
   }

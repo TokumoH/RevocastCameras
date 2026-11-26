@@ -15,7 +15,7 @@
 
 ## Propósito
 
-Tudo o que é do banco Postgres do Supabase: as migrações versionadas (tipos, tabelas, funções, gatilho, RLS e dados iniciais) e os testes que provam a RLS e as restrições sem precisar de conta nem de Docker. Este README também é o manual de aplicação: como levar a migração ao projeto Supabase e como inserir o primeiro `admin`.
+Tudo o que é do banco Postgres do Supabase: as migrações versionadas (tipos, tabelas, funções, gatilho, RLS e dados iniciais) e os testes que provam a RLS e as restrições sem precisar de conta nem de Docker. Este README também é o manual de aplicação: como levar as migrações ao projeto Supabase, sempre em ordem, e como inserir (ou recuperar) o primeiro `admin`.
 
 ## Origem
 
@@ -33,7 +33,7 @@ Criado na Tarefa 3 da etapa E0 ([PLA-001](../docs/planos/2026-11-17-e0-fundacao.
 ## Por que esta organização
 
 - O formato da CLI deixa o caminho aberto para `supabase db push` sem obrigar ninguém a guardar a senha do banco agora.
-- Testes em PGlite rodam no `npm test` (e, por ele, no hook `pre-push` e na CI), sem conta e sem Docker; localmente os três arquivos de teste (493 testes) levam cerca de 10 s (medido em 2026-11-21 com 4 núcleos: `npx vitest run supabase/tests` em 7,3 a 9,7 s; 11,7 s com um worker só), bem dentro do limite de 5 min do job da CI; a simulação é pequena e fica ao lado dos testes, longe das migrações (nunca é aplicada no Supabase).
+- Testes em PGlite rodam no `npm test` (e, por ele, no hook `pre-push` e na CI), sem conta e sem Docker; localmente os três arquivos de teste (501 testes desde a E1; 493 na E0) levam cerca de 10 s (medido em 2026-11-21 com 4 núcleos, ainda com 493: `npx vitest run supabase/tests` em 7,3 a 9,7 s; 11,7 s com um worker só; com 501, 9,0 s em 2026-11-26), bem dentro do limite de 5 min do job da CI; a simulação é pequena e fica ao lado dos testes, longe das migrações (nunca é aplicada no Supabase).
 
 ## Por que não outras organizações
 
@@ -50,22 +50,22 @@ Criado na Tarefa 3 da etapa E0 ([PLA-001](../docs/planos/2026-11-17-e0-fundacao.
 | Arquivo ou subdiretório | O que contém |
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
-| [`migrations/`](migrations/README.md) | Migrações SQL versionadas (hoje: `20261117000000_fundacao.sql`) |
+| [`migrations/`](migrations/README.md) | Migrações SQL versionadas, aplicadas em ordem de nome (hoje: `20261117000000_fundacao.sql` e `20261126142500_membros_sem_autoalteracao.sql`) |
 | [`tests/`](tests/README.md) | Simulação do Supabase, `banco.ts`, testes de RLS e de restrições e a matriz de permissões papel × tabela × operação do DES-001 (seção 8) |
 
 ## Lógica
 
 ```mermaid
 flowchart LR
-    M[migrations/*.sql] -->|colar no editor SQL| S[(Supabase)]
+    M[migrations/*.sql<br/>em ordem de nome] -->|colar no editor SQL, uma por vez| S[(Supabase)]
     A[comando do primeiro admin<br/>nunca versionado] -->|editor SQL| S
     SIM[tests/simulacao-supabase.sql] --> B[tests/banco.ts<br/>criarBanco]
     DONO[tests/dono-migracao.sql<br/>postgres_sim] --> B
-    M --> B
+    M -->|todas, em ordem| B
     B --> T[tests/*.test.ts<br/>npm test, hook e CI]
 ```
 
-1. **Aplicar a migração (editor SQL, caminho da E0):** no painel do Supabase, abrir *SQL Editor*, colar o conteúdo inteiro de [`migrations/20261117000000_fundacao.sql`](migrations/20261117000000_fundacao.sql) e executar. Não exige a senha do banco nem login da CLI.
+1. **Aplicar as migrações (editor SQL, caminho da E0 e da E1), sempre em ordem de nome e cada uma uma vez só:** no painel do Supabase, abrir *SQL Editor*, colar o conteúdo inteiro de [`migrations/20261117000000_fundacao.sql`](migrations/20261117000000_fundacao.sql) e executar; depois, numa nova consulta, o de [`migrations/20261126142500_membros_sem_autoalteracao.sql`](migrations/20261126142500_membros_sem_autoalteracao.sql) (E1, decisão D1 do PLA-002: nenhum `admin` altera nem remove a própria linha). Quem já aplicou a de fundação aplica só a segunda; aplicar a segunda é passo pendente do responsável (Tarefa 6 do PLA-002). Não exige a senha do banco nem login da CLI.
 2. **Inserir o primeiro `admin`** (uma vez, no editor SQL, trocando `<e-mail>` pelo e-mail Google do responsável; o comando preenchido nunca é salvo no repositório):
 
    ```sql
@@ -73,6 +73,8 @@ flowchart LR
    ```
 
    Os demais membros são adicionados pelo próprio `admin` (aba Membros, E1).
+
+   **Recuperação do último `admin`:** nenhum `admin` altera nem remove a própria linha (segunda migração), então sempre sobra um no uso normal; só dois admins que se removem um ao outro no mesmo instante podem zerar os admins. Nesse caso, o dono roda no editor SQL o mesmo comando acima (se o e-mail saiu da lista) ou, se o e-mail ainda está na lista com outro papel, `update public.membros_permitidos set papel = 'admin' where email = lower('<e-mail>');` (também nunca salvo preenchido).
 3. **Testar localmente:** `npx vitest run supabase/tests` (também roda dentro do `npm test`).
 
 ## Exemplo
@@ -82,17 +84,18 @@ Alternativa pela **Supabase CLI** (quando ela passar a ser usada):
 1. `supabase login`.
 2. `supabase init`, respondendo **"não"** às perguntas de gerar configurações do VS Code e do IntelliJ (senão nascem as pastas `.vscode/` ou `.idea/` rastreadas, sem README).
 3. `supabase link --project-ref <ref>` (pede a senha do banco).
-4. Só se a migração já tiver sido aplicada pelo editor SQL (o editor não a registra em `supabase_migrations.schema_migrations`): `supabase migration repair --status applied 20261117000000` (exige o projeto ligado no passo 3).
+4. Só para as migrações já aplicadas pelo editor SQL (o editor não as registra em `supabase_migrations.schema_migrations`): `supabase migration repair --status applied <versão>` para cada uma, por exemplo `20261117000000` e `20261126142500` (exige o projeto ligado no passo 3).
 5. `supabase db push`.
 6. Antes do commit: apagar do `supabase/config.toml` gerado as duas linhas comentadas `admin_email` (são e-mails de exemplo que o `check-doc-secrets` acusa) e acrescentar `config.toml` e `.gitignore` em "Onde" e no campo "Arquivos" deste README.
 
 ## Verificação
 
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`; os dois subdiretórios têm README próprio.
-- A migração foi aplicada e testada em PGlite (Postgres 18.6) com a simulação: 493 testes (51 em `rls.test.ts`, 32 em `restricoes.test.ts` e 410 em `matriz.test.ts`, que cobre as 396 células da matriz de permissões), com a migração aplicada por `postgres_sim`, um dono sem superusuário, como o `postgres` do Supabase; o que eles provam, o que só as checagens de banco cobrem e o que não tem teste está em [`migrations/README.md`](migrations/README.md), "Verificação"; detalhes e sabotagens no registro VER-010.
+- As migrações foram aplicadas em ordem e testadas em PGlite (Postgres 18.6) com a simulação: 501 testes (59 em `rls.test.ts`, 8 deles do bloco da E1; 32 em `restricoes.test.ts`; e 410 em `matriz.test.ts`, que cobre as 396 células da matriz de permissões), com as migrações aplicadas por `postgres_sim`, um dono sem superusuário, como o `postgres` do Supabase; o que eles provam, o que só as checagens de banco cobrem e o que não tem teste está em [`migrations/README.md`](migrations/README.md), "Verificação"; detalhes e sabotagens nos registros VER-010 (fundação) e VER-016 (segunda migração).
 
 ## Riscos
 
+- A segunda migração (`20261126142500_membros_sem_autoalteracao.sql`) também **não foi aplicada num Supabase real**: aplicá-la depois da de fundação é passo do responsável (Tarefa 6 do PLA-002); até lá, no banco real um `admin` ainda consegue remover a própria linha. O limite da corrida de dois admins e a recuperação estão acima (passo 2 de "Lógica") e em [`migrations/README.md`](migrations/README.md).
 - A migração **não foi aplicada num Supabase real** nesta tarefa: a simulação reproduz só o que a migração usa (papéis `anon`, `authenticated`, `service_role` e `supabase_auth_admin`, privilégios padrão no padrão vigente desde 2026-10-30, nas variantes com a exposição automática de tabelas desligada e ligada, `auth.users` com seis colunas, `auth.jwt()` e `auth.uid()`). Diferenças de versão do Postgres do projeto (por exemplo, `on delete set null (coluna)` exige Postgres 15 ou mais novo) só aparecem ao aplicar.
 - Privilégios de tabela (Correção 13 da Tarefa 3): desde 2026-10-30 o Supabase não dá mais `select`, `insert`, `update` e `delete` automáticos em tabelas novas de `public` ([changelog](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically)); a migração dá `grant` explícito a `authenticated` só do que as políticas usam e revoga o resto (detalhes em [`migrations/README.md`](migrations/README.md)). A premissa veio do changelog e da documentação, não de um projeto real. `service_role` não tem nenhum privilégio de tabela nem de sequência (a migração revoga dele o que os privilégios padrão do Supabase dariam: hoje `truncate`, `references`, `trigger` e `maintain`; com "Automatically expose new tables" ligado, tudo) nem `EXECUTE` nas 3 funções (Correção 14). A chave de serviço continua passando por cima da RLS (`BYPASSRLS`), mas sem privilégio não acessa nada: um uso futuro no servidor (por exemplo, uma Edge Function com a chave secreta) pede decisão própria, com o `grant` explícito a `service_role` na migração que precisar dele e, a partir do VER-011, o ajuste do `data-api:check`, que acusa qualquer privilégio de `service_role`; tabela criada por outro papel que não o das migrações (por exemplo, pelo painel com outro dono) recebe os privilégios padrão do projeto, também para `service_role`.
 - O editor SQL não registra a migração para a CLI: esquecer o `migration repair` faz o `db push` tentar aplicá-la de novo (e falhar em objetos que já existem).

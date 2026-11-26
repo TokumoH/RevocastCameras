@@ -76,7 +76,7 @@ flowchart LR
 npm run check-docs
 ```
 
-Saída esperada sem problemas: `check-docs: 0 erro(s) — N arquivos .md, M registro(s)`; nas checagens de banco, `check-rpc-grants: 0 erro(s) — 1 migração(ões)`. Com um diretório novo sem README: `ERRO [check-docs] pasta/ sem README.md` e código de saída 1.
+Saída esperada sem problemas: `check-docs: 0 erro(s) — N arquivos .md, M registro(s)`; nas checagens de banco, `check-rpc-grants: 0 erro(s) — 2 migração(ões)` (uma por arquivo de `supabase/migrations/`). Com um diretório novo sem README: `ERRO [check-docs] pasta/ sem README.md` e código de saída 1.
 
 Para acrescentar uma checagem: criar `check-<nome>.mjs` usando `reporter()` de `_lib.mjs`, registrar em `package.json` (e em `check`, se for parte do conjunto) e listar aqui em "Onde".
 

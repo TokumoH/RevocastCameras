@@ -920,3 +920,102 @@ describe('preparação, lista e registro (Correção 1)', () => {
     expect(await contar('registro_acoes')).toBe(1) // a ação inserida continua lá
   })
 })
+
+// E1 (PLA-002, Tarefa 2): o que a entrada e a aba Membros pedem do banco. Os comandos são o SQL equivalente ao que o
+// adaptador manda pela Data API (update/delete com where e returning). Mesmo banco e mesmas transações do arquivo.
+// Decisão D1 (migração membros_sem_autoalteracao): nenhum admin altera nem remove a própria linha da lista.
+describe('E1 — entrada e lista de acesso', () => {
+  const EMAIL_ADM2 = 'adm2@revocast.test'
+  const UID_ADM2 = '00000000-0000-4000-8000-00000000a005'
+  const adm2 = membroGoogle(EMAIL_ADM2, UID_ADM2)
+
+  /** E-mail e papel de todas as linhas da lista, lidos como superusuário. */
+  async function retratoDaLista(): Promise<{ email: string; papel: string }[]> {
+    return (await db.query<{ email: string; papel: string }>('select email, papel from public.membros_permitidos order by email')).rows
+  }
+  const LISTA_SEMEADA = [
+    { email: EMAIL_ADM, papel: 'admin' },
+    { email: EMAIL_ANA, papel: 'equipe' },
+    { email: EMAIL_BIA, papel: 'apresentadora' },
+  ]
+  const ALTERA_PAPEL = (papelNovo: string) => `update public.membros_permitidos set papel = '${papelNovo}' where email = $1 returning email`
+  const REMOVE = 'delete from public.membros_permitidos where email = $1 returning email'
+
+  test('e1-papel-de-cada-sessao', async () => {
+    await cadastrarEstranho()
+    expect([await papel(ana), await papel(bia), await papel(adm), await papel(estranho)]).toEqual(['equipe', 'apresentadora', 'admin', null])
+  })
+
+  test('e1-admin-troca-papel-vale-na-hora', async () => {
+    linhas(await comoSessao(db, ana, INSERE_CENA)) // controle: antes da troca, a equipe insere
+    await db.query(`delete from public.cenas where nome_obs = 'Cena Entrevista'`) // o mesmo insert volta a ser válido
+    expect(linhas(await comoSessao(db, adm, ALTERA_PAPEL('apresentadora'), [EMAIL_ANA]))).toEqual([{ email: EMAIL_ANA }])
+    expect(await papel(ana)).toBe('apresentadora')
+    expect(erro(await comoSessao(db, ana, INSERE_CENA)).message).toBe(violaRls('cenas'))
+  })
+
+  test('e1-admin-remove-vale-na-hora', async () => {
+    expect(await ids(ana, 'cenas')).toEqual([ID_CENA]) // controle
+    expect(linhas(await comoSessao(db, adm, REMOVE, [EMAIL_ANA]))).toEqual([{ email: EMAIL_ANA }])
+    expect(await papel(ana)).toBeNull()
+    expect(await ids(ana, 'cenas')).toEqual([])
+    // O perfil continua em membros (DES-001 §7), sem papel.
+    expect((await db.query('select id from public.membros where id = $1', [UID_ANA])).rows).toEqual([{ id: UID_ANA }])
+  })
+
+  test('e1-liberado-depois-de-entrar', async () => {
+    await cadastrarEstranho() // entrou antes de ser liberado: o gatilho criou o perfil
+    expect((await db.query('select id from public.membros where id = $1', [UID_ESTRANHO])).rows).toEqual([{ id: UID_ESTRANHO }])
+    expect(await papel(estranho)).toBeNull()
+    linhas(
+      await comoSessao(db, adm, `insert into public.membros_permitidos (email, papel, criado_por) values ($1, 'equipe', $2)`, [EMAIL_ESTRANHO, UID_ADM]),
+    )
+    expect(await papel(estranho)).toBe('equipe')
+  })
+
+  test('e1-equipe-nao-escreve-na-lista', async () => {
+    expect(await retratoDaLista()).toEqual(LISTA_SEMEADA)
+    // (1) Como o adaptador: com where e returning, 0 linhas e sem erro (o caso nada_alterado).
+    expect(linhas(await comoSessao(db, ana, ALTERA_PAPEL('admin'), [EMAIL_ANA]))).toEqual([])
+    expect(linhas(await comoSessao(db, ana, REMOVE, [EMAIL_BIA]))).toEqual([])
+    expect(await retratoDaLista()).toEqual(LISTA_SEMEADA)
+    // (2) Sem where e sem returning: só a política de escrita decide (com where ou returning, a de leitura, só do
+    // admin, também entra e esconderia uma política de escrita afrouxada).
+    expect(linhas(await comoSessao(db, ana, `update public.membros_permitidos set papel = 'apresentadora'`))).toEqual([])
+    expect(linhas(await comoSessao(db, ana, 'delete from public.membros_permitidos'))).toEqual([])
+    expect(await retratoDaLista()).toEqual(LISTA_SEMEADA)
+  })
+
+  test('e1-admin-nao-altera-a-si-mesmo', async () => {
+    // O e-mail da sessão como semeado e em maiúsculas (a comparação é a de papel_atual(): minúsculas).
+    for (const emailDaSessao of [EMAIL_ADM, 'Adm@Revocast.TEST']) {
+      const sessao = membroGoogle(emailDaSessao, UID_ADM)
+      expect([emailDaSessao, linhas(await comoSessao(db, sessao, ALTERA_PAPEL('equipe'), [EMAIL_ADM]))]).toEqual([emailDaSessao, []])
+      expect([emailDaSessao, linhas(await comoSessao(db, sessao, REMOVE, [EMAIL_ADM]))]).toEqual([emailDaSessao, []])
+      expect([emailDaSessao, await papel(sessao)]).toEqual([emailDaSessao, 'admin'])
+      expect(await retratoDaLista()).toEqual(LISTA_SEMEADA)
+    }
+    // Nem trocando o e-mail de outra linha pelo próprio: o with check recusa antes da chave primária.
+    expect(erro(await comoSessao(db, adm, 'update public.membros_permitidos set email = $1 where email = $2', [EMAIL_ADM, EMAIL_ANA])).message).toBe(
+      violaRls('membros_permitidos'),
+    )
+    // Controle: o mesmo admin altera a linha de outra pessoa.
+    expect(linhas(await comoSessao(db, adm, ALTERA_PAPEL('apresentadora'), [EMAIL_ANA]))).toEqual([{ email: EMAIL_ANA }])
+  })
+
+  test('e1-admin-remove-outro-admin', async () => {
+    await db.query(`insert into public.membros_permitidos (email, papel) values ($1, 'admin')`, [EMAIL_ADM2])
+    await cadastrarUsuario(db, { uid: UID_ADM2, email: EMAIL_ADM2, anonimo: false, provedor: 'google', confirmado: true })
+    expect(await papel(adm2)).toBe('admin') // controle
+    expect(linhas(await comoSessao(db, adm, ALTERA_PAPEL('equipe'), [EMAIL_ADM2]))).toEqual([{ email: EMAIL_ADM2 }])
+    expect(await papel(adm2)).toBe('equipe')
+    expect(linhas(await comoSessao(db, adm, REMOVE, [EMAIL_ADM2]))).toEqual([{ email: EMAIL_ADM2 }])
+    expect(await papel(adm2)).toBeNull()
+  })
+
+  test('e1-sempre-sobra-um-admin', async () => {
+    linhas(await comoSessao(db, adm, 'delete from public.membros_permitidos'))
+    expect(await retratoDaLista()).toEqual([{ email: EMAIL_ADM, papel: 'admin' }])
+    expect(await papel(adm)).toBe('admin')
+  })
+})

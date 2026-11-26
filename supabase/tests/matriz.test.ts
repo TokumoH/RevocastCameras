@@ -13,6 +13,10 @@
 // update sem where altera toda linha; delete sem where esvazia a tabela. Assim uma política que prenda
 // equipe/admin às "próprias linhas" (criado_por = auth.uid()) é pega. Proibido: select lê 0 linhas; insert da mesma linha válida sai com violação
 // de RLS; update/delete sem where não muda o retrato (e não dá erro).
+// - Exceção ao alcance total (PROPRIA_LINHA_INTOCADA): DES-001 §8 diz que o admin lê e escreve
+//   membros_permitidos; a decisão D1 do PLA-002 (controlador; migração membros_sem_autoalteracao) acrescenta que
+//   nenhum admin altera nem remove a própria linha. Nas células membros_permitidos × adm × update e × delete, o
+//   permitido é "toda linha muda (update) ou some (delete), exceto a linha do e-mail da sessão, que fica idêntica".
 // - Privilégio de tabela (Correção 13): desde 2026-10-30 o Supabase não dá mais privilégios automáticos de
 //   leitura e escrita em tabelas novas (simulacao-supabase.sql), e a migração dá a authenticated só as
 //   operações que algum papel da matriz tem (temPrivilegio, derivado da própria MATRIZ); anon não tem nenhuma.
@@ -93,6 +97,18 @@ const ID_SOM_APLAUSO = '00000000-0000-4000-8000-00000000f007'
  */
 const RECORTES: Partial<Record<string, Partial<Record<Papel, string[]>>>> = {
   dispositivos: { camera: [ID_CAMERA], obs_camera: [ID_CAMERA, ID_OBS_CAMERA] },
+}
+
+/**
+ * Linha que o permitido não alcança no update e no delete sem where (coluna email = valor), por tabela e papel.
+ * DES-001 §8 ("admin lê e escreve membros_permitidos") com a regra da decisão D1 do PLA-002, decidida pelo
+ * controlador: nenhum admin altera nem remove a própria linha da lista. A célula continua pegando uma política que
+ * prenda o admin às "próprias linhas" (criado_por = auth.uid()), porque todas as demais linhas, inclusive as de
+ * criado_por = adm, têm de mudar (update) ou sumir (delete). Só o update e o delete; select e insert seguem o
+ * alcance total.
+ */
+const PROPRIA_LINHA_INTOCADA: Partial<Record<string, Partial<Record<Papel, string>>>> = {
+  membros_permitidos: { adm: EMAIL_ADM },
 }
 
 const PAPEIS = {
@@ -399,7 +415,15 @@ describe('matriz de permissões (DES-001 §8)', () => {
       if (permitido) {
         // Permitido alcança toda linha: no update, nenhuma linha sobra igual; no delete, a tabela esvazia.
         const conta = async (sql: string) => (await db.query<{ n: number }>(sql)).rows[0].n
-        if (operacao === 'update') expect(await conta(`select count(*)::int as n from public.${tabela} x where x::text in (select t from antes_celula)`)).toBe(0)
+        const intocada = PROPRIA_LINHA_INTOCADA[tabela]?.[papel]
+        if (intocada) {
+          // Exceção (D1): a linha intocada fica idêntica e é a única que sobra igual (update) ou que sobra (delete).
+          const filtro = operacao === 'update' ? 'where x::text in (select t from antes_celula)' : ''
+          const sobra = await db.query<{ email: string; igual: boolean }>(
+            `select email, x::text in (select t from antes_celula) as igual from public.${tabela} x ${filtro} order by email`,
+          )
+          expect(sobra.rows).toEqual([{ email: intocada, igual: true }])
+        } else if (operacao === 'update') expect(await conta(`select count(*)::int as n from public.${tabela} x where x::text in (select t from antes_celula)`)).toBe(0)
         else expect(await conta(`select count(*)::int as n from public.${tabela}`)).toBe(0)
         expect(depois).not.toBe(antes)
       } else expect(depois).toBe(antes)
