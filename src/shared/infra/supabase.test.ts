@@ -1,13 +1,19 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 const createClient = vi.hoisted(() => vi.fn((..._args: unknown[]) => ({ marcador: 'cliente' })))
 vi.mock('@supabase/supabase-js', () => ({ createClient }))
 
 import { chaveDeArmazenamento, criarClienteSupabase, opcoesDeAuth, type TipoDeSessao } from './supabase'
+import { TEMPO_LIMITE_SUPABASE_MS } from './tempoLimite'
 
 const tipos: TipoDeSessao[] = ['membro', 'camera', 'obs_palco', 'obs_camera']
 
 beforeEach(() => createClient.mockClear())
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 describe('chaveDeArmazenamento', () => {
   test('cada tipo de sessão tem chave própria', () => {
@@ -54,6 +60,7 @@ describe('criarClienteSupabase', () => {
           persistSession: true,
           autoRefreshToken: true,
         },
+        global: { fetch: expect.any(Function) },
       })
     })
     const chaves = createClient.mock.calls.map((c) => (c[2] as { auth: { storageKey: string } }).auth.storageKey)
@@ -69,5 +76,34 @@ describe('criarClienteSupabase', () => {
     expect(a).toBe('revocast-auth-membro')
     expect(b).toBe('revocast-auth-camera')
     expect(a).not.toBe(b)
+  })
+
+  test('o fetch entregue ao createClient tem tempo-limite de 15 s em rest/v1 e auth/v1, não em storage/v1', async () => {
+    vi.useFakeTimers()
+    const urls: string[] = []
+    // rede pendurada: só termina quando o sinal aborta
+    const fetchGlobal = vi.fn((entrada: RequestInfo | URL, init?: RequestInit) => {
+      urls.push(String(entrada))
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+      })
+    })
+    vi.stubGlobal('fetch', fetchGlobal)
+    criarClienteSupabase(config, 'membro')
+    const opcoes = createClient.mock.calls[0][2] as { global: { fetch: typeof fetch } }
+    const fim: Record<string, string> = {}
+    for (const caminho of ['/rest/v1/rpc/papel_atual', '/auth/v1/token', '/storage/v1/object/a']) {
+      fim[caminho] = 'pendente'
+      opcoes.global.fetch(`https://abc.supabase.co${caminho}`, { method: 'POST' }).catch((e: DOMException) => {
+        fim[caminho] = e.name
+      })
+    }
+    await vi.advanceTimersByTimeAsync(TEMPO_LIMITE_SUPABASE_MS)
+    expect(urls).toHaveLength(3) // chama o fetch global da página (resolvido na hora da chamada)
+    expect(fim).toEqual({
+      '/rest/v1/rpc/papel_atual': 'TimeoutError',
+      '/auth/v1/token': 'TimeoutError',
+      '/storage/v1/object/a': 'pendente',
+    })
   })
 })

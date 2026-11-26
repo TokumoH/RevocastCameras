@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | em construção |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- src/app/README.md` |
-| Arquivos | `README.md`, `rotas.ts`, `rotas.test.ts`, `App.tsx`, `App.test.tsx`, `servicos.ts`, `servicos.test.ts`, `dependencias.ts`, `dependencias.test.ts`, `useAcesso.ts`, `servicosFalsos.ts`, `GuardaDeMembro.tsx`, `acesso.test.tsx`, `telas/` |
+| Arquivos | `README.md`, `rotas.ts`, `rotas.test.ts`, `App.tsx`, `App.test.tsx`, `servicos.ts`, `servicos.test.ts`, `dependencias.ts`, `dependencias.test.ts`, `useAcesso.ts`, `servicosFalsos.ts`, `GuardaDeMembro.tsx`, `acesso.test.tsx`, `filaPendurada.test.tsx`, `telas/` |
 
 ## Propósito
 
@@ -19,7 +19,7 @@ Casca do app: `resolverRota()` converte o caminho da URL em rota, `App` escolhe 
 
 ## Origem
 
-Criado na Tarefa 1 da etapa E0 ([PLA-001](../../docs/planos/2026-11-17-e0-fundacao.md)), que substitui o protótipo por um app React com a cara do RevoCast. Desenho: [DES-001](../../docs/desenho/2026-11-16-revocast-cameras-desenho.md). `servicos.ts` entrou na Tarefa 3 da E1 ([PLA-002](../../docs/planos/2026-11-26-e1-entrada-e-membros.md)), que põe a composição em `app/` (restrição global: o cliente de membro só é criado nas rotas de membro, de forma preguiçosa e uma vez por página). `dependencias.ts`, `useAcesso.ts`, `servicosFalsos.ts`, `GuardaDeMembro.tsx` e `acesso.test.tsx` entraram na Tarefa 4 da E1 (registro VER-018), que liga as telas a esses serviços e prova a restrição com `createClient` simulado.
+Criado na Tarefa 1 da etapa E0 ([PLA-001](../../docs/planos/2026-11-17-e0-fundacao.md)), que substitui o protótipo por um app React com a cara do RevoCast. Desenho: [DES-001](../../docs/desenho/2026-11-16-revocast-cameras-desenho.md). `servicos.ts` entrou na Tarefa 3 da E1 ([PLA-002](../../docs/planos/2026-11-26-e1-entrada-e-membros.md)), que põe a composição em `app/` (restrição global: o cliente de membro só é criado nas rotas de membro, de forma preguiçosa e uma vez por página). `dependencias.ts`, `useAcesso.ts`, `servicosFalsos.ts`, `GuardaDeMembro.tsx` e `acesso.test.tsx` entraram na Tarefa 4 da E1 (registro VER-018), que liga as telas a esses serviços e prova a restrição com `createClient` simulado. `filaPendurada.test.tsx` entrou com o registro [VER-021](../../docs/verificacoes/2026-11-26-021-tempo-limite-supabase.md), que põe tempo-limite de 15 s no `fetch` do cliente Supabase (`shared/infra/tempoLimite.ts`) e destrava a fila pendurada observada no VER-020.
 
 ## Organização
 
@@ -61,6 +61,7 @@ Rotas por **caminho** (`/painel`, `/obs/palco`...) deixam o fragmento `#` livre 
 | [`GuardaDeMembro.tsx`](GuardaDeMembro.tsx) | Guarda por área: telas de cada estado, "Sem acesso a esta página" e, para membro, cabeçalho + conteúdo |
 | [`servicosFalsos.ts`](servicosFalsos.ts) | Só para testes: `usuarioGoogle` e `criarFalsos` (portas e dependências falsas, contagem de chamadas, `segurarSair`/`liberarSair`, `ouvintesAtivos`) |
 | [`acesso.test.tsx`](acesso.test.tsx) | 26 testes de entrada e guarda (PLA-002, Tarefa 4): configuração, erro inesperado, rotas de dispositivo, URL de retorno fixa, fora da lista, sessão anônima e expirada, `sair` lento, retorno do Google, URL limpa depois de resolver (e só se suja), papel, falha e Sair; e, da revisão, erro dentro da fila → falha, `limparRetornoDaUrl` que lança não troca `membro`, desmontagem cancela as assinaturas e não aplica, `sair` aplica `sem_sessao` direto |
+| [`filaPendurada.test.tsx`](filaPendurada.test.tsx) | 2 testes de ponta a ponta com o supabase-js **real** (jsdom, sessão guardada no `localStorage`, só o `fetch` global é falso e timers falsos): `rpc/papel_atual` sem resposta → "Conferindo seu acesso…" até 15 s e tela de falha com "Tentar de novo"; com a rede boa, "Tentar de novo" leva ao painel (depois da reavaliação que já esperava na fila, ver "Riscos"); com a rede boa desde o início, painel sem esperar. Falha sem o tempo-limite (VER-021) |
 | [`telas/`](telas/) | Uma tela por rota e as telas dos estados de acesso |
 
 ## Lógica
@@ -110,7 +111,7 @@ Para criar a rota `/exemplo`: acrescentar o nome em `NomeDaRota` e a entrada em 
 
 ## Verificação
 
-- `npx vitest run src/app`: 5 arquivos, 57 testes (26 em `acesso.test.tsx`, 10 em `App.test.tsx`, 5 em `dependencias.test.ts`); 25 sabotagens do registro VER-018 derrubam cada uma os testes indicados.
+- Arquivos de teste desta pasta (fora de `telas/`): 6 arquivos, 59 testes desde o VER-021 (26 em `acesso.test.tsx`, 11 em `rotas.test.ts`, 10 em `App.test.tsx`, 5 em `dependencias.test.ts`, 5 em `servicos.test.ts`, 2 em `filaPendurada.test.tsx`); 25 sabotagens do registro VER-018 derrubam cada uma os testes indicados; a sabotagem "sem o envoltório" do registro [VER-021](../../docs/verificacoes/2026-11-26-021-tempo-limite-supabase.md) derruba `filaPendurada.test.tsx`.
 - `npx vitest run src/app/servicos.test.ts`: 5 testes; sabotagens do cache, de `ambienteDoVite` e do tipo de sessão derrubam cada uma o teste correspondente (registro [VER-017](../../docs/verificacoes/2026-11-26-017-e1-adaptadores-acesso.md)).
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`.
 - Subdiretórios com README próprio (conferido pelo mesmo comando).
@@ -119,7 +120,7 @@ Para criar a rota `/exemplo`: acrescentar o nome em `NomeDaRota` e a entrada em 
 
 - Conteúdo ainda provisório nas abas do `/painel` que não são Membros (E2 e E3), no `/controle` (E3) e nas rotas de dispositivo (E3 e E4); a entrada, a guarda e a aba Membros (Tarefa 5 da E1, registro VER-019) já são reais.
 - O login real (Google + Supabase) ainda não foi conferido; a conferência no navegador desta tarefa usou rotas interceptadas pelo Playwright (registro VER-018) e a real fica para a Tarefa 6 da E1.
-- Fila pendurada: uma avaliação que nunca termina (rede que não responde, sem erro) segura a fila; reavaliações, "Tentar de novo", "Entrar" e "Sair" esperam e só recarregar a página resolve. Não há tempo-limite no adaptador nem no hook; pendência a ver na Tarefa 6 da E1, na conferência real (se o caso aparecer, tempo-limite no adaptador).
+- Fila pendurada (resolvida no VER-021): as chamadas do cliente Supabase a `/rest/v1/` e `/auth/v1/` têm tempo-limite de 15 s (`shared/infra/tempoLimite.ts`), então uma avaliação sem resposta vira `falha` com "Tentar de novo" e a fila anda. O hook continua sem tempo-limite próprio: cada avaliação que já está na fila paga o seu, então um "Tentar de novo" pode esperar até mais 15 s (no carregamento com sessão, a reavaliação do evento do auth-js já está na fila e começa logo depois da falha; conferido no Chromium: falha em ~15,5 s, painel em ~30,4 s). Com a sessão expirada, o refresh do auth-js tenta duas vezes: até ~30,2 s para a falha. Um `fetch` do Storage sem resposta (E2) não tem tempo-limite.
 - Erro lançado dentro de uma tarefa da fila (defeito: as portas não lançam) vira `falha` só se a tarefa ainda não aplicou estado; se já aplicou (por exemplo, `limparRetornoDaUrl` lançando depois de `membro`), o estado fica e a URL continua suja.
 - Sem fusão de reavaliações repetidas: no carregamento com sessão o auth-js emite um evento depois do `INITIAL_SESSION` e o papel é lido duas vezes (uma leitura a mais, aceita no plano).
 - O cache de `obterServicosDeMembro` vale por página (módulo); não há como trocar a configuração sem recarregar, o que é o esperado num app Vite.
