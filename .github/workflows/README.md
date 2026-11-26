@@ -65,13 +65,13 @@ Segurança: `permissions: contents: read`, `persist-credentials: false`, actions
 ## Lógica
 
 1. Um PR para `master` é aberto ou atualizado, ou alguém dispara manualmente em Actions → check → Run workflow.
-2. O job instala as dependências e roda `npm run check` (typecheck, testes, docs, segredos, audit).
+2. O job instala as dependências e roda `npm run check` (typecheck, testes, docs, segredos, `rpc:grants-check`, `data-api:check`, audit).
 3. Em PR, roda o `check-registro` sobre os commits do PR (merges ignorados).
 4. Qualquer falha deixa o PR com check vermelho.
 
 ## Exemplo
 
-Estimativa de consumo: cerca de 1 minuto faturado por execução (o GitHub arredonda cada job para cima, em minutos). Com 20 atualizações de PR por mês, são uns 20 min/mês, 1% da franquia gratuita de 2.000 min/mês para repositórios privados. Repositórios públicos não consomem franquia.
+Estimativa de consumo: cerca de 1 a 2 minutos faturados por execução (o GitHub arredonda cada job para cima, em minutos). O `npm run check` sozinho, medido em 2026-11-22 em máquina de desenvolvimento de 4 núcleos (com os testes de banco em PGlite, os das checagens de banco, que aplicam SQL de exemplo num PGlite, os do `check-deps-audit`, as duas checagens de banco sobre a migração e o `npm audit`), levou cerca de 60 s com os testes limitados a 2 processos (47 a 51 s antes da correção 18 da Tarefa 4, que acrescentou testes e o commit real por migração) (`--maxWorkers=2`, limite dos agentes numa máquina compartilhada; a CI usa o padrão do Vitest, 3 processos no runner de 4 vCPUs, e tende a ser mais rápida); em 2026-11-21, sem o limite, cerca de 30 s, e antes da reescrita das checagens de banco pela leitura do catálogo, cerca de 20 s (medidas datadas); instalação das dependências e `check-registro` da CI ficam fora dessa medida. Com 20 atualizações de PR por mês, são de 20 a 40 min/mês, de 1% a 2% da franquia gratuita de 2.000 min/mês para repositórios privados. Repositórios públicos não consomem franquia.
 
 ## Verificação
 

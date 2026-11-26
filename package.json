@@ -13,8 +13,10 @@
     "check-doc-secrets": "node scripts/check-doc-secrets.mjs",
     "check-deps-audit": "node scripts/check-deps-audit.mjs",
     "check-registro": "node scripts/check-registro.mjs",
-    "check": "npm run typecheck && npm test && npm run check-docs && npm run check-doc-secrets && npm run check-deps-audit",
-    "test": "vitest run"
+    "check": "npm run typecheck && npm test && npm run check-docs && npm run check-doc-secrets && npm run rpc:grants-check && npm run data-api:check && npm run check-deps-audit",
+    "test": "vitest run",
+    "rpc:grants-check": "node scripts/check-rpc-grants.mjs",
+    "data-api:check": "node scripts/check-data-api.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.16",

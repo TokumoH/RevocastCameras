@@ -45,7 +45,7 @@ Sugestão S3, aprovada como implementação. Registro: [VER-003](../docs/verific
 | Arquivo ou subdiretório | O que contém |
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
-| [`pre-push`](pre-push) | Roda `check-registro --pre-push` (commits ainda não enviados) e `npm run check`; qualquer falha bloqueia o push |
+| [`pre-push`](pre-push) | Roda `check-registro --pre-push` (commits ainda não enviados) e `npm run check` (que inclui `rpc:grants-check` e `data-api:check` sobre `supabase/migrations/`); qualquer falha bloqueia o push |
 
 ## Lógica
 
@@ -58,7 +58,7 @@ sequenceDiagram
     U->>H: refs a enviar (stdin)
     H->>R: mesmas refs
     R-->>H: 0 ok / 1 commit sem registro
-    H->>C: typecheck, testes, docs, segredos, audit
+    H->>C: typecheck, testes, docs, segredos, grants e RLS do banco, audit
     C-->>H: 0 ok / 1 falha
     H-->>U: push segue ou é bloqueado
 ```
