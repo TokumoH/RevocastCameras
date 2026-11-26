@@ -264,17 +264,17 @@ describe("linha de comando", () => {
   test("principal audita os dois relatórios, imprime avisos e reporta erros", () => {
     const chamados = []; const erros = []; const logs = []; let resumo
     const relatar = { erro: (m) => erros.push(m), fim: (r) => { resumo = r } }
-    principal({ auditarFn: (t) => { chamados.push(t); return t === "todos" ? relatorio({ id: "GHSA-fc5q-39xc-vjpf", pacote: "picomatch" }) : VAZIO },
-      hoje: "2026-12-18", relatar, log: (m) => logs.push(m) })
+    principal({ auditarFn: (t) => { chamados.push(t); return t === "todos" ? relatorio() : VAZIO },
+      hoje: "2026-12-18", excecoes: EX, relatar, log: (m) => logs.push(m) })
     expect(chamados).toEqual(["todos", "producao"])
-    expect(erros).toEqual(["GHSA-fc5q-39xc-vjpf (picomatch, high): exceção vencida em 2026-12-17; revisar"])
+    expect(erros).toEqual(["GHSA-aaaa-bbbb-cccc (pkg, high): exceção vencida em 2026-12-17; revisar"])
     expect(resumo).toBe("0 aviso(s)")
   })
   test("principal imprime o aviso da exceção válida sem reprovar", () => {
     const logs = []; const relatar = { erro: () => { throw new Error("não devia reprovar") }, fim: () => {} }
-    principal({ auditarFn: (t) => (t === "todos" ? relatorio({ id: "GHSA-fc5q-39xc-vjpf", pacote: "picomatch" }) : VAZIO),
-      hoje: "2026-11-18", relatar, log: (m) => logs.push(m) })
-    expect(logs).toEqual([expect.stringMatching(/^AVISO \[check-deps-audit\] GHSA-fc5q-39xc-vjpf \(picomatch, high\) em exceção até 2026-12-17/)])
+    principal({ auditarFn: (t) => (t === "todos" ? relatorio() : VAZIO),
+      hoje: "2026-11-18", excecoes: EX, relatar, log: (m) => logs.push(m) })
+    expect(logs).toEqual([expect.stringMatching(/^AVISO \[check-deps-audit\] GHSA-aaaa-bbbb-cccc \(pkg, high\) em exceção até 2026-12-17/)])
   })
 })
 
@@ -285,9 +285,9 @@ describe("linha de comando de ponta a ponta", () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date("2026-12-18T00:30:00Z"))
     const erros = []
-    principal({ auditarFn: (t) => (t === "todos" ? relatorio({ id: "GHSA-fc5q-39xc-vjpf", pacote: "picomatch" }) : VAZIO),
+    principal({ auditarFn: (t) => (t === "todos" ? relatorio() : VAZIO), excecoes: EX,
       relatar: { erro: (m) => erros.push(m), fim: () => {} }, log: () => {} })
-    expect(erros).toEqual(["GHSA-fc5q-39xc-vjpf (picomatch, high): exceção vencida em 2026-12-17; revisar"])
+    expect(erros).toEqual(["GHSA-aaaa-bbbb-cccc (pkg, high): exceção vencida em 2026-12-17; revisar"])
   })
 
   test("executado direto (e por link simbólico) com um npm falso que acusa um crítico novo: imprime ERRO e sai com código 1", () => {
@@ -312,6 +312,14 @@ describe("linha de comando de ponta a ponta", () => {
 })
 
 describe("EXCECOES", () => {
+  test("lista vazia (nenhuma exceção ativa): relatório vazio passa sem erro nem aviso, e aviso alto reprova", () => {
+    expect(Array.isArray(EXCECOES)).toBe(true)
+    const vazia = (todos) => { const erros = []; const logs = []; principal({ auditarFn: (t) => (t === "todos" ? todos : VAZIO), hoje: "2026-11-26", excecoes: [],
+      relatar: { erro: (m) => erros.push(m), fim: () => {} }, log: (m) => logs.push(m) }); return { erros, logs } }
+    expect(vazia(VAZIO)).toEqual({ erros: [], logs: [] })
+    expect(avaliarAuditoria({ todos: VAZIO, producao: VAZIO, hoje: HOJE, excecoes: undefined }).avisos.length).toBe(EXCECOES.length)
+    expect(vazia(relatorio()).erros).toEqual(["GHSA-aaaa-bbbb-cccc (pkg, high): falha de teste"])
+  })
   test("toda exceção tem id GHSA, pacote, gravidade, motivo e data válida a no máximo 90 dias de hoje", () => {
     for (const e of EXCECOES) {
       expect(e.id).toMatch(/^GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/)

@@ -11,13 +11,13 @@ import { reporter } from "./_lib.mjs";
 
 /** Exceções aceitas: id GHSA, pacote, gravidade máxima aprovada, motivo e data de revisão (AAAA-MM-DD, UTC, inclusive). */
 export const EXCECOES = [
-  {
-    id: "GHSA-fc5q-39xc-vjpf",
-    pacote: "picomatch",
-    severidade: "high",
-    motivo: "ReDoS no picomatch <= 4.0.7 sem versão corrigida; só chega por vite e vitest (desenvolvimento), com padrões de arquivo do próprio projeto",
-    revisarAte: "2026-12-17",
-  },
+  // Nenhuma exceção ativa: a do picomatch (GHSA-fc5q-39xc-vjpf, VER-012) foi removida no VER-022.
+  // Formato de cada entrada (a ordem dos campos não importa):
+  // {
+  //   id: "GHSA-xxxx-xxxx-xxxx", pacote: "nome-do-pacote", severidade: "high",
+  //   motivo: "por que o aviso não se aplica e o que o limita",
+  //   revisarAte: "AAAA-MM-DD",
+  // },
 ];
 
 const PESO = { info: 0, low: 1, moderate: 2, high: 3, critical: 4 };
@@ -185,8 +185,8 @@ function executadoDiretamente() {
 }
 
 /** Linha de comando: audita, imprime avisos e reporta os erros (exportada para teste com `auditar` e `relatar` simulados). */
-export function principal({ auditarFn = auditar, hoje = hojeUtc(), relatar = reporter("check-deps-audit"), log = console.log } = {}) {
-  const { erros, avisos } = avaliarAuditoria({ todos: auditarFn("todos"), producao: auditarFn("producao"), hoje });
+export function principal({ auditarFn = auditar, hoje = hojeUtc(), excecoes = EXCECOES, relatar = reporter("check-deps-audit"), log = console.log } = {}) {
+  const { erros, avisos } = avaliarAuditoria({ todos: auditarFn("todos"), producao: auditarFn("producao"), excecoes, hoje });
   for (const a of avisos) log(`AVISO [check-deps-audit] ${a}`);
   for (const e of erros) relatar.erro(e);
   relatar.fim(`${avisos.length} aviso(s)`);
