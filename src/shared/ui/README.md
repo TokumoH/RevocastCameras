@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | em construção |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- src/shared/ui/README.md` |
-| Arquivos | `README.md`, `Logo.tsx`, `Cartao.tsx`, `TelaProvisoria.tsx`, `Mensagem.tsx`, `logo.png` |
+| Arquivos | `README.md`, `Logo.tsx`, `Cartao.tsx`, `TelaProvisoria.tsx`, `Mensagem.tsx`, `Abas.tsx`, `logo.png` |
 
 ## Propósito
 
@@ -46,15 +46,16 @@ Criado na Tarefa 1 da etapa E0 ([PLA-001](../../../docs/planos/2026-11-17-e0-fun
 | [`Logo.tsx`](Logo.tsx) | `Logo()`: marcação do logo (120 x 117, alt "RevoCast") |
 | [`TelaProvisoria.tsx`](TelaProvisoria.tsx) | Logo, título e "Em construção — etapa X" |
 | [`Mensagem.tsx`](Mensagem.tsx) | `Mensagem({ tom, children })`: aviso com tom `info` (`role="status"`, fundo ciano) ou `erro` (`role="alert"`, fundo rosa); desde a Tarefa 4 da E1 |
+| [`Abas.tsx`](Abas.tsx) | `Abas({ abas, ativa, aoEscolher, children })`: abas acessíveis (padrão Tabs do WAI-ARIA, ativação automática): `tablist`, um `tab` por aba com `aria-selected` e `aria-controls`, um `tabpanel` por aba com `aria-labelledby` (só o ativo recebe o conteúdo; os outros ficam vazios e `hidden`); setas, Home e End trocam de aba; desde a Tarefa 5 da E1 |
 | [`logo.png`](logo.png) | Logo do RevoCast (887 x 864) |
 
 ## Lógica
 
-`TelaProvisoria` usa `Cartao` e `Logo`; `Logo` importa `logo.png`; as telas usam `TelaProvisoria`; `NaoEncontrada` usa `Cartao` e `Logo` direto; as telas de acesso (`app/telas/EstadosDeAcesso.tsx`) usam `Cartao`, `Logo` e `Mensagem`.
+`TelaProvisoria` usa `Cartao` e `Logo`; `Logo` importa `logo.png`; as telas usam `TelaProvisoria`; `NaoEncontrada` usa `Cartao` e `Logo` direto; as telas de acesso (`app/telas/EstadosDeAcesso.tsx`) usam `Cartao`, `Logo` e `Mensagem`; o painel (`app/telas/Painel.tsx`) usa `Cartao`, `Logo` e `Abas`, e a aba Membros usa `Mensagem`. `Abas` não sabe de papel nem de etapa: quem escolhe as abas e o conteúdo é a tela.
 
 ## Exemplo
 
-Para um cartão rosa: `<Cartao tom="rosa">…</Cartao>`. Para um aviso de erro: `<Mensagem tom="erro">O Google não concluiu o login. Tente de novo.</Mensagem>`.
+Para um cartão rosa: `<Cartao tom="rosa">…</Cartao>`. Para um aviso de erro: `<Mensagem tom="erro">O Google não concluiu o login. Tente de novo.</Mensagem>`. Para abas: `<Abas abas={[{ id: 'a', rotulo: 'A' }, { id: 'b', rotulo: 'B' }]} ativa={ativa} aoEscolher={setAtiva}>{conteúdo da aba ativa}</Abas>`.
 
 ## Verificação
 

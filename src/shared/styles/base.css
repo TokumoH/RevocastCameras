@@ -97,3 +97,77 @@ img { max-width: 100%; height: auto; }
 }
 .cabecalho-membro .botao { padding: 6px 16px; font-size: 17px; }
 .cabecalho-membro ~ .tela { min-height: auto; }
+
+/* Tela larga (painel): cartão até 960 px; a coluna minmax(0, 1fr) deixa a tabela rolar por dentro em vez de alargar o cartão */
+.tela--larga .cartao { width: min(960px, 100%); grid-template-columns: minmax(0, 1fr); }
+
+/* Abas (tablist/tab/tabpanel): pílulas com borda; a ativa em ciano */
+.abas { display: grid; gap: 16px; width: 100%; min-width: 0; }
+.abas__lista { display: flex; flex-wrap: wrap; gap: 8px; }
+.aba {
+  padding: 6px 16px;
+  color: var(--ink);
+  font: 400 17px/1.2 var(--font-display);
+  background: var(--card);
+  border: var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.aba:hover { background: var(--cyan-soft); }
+.aba--ativa,
+.aba--ativa:hover { color: var(--on-accent); background: var(--cyan); box-shadow: 3px 3px 0 var(--ink); }
+.abas__painel { display: grid; gap: 14px; min-width: 0; }
+.abas__painel[hidden] { display: none; }
+
+/* Aba Membros: formulário de inclusão e tabela da lista de acesso */
+.membros { position: relative; display: grid; gap: 14px; min-width: 0; } /* relative: segura as regiões de aviso vazias (.so-leitor) */
+.membros h2 { font-size: 28px; }
+.membros__incluir { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; }
+.campo { display: grid; flex: 1 1 200px; gap: 4px; min-width: 0; }
+.campo label { font-weight: 700; }
+.campo input,
+.campo select,
+.tabela select {
+  min-width: 0;
+  padding: 6px 10px;
+  color: var(--ink);
+  font: inherit;
+  background: var(--card);
+  border: var(--border);
+  border-radius: 12px;
+}
+.membros__incluir .campo:first-child { flex-basis: 260px; }
+.tabela-rolavel { position: relative; max-width: 100%; overflow-x: auto; border: var(--border); border-radius: 12px; }
+.tabela { width: 100%; border-collapse: collapse; }
+.tabela caption { padding: 8px 12px; font-weight: 700; text-align: left; }
+.tabela th,
+.tabela td { padding: 8px 12px; text-align: left; vertical-align: middle; border-top: 2px solid var(--ink); }
+.tabela th { font: 400 18px/1.2 var(--font-display); background: var(--sand-soft); }
+.tabela__email { min-width: 18ch; font-weight: 700; overflow-wrap: anywhere; }
+.tabela__fraco { color: var(--gray); font-style: italic; }
+.tabela__acoes { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+.tabela__aviso { min-width: 14ch; font-size: 15px; line-height: 1.4; }
+
+/* Botão pequeno (ações por linha), botão desabilitado durante uma escrita e etiqueta ("Você") */
+.botao--pequeno { padding: 4px 12px; font-size: 16px; box-shadow: 3px 3px 0 var(--ink); }
+.botao:disabled { cursor: not-allowed; opacity: 0.55; transform: none; box-shadow: 3px 3px 0 var(--ink); }
+.etiqueta {
+  padding: 2px 12px;
+  font-family: var(--font-display);
+  background: var(--sand-soft);
+  border: var(--border);
+  border-radius: 999px;
+}
+
+/* Só para leitor de tela (rótulo do seletor de papel de cada linha) */
+.so-leitor {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

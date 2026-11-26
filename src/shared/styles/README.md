@@ -24,7 +24,7 @@ Criado na Tarefa 1 da etapa E0 ([PLA-001](../../../docs/planos/2026-11-17-e0-fun
 ## Organização
 
 - `tokens.css`: variáveis CSS (inclui `--on-accent`, texto sobre rosa e ciano); `@media (prefers-color-scheme: dark)` redefine as que mudam.
-- `base.css`: reset, corpo, tipografia e as classes `.cartao`, `.botao` e `.tela`; desde a Tarefa 4 da E1, `.botao--contorno`, `.mensagem`, `.mensagem--erro` e `.cabecalho-membro` (com `__email` e `__papel`).
+- `base.css`: reset, corpo, tipografia e as classes `.cartao`, `.botao` e `.tela`; desde a Tarefa 4 da E1, `.botao--contorno`, `.mensagem`, `.mensagem--erro` e `.cabecalho-membro` (com `__email` e `__papel`); desde a Tarefa 5, `.tela--larga`, `.abas` (com `__lista` e `__painel`), `.aba`, `.aba--ativa`, `.membros` (com `__incluir`; `position: relative` para segurar as regiões de aviso vazias, que usam `.so-leitor`), `.campo`, `.tabela-rolavel`, `.tabela` (com `__email`, `__fraco`, `__acoes` e `__aviso`), `.botao--pequeno`, `.botao:disabled`, `.etiqueta` e `.so-leitor`.
 
 ## Por que esta organização
 
@@ -43,7 +43,7 @@ Paleta num arquivo só: mudar a identidade é mudar `tokens.css`. O modo escuro 
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
 | [`tokens.css`](tokens.css) | Cores `#1b1b22`, `#fffaf4`, `#d83868`, `#27bfe8`, `#d8b888`, borda 3 px, sombra dura, fontes Lilita One, Nunito e Caveat; versão escura |
-| [`base.css`](base.css) | Reset, tipografia, fundo pontilhado, `.cartao`, `.botao`, `.tela`, `.botao--contorno`, `.mensagem`, `.mensagem--erro`, `.cabecalho-membro` |
+| [`base.css`](base.css) | Reset, tipografia, fundo pontilhado, `.cartao`, `.botao`, `.tela`, `.botao--contorno`, `.mensagem`, `.mensagem--erro`, `.cabecalho-membro`; abas, formulário e tabela da Tarefa 5 da E1 (`.tela--larga`, `.abas`, `.aba`, `.campo`, `.tabela-rolavel`, `.tabela`, `.botao--pequeno`, `.etiqueta`, `.so-leitor`) |
 
 ## Lógica
 
@@ -56,6 +56,7 @@ Para ver o modo escuro: abrir o app com o sistema em tema escuro (ou emular `pre
 ## Verificação
 
 - As classes da Tarefa 4 da E1 usam só variáveis de `tokens.css`; conferidas no Chromium (Playwright) em claro e escuro, a 390 px de largura (registro VER-018).
+- As classes da Tarefa 5 da E1 também usam só variáveis de `tokens.css`; conferidas no Chromium em claro e escuro, a 320, 390 e 1280 px: a página não rola na horizontal (a tabela rola dentro de `.tabela-rolavel`), o cartão não estoura e os painéis `hidden` das abas não ocupam espaço (registro VER-019).
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`.
 - Não há subdiretórios.
 
@@ -64,3 +65,5 @@ Para ver o modo escuro: abrir o app com o sistema em tema escuro (ou emular `pre
 - Contraste medido (WCAG 2.x): texto `--on-accent` `#1b1b22` sobre o rosa `#d83868` dá 3,82:1, abaixo do AA de 4,5:1 para texto normal (o `.botao` usa 20 px, peso 400); o site do RevoCast usa `#fff` sobre o mesmo rosa, 4,48:1, também abaixo. Texto escuro sobre o ciano (7,91:1) e sobre o papel (16,5:1) passa. Decisão pendente do responsável: manter, escurecer o rosa ou subir o botão para texto grande (24 px, limite 3:1). Modo escuro conferido a olho.
 - O `:focus-visible` (`outline: 3px solid var(--cyan)`, `base.css:17`) dá 2,09:1 sobre o papel `#fffaf4`, 2,16:1 sobre o branco do cartão e 1,65:1 sobre o rosa-claro: abaixo de 3:1 (WCAG 1.4.11) no modo claro. Herdado do site. Decisão pendente do responsável (por exemplo, contorno em `var(--ink)` ou duplo).
 - Sem as fontes (offline), cai nas alternativas do `font-family`.
+- `.abas__painel` usa `display: grid`, que venceria o `[hidden]` do navegador; a regra `.abas__painel[hidden] { display: none; }` é o que esconde os painéis inativos (visto na conferência da Tarefa 5). Toda classe nova com `display` num elemento que pode ficar `hidden` precisa da mesma regra.
+- `.so-leitor` usa `position: absolute`; dentro de um contêiner com rolagem, o contêiner precisa de `position: relative` (como `.tabela-rolavel`), senão o rótulo escondido alarga a página.

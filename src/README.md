@@ -43,7 +43,7 @@ Separar a casca do app (`app/`) do que é reaproveitado (`shared/`) evita telas 
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
 | [`main.tsx`](main.tsx) | Ponto de entrada: monta `<App caminho={window.location.pathname} />` e carrega os estilos |
-| [`app/`](app/) | Rotas, `App`, telas (entrada real e guarda por papel desde a Tarefa 4 da E1; as demais provisórias), estado de tela do acesso (`useAcesso`) e a composição dos serviços de membro (`servicos.ts`) |
+| [`app/`](app/) | Rotas, `App`, telas (entrada real e guarda por papel desde a Tarefa 4 da E1; painel com abas e a aba Membros desde a Tarefa 5; as demais provisórias), estado de tela do acesso (`useAcesso`) e a composição dos serviços de membro (`servicos.ts`) |
 | [`domains/`](domains/) | Domínios (DDD): regras puras e portas; hoje `acesso/` |
 | [`shared/`](shared/) | Estilos, componentes e infraestrutura (cliente Supabase, configuração e adaptadores das portas) compartilhados |
 

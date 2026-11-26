@@ -40,7 +40,7 @@ describe('App', () => {
 
   test.each([
     ['/entrar', 'Abrindo a sua área…'],
-    ['/painel', 'Em construção — etapa E1'],
+    ['/painel', 'Em construção — etapa E2'],
     ['/controle', 'Em construção — etapa E3'],
     ['/camera', 'Em construção — etapa E4'],
     ['/obs/palco', 'Em construção — etapa E3'],

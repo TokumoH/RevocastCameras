@@ -1,12 +1,75 @@
-import { TelaProvisoria } from '../../shared/ui/TelaProvisoria'
+import { useState } from 'react'
+import { podeGerenciarMembros } from '../../domains/acesso/papeis'
+import type { Papel } from '../../domains/acesso/papeis'
+import type { ServicosDeMembro } from '../../domains/acesso/portas'
+import type { UsuarioDaSessao } from '../../domains/acesso/sessao'
+import { Abas } from '../../shared/ui/Abas'
+import type { Aba } from '../../shared/ui/Abas'
+import { Cartao } from '../../shared/ui/Cartao'
+import { Logo } from '../../shared/ui/Logo'
 import type { Dependencias } from '../dependencias'
 import { GuardaDeMembro } from '../GuardaDeMembro'
+import { AbaMembros } from './AbaMembros'
 
-/** `/painel` (equipe e admin): guardado desde a Tarefa 4 da E1; as abas chegam na Tarefa 5. */
+/** Abas do DES-001 §9, nesta ordem; a etapa em que cada provisória fica pronta (DES-001 §14). */
+const ABAS_DO_PAINEL: readonly (Aba & { etapa: string | null })[] = [
+  { id: 'episodios', rotulo: 'Episódios', etapa: 'E2' },
+  { id: 'biblioteca', rotulo: 'Biblioteca', etapa: 'E2' },
+  { id: 'cenas', rotulo: 'Cenas', etapa: 'E2' },
+  { id: 'gestos', rotulo: 'Gestos', etapa: 'E2' },
+  { id: 'membros', rotulo: 'Membros', etapa: null },
+  { id: 'ao_vivo', rotulo: 'Ao vivo', etapa: 'E3' },
+]
+
+const ABA_INICIAL = 'episodios'
+
+/** Abas que o papel vê: Membros só para quem gerencia a lista (`admin`). Escolhe o que mostrar; a RLS nega. */
+function abasDoPapel(papel: Papel) {
+  return ABAS_DO_PAINEL.filter((aba) => aba.id !== 'membros' || podeGerenciarMembros(papel))
+}
+
+function ConteudoDoPainel({
+  titulo,
+  usuario,
+  papel,
+  servicos,
+  reavaliar,
+}: {
+  titulo: string
+  usuario: UsuarioDaSessao
+  papel: Papel
+  servicos: ServicosDeMembro
+  reavaliar: () => void
+}) {
+  const [escolhida, setEscolhida] = useState(ABA_INICIAL)
+  const abas = abasDoPapel(papel)
+  // Se o papel mudar e a aba escolhida sumir (admin rebaixado em Membros), a escolha volta para a inicial
+  // (ajuste de estado durante o render, padrão do React): se o papel voltar, Membros não reabre sozinha.
+  if (!abas.some((aba) => aba.id === escolhida)) setEscolhida(ABA_INICIAL)
+  const ativa = abas.find((aba) => aba.id === escolhida) ?? abas[0]
+
+  return (
+    <main className="tela tela--larga">
+      <Cartao>
+        <Logo />
+        <h1>{titulo}</h1>
+        <Abas abas={abas} ativa={ativa.id} aoEscolher={setEscolhida}>
+          {ativa.id === 'membros' ? (
+            <AbaMembros repo={servicos.repo} usuario={usuario} reavaliar={reavaliar} />
+          ) : (
+            <p>Em construção — etapa {ativa.etapa}</p>
+          )}
+        </Abas>
+      </Cartao>
+    </main>
+  )
+}
+
+/** `/painel` (equipe e admin): guardado desde a Tarefa 4 da E1; abas por estado desde a Tarefa 5 (D8). */
 export function Painel({ titulo, dependencias }: { titulo: string; dependencias: Dependencias }) {
   return (
     <GuardaDeMembro area="painel" titulo={titulo} dependencias={dependencias}>
-      {() => <TelaProvisoria titulo={titulo} etapa="E1" />}
+      {(membro) => <ConteudoDoPainel titulo={titulo} {...membro} />}
     </GuardaDeMembro>
   )
 }
