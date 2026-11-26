@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | em construção |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- src/shared/ui/README.md` |
-| Arquivos | `README.md`, `Logo.tsx`, `Cartao.tsx`, `TelaProvisoria.tsx`, `logo.png` |
+| Arquivos | `README.md`, `Logo.tsx`, `Cartao.tsx`, `TelaProvisoria.tsx`, `Mensagem.tsx`, `logo.png` |
 
 ## Propósito
 
@@ -45,15 +45,16 @@ Criado na Tarefa 1 da etapa E0 ([PLA-001](../../../docs/planos/2026-11-17-e0-fun
 | [`Cartao.tsx`](Cartao.tsx) | `Cartao({ tom, children })`: cartão-adesivo (tom `rosa`, `ciano` ou `areia`) |
 | [`Logo.tsx`](Logo.tsx) | `Logo()`: marcação do logo (120 x 117, alt "RevoCast") |
 | [`TelaProvisoria.tsx`](TelaProvisoria.tsx) | Logo, título e "Em construção — etapa X" |
+| [`Mensagem.tsx`](Mensagem.tsx) | `Mensagem({ tom, children })`: aviso com tom `info` (`role="status"`, fundo ciano) ou `erro` (`role="alert"`, fundo rosa); desde a Tarefa 4 da E1 |
 | [`logo.png`](logo.png) | Logo do RevoCast (887 x 864) |
 
 ## Lógica
 
-`TelaProvisoria` usa `Cartao` e `Logo`; `Logo` importa `logo.png`; as telas usam `TelaProvisoria`; `NaoEncontrada` usa `Cartao` e `Logo` direto.
+`TelaProvisoria` usa `Cartao` e `Logo`; `Logo` importa `logo.png`; as telas usam `TelaProvisoria`; `NaoEncontrada` usa `Cartao` e `Logo` direto; as telas de acesso (`app/telas/EstadosDeAcesso.tsx`) usam `Cartao`, `Logo` e `Mensagem`.
 
 ## Exemplo
 
-Para um cartão rosa: `<Cartao tom="rosa">…</Cartao>`.
+Para um cartão rosa: `<Cartao tom="rosa">…</Cartao>`. Para um aviso de erro: `<Mensagem tom="erro">O Google não concluiu o login. Tente de novo.</Mensagem>`.
 
 ## Verificação
 

@@ -24,7 +24,7 @@ Criado na Tarefa 1 da etapa E0 ([PLA-001](../../../docs/planos/2026-11-17-e0-fun
 ## Organização
 
 - `tokens.css`: variáveis CSS (inclui `--on-accent`, texto sobre rosa e ciano); `@media (prefers-color-scheme: dark)` redefine as que mudam.
-- `base.css`: reset, corpo, tipografia e as classes `.cartao`, `.botao` e `.tela`.
+- `base.css`: reset, corpo, tipografia e as classes `.cartao`, `.botao` e `.tela`; desde a Tarefa 4 da E1, `.botao--contorno`, `.mensagem`, `.mensagem--erro` e `.cabecalho-membro` (com `__email` e `__papel`).
 
 ## Por que esta organização
 
@@ -43,7 +43,7 @@ Paleta num arquivo só: mudar a identidade é mudar `tokens.css`. O modo escuro 
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
 | [`tokens.css`](tokens.css) | Cores `#1b1b22`, `#fffaf4`, `#d83868`, `#27bfe8`, `#d8b888`, borda 3 px, sombra dura, fontes Lilita One, Nunito e Caveat; versão escura |
-| [`base.css`](base.css) | Reset, tipografia, fundo pontilhado, `.cartao`, `.botao`, `.tela` |
+| [`base.css`](base.css) | Reset, tipografia, fundo pontilhado, `.cartao`, `.botao`, `.tela`, `.botao--contorno`, `.mensagem`, `.mensagem--erro`, `.cabecalho-membro` |
 
 ## Lógica
 
@@ -55,6 +55,7 @@ Para ver o modo escuro: abrir o app com o sistema em tema escuro (ou emular `pre
 
 ## Verificação
 
+- As classes da Tarefa 4 da E1 usam só variáveis de `tokens.css`; conferidas no Chromium (Playwright) em claro e escuro, a 390 px de largura (registro VER-018).
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`.
 - Não há subdiretórios.
 

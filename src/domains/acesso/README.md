@@ -112,7 +112,7 @@ lerRetornoDoLogin('?error=access_denied&error_description=Ligue+para+tal+n%C3%BA
 
 ## Riscos
 
-- As portas ainda não têm adaptador real (Tarefa 3) nem uso em tela (Tarefa 4): o contrato `sair()` "nunca lança e emite SIGNED_OUT antes de resolver" é prometido aqui e provado lá.
+- O contrato `sair()` "nunca lança e emite SIGNED_OUT antes de resolver" é prometido aqui; o adaptador real (Tarefa 3) e os falsos de tela (`src/app/servicosFalsos.ts`, Tarefa 4, que reproduzem a ordem real: o evento antes de o `sair` resolver) o seguem, mas só a Tarefa 6 o confere contra um projeto Supabase real.
 - `normalizarEmail` confere só a forma (inclusive domínio sem rótulo vazio), não o RFC inteiro: um endereço exótico válido pode ser recusado, e um inválido com forma comum aceito; o banco e o Google decidem o acesso. Caracteres invisíveis ou de controle (espaço de largura zero U+200B, que `trim` e `\s` não removem; `\u0000`) são aceitos: um e-mail colado com eles entra na lista, nunca casa com o e-mail da sessão Google e não dá acesso (falha fechada).
 - `ultimo_admin` depende da lista que está na tela; com a lista antiga, a interface pode recusar ou permitir errado, e quem garante a regra é o banco (D1, Tarefa 2). Dois admins que se removem no mesmo instante continuam sendo o limite da D1.
 - O filtro de papel desconhecido vindo do banco fica no adaptador (Tarefa 3); o domínio confia que recebe `Papel | null`.

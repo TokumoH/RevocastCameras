@@ -69,4 +69,4 @@ Para mudar a cor de destaque: editar `--pink` em `styles/tokens.css`.
 
 ## Riscos
 
-- `infra/` ainda não é usado por nenhuma tela: a composição (`src/app/servicos.ts`) existe desde a Tarefa 3 da E1, e as telas passam a chamá-la na Tarefa 4.
+- `infra/` é usado pelas telas de membro desde a Tarefa 4 da E1, só por meio da composição (`src/app/servicos.ts`) e de `Dependencias.obterServicos`; as rotas de dispositivo importam `infra/` (e o supabase-js) de forma transitiva, por `App → dependencias → servicos`, mas não chamam `obterServicosDeMembro` nem criam o cliente (provado em `src/app/App.test.tsx`, `caminho-padrao-nao-cria-cliente-em-dispositivo`).

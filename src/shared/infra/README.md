@@ -104,7 +104,7 @@ Sem `VITE_SUPABASE_PUBLISHABLE_KEY`, `lerConfiguracao` lança `ErroDeConfiguraca
 - `VITE_TURN_SENHA`, como toda variável `VITE_`, é embutida no bundle do navegador (o DES-001 reconhece); não serve para segredo de verdade.
 - Domínio próprio com acento precisa ser escrito em punycode (`xn--...`): `url.origin` vem em punycode e a comparação recusa a forma acentuada.
 - A recusa de chave secreta só reconhece o prefixo novo `sb_secret_`; chaves antigas JWT `service_role` não são detectadas.
-- Nenhuma tela mostra ainda o `ErroDeConfiguracao` ao usuário (fica para a Tarefa 4 da E1).
+- Desde a Tarefa 4 da E1, `/entrar`, `/painel` e `/controle` mostram o `ErroDeConfiguracao` na tela "Configuração incompleta" (a mensagem só cita o nome da variável); as rotas de dispositivo não leem a configuração de membro.
 - Os adaptadores de `acessoSupabase.ts` foram testados só com um cliente falso, que imita as respostas do supabase-js 2.119.0 lidas no código dele (`getSession`, `signOut`, falha de `fetch` do `postgrest-js`); não rodaram contra um projeto Supabase real (conferência real na Tarefa 6 da E1). Uma atualização do supabase-js pode mudar essas respostas.
 - `criarClienteSupabase` não foi exercitado contra um projeto Supabase real: o teste mocka `createClient`.
 - A chave publicável vai para o navegador por definição; a proteção dos dados depende da RLS (Tarefa 3), não do sigilo da chave.
