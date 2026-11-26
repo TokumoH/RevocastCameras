@@ -15,7 +15,7 @@
 
 ## Propósito
 
-Código compartilhado: estilos (`styles/`) e componentes visuais (`ui/`), já usados pelo app, e configuração e cliente Supabase (`infra/`), que as telas passam a usar na E1.
+Código compartilhado: estilos (`styles/`) e componentes visuais (`ui/`), já usados pelo app, e configuração, cliente Supabase e adaptadores das portas do domínio Acesso (`infra/`), que as telas passam a usar na E1.
 
 ## Origem
 
@@ -23,7 +23,7 @@ Criado na Tarefa 1 da etapa E0 ([PLA-001](../../docs/planos/2026-11-17-e0-fundac
 
 ## Organização
 
-- `infra/`: configuração (variáveis de ambiente) e cliente Supabase.
+- `infra/`: configuração (variáveis de ambiente), cliente Supabase e, desde a Tarefa 3 da E1, os adaptadores das portas do domínio Acesso (`acessoSupabase.ts`).
 - `styles/`: tokens e base visual do RevoCast.
 - `ui/`: componentes visuais e o logo.
 
@@ -43,7 +43,7 @@ Nada em `shared/` conhece telas; as telas é que dependem dele (referências ind
 | Arquivo ou subdiretório | O que contém |
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
-| [`infra/`](infra/) | `lerConfiguracao` e o cliente Supabase por tipo de sessão |
+| [`infra/`](infra/) | `lerConfiguracao`, o cliente Supabase por tipo de sessão e os adaptadores `criarAutenticacaoSupabase`/`criarRepositorioDeAcessoSupabase` |
 | [`styles/`](styles/) | Tokens (claro e escuro) e base visual |
 | [`ui/`](ui/) | `Cartao`, `Logo`, `TelaProvisoria` e `logo.png` |
 
@@ -55,6 +55,7 @@ flowchart LR
     U --> L[logo.png]
     M[main.tsx] --> S[shared/styles]
     I[shared/infra] --> E[supabase-js]
+    I -. implementa as portas de .-> D[domains/acesso]
 ```
 
 ## Exemplo
@@ -68,4 +69,4 @@ Para mudar a cor de destaque: editar `--pink` em `styles/tokens.css`.
 
 ## Riscos
 
-- Os domínios (`src/domains/*`) ainda não existem; `infra/` ainda não é usado por nenhuma tela (o cliente passa a ser usado na E1).
+- `infra/` ainda não é usado por nenhuma tela: a composição (`src/app/servicos.ts`) existe desde a Tarefa 3 da E1, e as telas passam a chamá-la na Tarefa 4.
