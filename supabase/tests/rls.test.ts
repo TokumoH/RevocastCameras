@@ -8,6 +8,7 @@ import type { PGlite } from '@electric-sql/pglite'
 import {
   type Claims,
   DONO_MIGRACAO,
+  MIGRACOES,
   EMAIL_ADM,
   EMAIL_ANA,
   EMAIL_BIA,
@@ -1017,5 +1018,231 @@ describe('E1 — entrada e lista de acesso', () => {
     linhas(await comoSessao(db, adm, 'delete from public.membros_permitidos'))
     expect(await retratoDaLista()).toEqual([{ email: EMAIL_ADM, papel: 'admin' }])
     expect(await papel(adm)).toBe('admin')
+  })
+})
+
+// E2 (PLA-003, Tarefa 3): o que a Biblioteca e a preparação pedem do banco. Mesmo banco e mesmas transações do arquivo.
+// Um envio é simulado como o servidor do Storage faz: o comando roda como a sessão (papel authenticated com as
+// claims) e grava em storage.objects com owner_id = auth.uid(). Um delete imita o servidor também no parâmetro
+// storage.allow_delete_query (opção deleteDoStorage de comoSessao; sem ela, o gatilho protect_objects_delete da
+// simulação recusa com 42501). Bucket e políticas: migração biblioteca_storage (decisões D3 a D5).
+describe('E2 — Biblioteca e preparação', () => {
+  const UUID_A = '0b6e2b8a-3c1d-4f2a-9e5b-1a2b3c4d5e6f'
+  const UUID_B = '1c7f3c9b-4d2e-4a3b-8f6c-2b3c4d5e6f70'
+  const UID_SOLTA = '00000000-0000-4000-8000-00000000b009'
+  const solta = sessaoAnonima(UID_SOLTA)
+  const ENVIA = `insert into storage.objects (bucket_id, name, owner_id) values ($1, $2, auth.uid()::text)`
+  /** As 9 sessões da matriz, com o nome que aparece na mensagem do teste. */
+  const SESSOES: [string, Claims | null][] = [
+    ['anon', null], ['ana', ana], ['bia', bia], ['adm', adm], ['estranho', estranho],
+    ['camera', camera], ['palco', palco], ['obs_camera', obsCamera], ['solta', solta],
+  ]
+  /** Cadastra o estranho (Google fora da lista) e a sessão anônima sem dispositivo. */
+  async function cadastrarSessoesExtras(): Promise<void> {
+    await cadastrarEstranho()
+    await cadastrarUsuario(db, { uid: UID_SOLTA, email: null, anonimo: true, provedor: null, confirmado: false })
+  }
+  /** Cria, como superusuário, o bucket `outro` (fora do app), privado e sem limites. */
+  async function criarBucketOutro(): Promise<void> {
+    await db.query(`insert into storage.buckets (id, name) values ('outro', 'outro')`)
+  }
+  /** Bucket e nome de todos os objetos, lidos como superusuário. */
+  async function retratoDoStorage(): Promise<{ bucket_id: string; name: string }[]> {
+    return (await db.query<{ bucket_id: string; name: string }>('select bucket_id, name from storage.objects order by bucket_id, name')).rows
+  }
+  /** Semeia, como superusuário, 2 objetos no `midias` (um som, uma imagem) e 1 no `outro`. */
+  async function semearObjetos(): Promise<void> {
+    await criarBucketOutro()
+    await db.query(
+      `insert into storage.objects (bucket_id, name) values ('midias', $1), ('midias', $2), ('outro', $1)`,
+      [`som/${UUID_A}.mp3`, `imagem/${UUID_B}.png`],
+    )
+  }
+  const OBJETOS_SEMEADOS = [
+    { bucket_id: 'midias', name: `imagem/${UUID_B}.png` },
+    { bucket_id: 'midias', name: `som/${UUID_A}.mp3` },
+    { bucket_id: 'outro', name: `som/${UUID_A}.mp3` },
+  ]
+  const codigo = (e: Error) => (e as Error & { code?: string }).code
+
+  test('e2-bucket-privado-com-limites', async () => {
+    const r = await db.query<{ public: boolean; file_size_limit: number | bigint; allowed_mime_types: string[] }>(
+      `select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'midias'`,
+    )
+    expect(r.rows).toHaveLength(1)
+    const [b] = r.rows
+    expect(b.public).toBe(false)
+    expect(Number(b.file_size_limit)).toBe(52428800)
+    // Exatamente os 8 tipos da D4, sem image/svg+xml (carrega script).
+    expect([...b.allowed_mime_types].sort()).toEqual(
+      ['audio/mp4', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'image/gif', 'image/jpeg', 'image/png', 'image/webp'],
+    )
+    expect(b.allowed_mime_types).not.toContain('image/svg+xml')
+  })
+
+  test('e2-bucket-criado-antes-fica-privado', async () => {
+    // O ramo on conflict da migração: um bucket midias criado antes à mão (aqui, estragado pelo dono das migrações)
+    // volta a privado, com o limite e os 8 tipos, quando o insert da migração roda de novo. O trecho é lido do próprio
+    // arquivo (do insert até o fim do on conflict), para não duplicar o texto e falhar se ele mudar.
+    const migracao = MIGRACOES.find((m) => m.arquivo.endsWith('_biblioteca_storage.sql'))
+    expect(migracao, 'migração biblioteca_storage').toBeDefined()
+    const FIM = 'excluded.allowed_mime_types;'
+    const ini = migracao!.sql.indexOf('insert into storage.buckets')
+    const fim = migracao!.sql.indexOf(FIM)
+    expect([ini >= 0, fim > ini]).toEqual([true, true])
+    const trecho = migracao!.sql.slice(ini, fim + FIM.length)
+    const bucket = async () =>
+      (await db.query<{ public: boolean; file_size_limit: number | bigint; allowed_mime_types: string[] }>(
+        `select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'midias'`,
+      )).rows.map((b) => ({ ...b, file_size_limit: Number(b.file_size_limit), allowed_mime_types: [...b.allowed_mime_types].sort() }))
+    const comoDono = async (sql: string) => {
+      await db.exec(`set local role ${DONO_MIGRACAO}`)
+      try {
+        await db.exec(sql)
+      } finally {
+        await db.exec('reset role')
+      }
+    }
+    await comoDono(`update storage.buckets set public = true, file_size_limit = 999999999,
+      allowed_mime_types = array['image/svg+xml', 'image/png'] where id = 'midias'`)
+    expect(await bucket()).toEqual([{ public: true, file_size_limit: 999999999, allowed_mime_types: ['image/png', 'image/svg+xml'] }]) // controle
+    await comoDono(trecho)
+    expect(await bucket()).toEqual([{
+      public: false,
+      file_size_limit: 52428800,
+      allowed_mime_types: ['audio/mp4', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'image/gif', 'image/jpeg', 'image/png', 'image/webp'],
+    }])
+  })
+
+  test('e2-storage-quem-envia', async () => {
+    await cadastrarSessoesExtras()
+    const nome = `som/${UUID_A}.mp3`
+    for (const [rotulo, sessao] of SESSOES) {
+      const r = await comoSessao(db, sessao, ENVIA, ['midias', nome])
+      if (rotulo === 'ana' || rotulo === 'adm') {
+        expect(linhas(r), rotulo).toEqual([])
+      } else {
+        // anon também cai na RLS, e não no privilégio: no Supabase anon e authenticated têm select, insert, update
+        // e delete em storage.* (supabase/storage, migrations/tenant/0002-storage-schema.sql, "alter default
+        // privileges in schema storage grant all on tables", menos o que a 0073 tira; simulacao-supabase.sql) e
+        // as políticas são todas "to authenticated".
+        expect(erro(r).message, rotulo).toBe(violaRls('objects'))
+      }
+    }
+    // Só os 2 envios aceitos ficaram, cada um com o dono da sessão.
+    const r = await db.query('select bucket_id, name, owner_id from storage.objects order by owner_id')
+    expect(r.rows).toEqual([
+      { bucket_id: 'midias', name: nome, owner_id: UID_ANA },
+      { bucket_id: 'midias', name: nome, owner_id: UID_ADM },
+    ])
+  })
+
+  test('e2-storage-quem-le', async () => {
+    await cadastrarSessoesExtras()
+    await semearObjetos()
+    const DO_MIDIAS = [{ name: `imagem/${UUID_B}.png` }, { name: `som/${UUID_A}.mp3` }]
+    for (const [rotulo, sessao] of SESSOES) {
+      const lidos = linhas(await comoSessao<{ name: string }>(db, sessao, 'select name from storage.objects order by name'))
+      // ana, adm (prévia na Biblioteca) e palco (toca os sons e mostra as imagens): os 2 do midias, nunca o do outro.
+      expect(lidos, rotulo).toEqual(['ana', 'adm', 'palco'].includes(rotulo) ? DO_MIDIAS : [])
+    }
+  })
+
+  test('e2-storage-quem-apaga', async () => {
+    await cadastrarSessoesExtras()
+    await semearObjetos()
+    // Controle do gatilho: sem o parâmetro que o servidor do Storage liga, até a equipe recebe 42501.
+    const semParametro = erro(await comoSessao(db, ana, 'delete from storage.objects'))
+    expect(codigo(semParametro)).toBe('42501')
+    expect(await retratoDoStorage()).toEqual(OBJETOS_SEMEADOS)
+    for (const [rotulo, sessao] of SESSOES) {
+      await db.exec('savepoint caso')
+      expect(linhas(await comoSessao(db, sessao, 'delete from storage.objects', [], { deleteDoStorage: true })), rotulo).toEqual([])
+      // ana e adm: o midias esvazia e o outro fica; os demais: nada muda.
+      expect(await retratoDoStorage(), rotulo).toEqual(
+        rotulo === 'ana' || rotulo === 'adm' ? [{ bucket_id: 'outro', name: `som/${UUID_A}.mp3` }] : OBJETOS_SEMEADOS,
+      )
+      await db.exec('rollback to savepoint caso')
+      await db.exec('release savepoint caso')
+    }
+  })
+
+  test('e2-sem-update', async () => {
+    await semearObjetos()
+    expect(linhas(await comoSessao(db, ana, `update storage.objects set name = $1`, [`som/${UUID_B}.mp3`]))).toEqual([])
+    expect(await retratoDoStorage()).toEqual(OBJETOS_SEMEADOS)
+  })
+
+  test.each([
+    `som/../x.mp3`,
+    `som/a/${UUID_A}.mp3`,
+    `som\\${UUID_A}.mp3`,
+    `som/${UUID_A}.png`,
+    `imagem/${UUID_A}.mp3`,
+    `outro/${UUID_A}.mp3`,
+    `som/${UUID_A.toUpperCase()}.mp3`,
+    `som/${UUID_A}.mp3.html`,
+    `som/${UUID_A}`,
+    `som/x.mp3`,
+    `imagem/${UUID_A}.svg`,
+  ])('e2-nome-fora-do-formato: %s', async (nome) => {
+    expect(erro(await comoSessao(db, ana, ENVIA, ['midias', nome])).message).toBe(violaRls('objects'))
+    // Controles: os dois formatos que o app gera passam com a mesma sessão.
+    expect(linhas(await comoSessao(db, ana, ENVIA, ['midias', `imagem/${UUID_A}.png`]))).toEqual([])
+    expect(linhas(await comoSessao(db, ana, ENVIA, ['midias', `som/${UUID_A}.m4a`]))).toEqual([])
+  })
+
+  test('e2-outro-bucket-nao-recebe', async () => {
+    await criarBucketOutro()
+    expect(erro(await comoSessao(db, ana, ENVIA, ['outro', `som/${UUID_A}.mp3`])).message).toBe(violaRls('objects'))
+    expect(linhas(await comoSessao(db, ana, ENVIA, ['midias', `som/${UUID_A}.mp3`]))).toEqual([]) // controle
+  })
+
+  test('e2-som-em-gesto-nao-sai', async () => {
+    const [midia] = linhas(await comoSessao<{ id: string }>(db, ana,
+      `insert into public.midias (tipo, nome, caminho, mime, tamanho_bytes) values ('som', 'aplauso.mp3', $1, 'audio/mpeg', 1000) returning id`,
+      [`som/${UUID_A}.mp3`]))
+    const [som] = linhas(await comoSessao<{ id: string }>(db, ana,
+      `insert into public.sons (midia_id, rotulo) values ($1, 'aplauso') returning id`, [midia.id]))
+    expect(linhas(await comoSessao(db, ana,
+      `update public.mapa_gestos set acao = 'som', som_id = $1 where gesto = 'Thumb_Up' returning gesto`, [som.id]))).toEqual([{ gesto: 'Thumb_Up' }])
+    const APAGA = 'delete from public.midias where id = $1 returning id'
+    const e = erro(await comoSessao(db, ana, APAGA, [midia.id]))
+    expect(codigo(e)).toBe('23503')
+    expect(e.message).toContain('mapa_gestos')
+    expect((await db.query('select id from public.midias where id = $1', [midia.id])).rows).toEqual([{ id: midia.id }])
+    // Com o gesto de volta a nenhuma, a mídia sai, e o som vai junto (cascata).
+    linhas(await comoSessao(db, ana, `update public.mapa_gestos set acao = 'nenhuma', som_id = null where gesto = 'Thumb_Up' returning gesto`))
+    expect(linhas(await comoSessao(db, ana, APAGA, [midia.id]))).toEqual([{ id: midia.id }])
+    expect((await db.query('select id from public.midias where id = $1', [midia.id])).rows).toEqual([])
+    expect((await db.query('select id from public.sons where id = $1', [som.id])).rows).toEqual([])
+  })
+
+  test('e2-imagem-em-aviso-vira-nulo', async () => {
+    const [midia] = linhas(await comoSessao<{ id: string }>(db, ana,
+      `insert into public.midias (tipo, nome, caminho, mime, tamanho_bytes) values ('imagem', 'foto.png', $1, 'image/png', 10) returning id`,
+      [`imagem/${UUID_A}.png`]))
+    expect(linhas(await comoSessao(db, ana, 'update public.avisos set imagem_midia_id = $1 where id = $2 returning id', [midia.id, ID_AVISO])))
+      .toEqual([{ id: ID_AVISO }])
+    expect(linhas(await comoSessao(db, ana, 'delete from public.midias where id = $1 returning id', [midia.id]))).toEqual([{ id: midia.id }])
+    expect((await db.query('select id, imagem_midia_id from public.avisos where id = $1', [ID_AVISO])).rows).toEqual([
+      { id: ID_AVISO, imagem_midia_id: null },
+    ])
+  })
+
+  test('e2-cena-em-gesto-nao-sai', async () => {
+    expect(linhas(await comoSessao(db, ana,
+      `update public.mapa_gestos set acao = 'cena', cena_id = $1 where gesto = 'Victory' returning gesto`, [ID_CENA]))).toEqual([{ gesto: 'Victory' }])
+    const e = erro(await comoSessao(db, ana, 'delete from public.cenas where id = $1 returning id', [ID_CENA]))
+    expect(codigo(e)).toBe('23503')
+    expect(e.message).toContain('mapa_gestos')
+    expect((await db.query('select id from public.cenas where id = $1', [ID_CENA])).rows).toEqual([{ id: ID_CENA }])
+  })
+
+  test('e2-episodio-sem-estado', async () => {
+    // Documenta que a E2 não mexe em estado nem em gestos_ligados (D2): o update do adaptador manda só título e data.
+    expect(linhas(await comoSessao(db, ana,
+      `update public.episodios set titulo = 'Novo', data = '2026-12-01' where id = $1 returning estado, gestos_ligados`, [ID_EPISODIO])))
+      .toEqual([{ estado: 'rascunho', gestos_ligados: false }])
   })
 })

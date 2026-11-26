@@ -6,7 +6,8 @@ import simulacao from './simulacao-supabase.sql?raw'
 import donoMigracao from './dono-migracao.sql?raw'
 
 // Todas as migrações, em ordem de nome (o prefixo AAAAMMDDHHMMSS é a ordem de aplicação, como na Supabase CLI).
-const MIGRACOES: { arquivo: string; sql: string }[] = Object.entries(
+// Exportada para os testes que rodam um trecho de uma migração (e2-bucket-criado-antes-fica-privado).
+export const MIGRACOES: { arquivo: string; sql: string }[] = Object.entries(
   import.meta.glob('../migrations/*.sql', { query: '?raw', import: 'default', eager: true }) as Record<string, string>,
 )
   .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -175,6 +176,17 @@ export async function semearDados(db: PGlite): Promise<void> {
   )
 }
 
+/** Opções de `comoSessao`. */
+export type OpcoesDaSessao = {
+  /**
+   * Imita o servidor do Storage num `delete` em `storage.objects`: liga `storage.allow_delete_query = 'true'`
+   * só neste comando (o servidor liga em cada transação, junto com o papel e as claims; fonte no bloco `storage`
+   * de `simulacao-supabase.sql`). Sem a opção, o gatilho `protect_objects_delete` da simulação recusa todo `delete`
+   * direto com 42501, como no Supabase. O parâmetro volta a vazio no fim, como as claims.
+   */
+  deleteDoStorage?: boolean
+}
+
 /**
  * Roda `sql` como a sessão dada: `null` = papel anon sem claims; com claims = papel authenticated.
  * Usa um savepoint para que uma recusa esperada não aborte a transação do teste; devolve as linhas
@@ -185,10 +197,12 @@ export async function comoSessao<T>(
   claims: Claims | null,
   sql: string,
   params: unknown[] = [],
+  opcoes: OpcoesDaSessao = {},
 ): Promise<T[] | Error> {
   await db.exec('savepoint sessao')
   try {
     await db.query(`select set_config('request.jwt.claims', $1, true)`, [claims ? JSON.stringify(claims) : ''])
+    if (opcoes.deleteDoStorage) await db.query(`select set_config('storage.allow_delete_query', 'true', true)`)
     await db.exec(claims ? 'set local role authenticated' : 'set local role anon')
     const r = await db.query<T>(sql, params)
     await db.exec('release savepoint sessao')
@@ -201,5 +215,6 @@ export async function comoSessao<T>(
     await db.exec('reset role')
     // Zera as claims: o superusuário não depende delas, mas assim nenhuma sessão vaza para o comando seguinte.
     await db.query(`select set_config('request.jwt.claims', '', true)`)
+    if (opcoes.deleteDoStorage) await db.query(`select set_config('storage.allow_delete_query', '', true)`)
   }
 }
