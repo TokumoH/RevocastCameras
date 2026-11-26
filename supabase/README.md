@@ -15,7 +15,7 @@
 
 ## Propósito
 
-Tudo o que é do banco Postgres do Supabase: as migrações versionadas (tipos, tabelas, funções, gatilho, RLS e dados iniciais) e os testes que provam a RLS e as restrições sem precisar de conta nem de Docker. Este README também é o manual de aplicação: como levar as migrações ao projeto Supabase, sempre em ordem, e como inserir (ou recuperar) o primeiro `admin`.
+Tudo o que é do banco Postgres do Supabase: as migrações versionadas (tipos, tabelas, funções, gatilho, RLS e dados iniciais) e os testes que provam a RLS e as restrições sem precisar de conta nem de Docker. Este README também é o manual de aplicação: como levar as migrações ao projeto Supabase, sempre em ordem, como inserir (ou recuperar) o primeiro `admin` e como ligar o login Google (Supabase Auth, Google Cloud e Vercel; "Login Google (E1)", em "Lógica").
 
 ## Origem
 
@@ -65,7 +65,7 @@ flowchart LR
     B --> T[tests/*.test.ts<br/>npm test, hook e CI]
 ```
 
-1. **Aplicar as migrações (editor SQL, caminho da E0 e da E1), sempre em ordem de nome e cada uma uma vez só:** no painel do Supabase, abrir *SQL Editor*, colar o conteúdo inteiro de [`migrations/20261117000000_fundacao.sql`](migrations/20261117000000_fundacao.sql) e executar; depois, numa nova consulta, o de [`migrations/20261126142500_membros_sem_autoalteracao.sql`](migrations/20261126142500_membros_sem_autoalteracao.sql) (E1, decisão D1 do PLA-002: nenhum `admin` altera nem remove a própria linha). Quem já aplicou a de fundação aplica só a segunda; aplicar a segunda é passo pendente do responsável (Tarefa 6 do PLA-002). Não exige a senha do banco nem login da CLI.
+1. **Aplicar as migrações (editor SQL, caminho da E0 e da E1), sempre em ordem de nome e cada uma uma vez só:** no painel do Supabase, abrir *SQL Editor*, colar o conteúdo inteiro de [`migrations/20261117000000_fundacao.sql`](migrations/20261117000000_fundacao.sql) e executar; depois, numa nova consulta, o de [`migrations/20261126142500_membros_sem_autoalteracao.sql`](migrations/20261126142500_membros_sem_autoalteracao.sql) (E1, decisão D1 do PLA-002: nenhum `admin` altera nem remove a própria linha). Quem já aplicou a de fundação aplica só a segunda; aplicar a segunda é passo pendente do responsável (Tarefa 6 do PLA-002, passo 1 de "Login Google (E1)", abaixo). Não exige a senha do banco nem login da CLI.
 2. **Inserir o primeiro `admin`** (uma vez, no editor SQL, trocando `<e-mail>` pelo e-mail Google do responsável; o comando preenchido nunca é salvo no repositório):
 
    ```sql
@@ -76,6 +76,32 @@ flowchart LR
 
    **Recuperação do último `admin`:** nenhum `admin` altera nem remove a própria linha (segunda migração), então sempre sobra um no uso normal; só dois admins que se removem um ao outro no mesmo instante podem zerar os admins. Nesse caso, o dono roda no editor SQL o mesmo comando acima (se o e-mail saiu da lista) ou, se o e-mail ainda está na lista com outro papel, `update public.membros_permitidos set papel = 'admin' where email = lower('<e-mail>');` (também nunca salvo preenchido).
 3. **Testar localmente:** `npx vitest run supabase/tests` (também roda dentro do `npm test`).
+
+### Login Google (E1)
+
+Passo do responsável para ligar o login de verdade (Tarefa 6 do [PLA-002](../docs/planos/2026-11-26-e1-entrada-e-membros.md); nenhum agente consegue fazer). Os nomes de menu são os do painel em 2026-11 e podem mudar; `<ref>` é o identificador do projeto Supabase e `<domínio da Vercel>` o domínio de produção do app. Nenhum e-mail, chave ou domínio real entra neste repositório. Em ordem:
+
+1. **Banco (editor SQL), nesta ordem:** se a E0 ainda estiver pendente, aplicar [`migrations/20261117000000_fundacao.sql`](migrations/20261117000000_fundacao.sql) e rodar o comando do primeiro `admin` (passo 2 acima) com o próprio e-mail Google; depois, numa nova consulta, colar inteira e rodar [`migrations/20261126142500_membros_sem_autoalteracao.sql`](migrations/20261126142500_membros_sem_autoalteracao.sql). Conferir em *Authentication → Policies* (ou *Database → Policies*) que `membros_permitidos` tem quatro políticas e que as de update e delete trazem a condição `email <> (select lower(auth.jwt() ->> 'email'))`.
+2. **Google Cloud Console** (sem faturamento), em *APIs e serviços → Tela de consentimento OAuth* (no console novo, *Google Auth Platform*: *Branding*, *Audience*, *Data Access (Scopes)*, *Clients*):
+   - tipo de usuário **Externo**; escopos `openid`, `email` e `profile` (não sensíveis);
+   - **Domínios autorizados:** `<ref>.supabase.co` e `<domínio da Vercel>`;
+   - **publicar em produção** (em "Teste" só entram os usuários de teste cadastrados); enviar um logotipo pode exigir a verificação da marca pelo Google, então ele é opcional;
+   - *Credenciais → Criar ID do cliente OAuth → Aplicativo da Web*: em **Origens JavaScript autorizadas**, `https://<domínio da Vercel>` e `http://localhost:5173` (dispensáveis, porque o retorno passa pelo Supabase, mas inofensivas); em **URIs de redirecionamento autorizados**, **só** `https://<ref>.supabase.co/auth/v1/callback` (quem volta do Google é o Supabase, não o app);
+   - guardar o ID e a chave secreta do cliente só para o passo 3: a chave secreta nunca vai para o repositório nem para a Vercel.
+3. **Supabase → Authentication → Sign In / Providers** (na documentação, *Authentication → Providers → Google*): **Google** ligado, com o ID e a chave secreta do cliente; provedor **Email desligado** (vem ligado); **"Confirm email" ligado** (só tem efeito se o provedor Email for religado; fica ligado como pede o DES-001 §12); **vinculação manual de identidades desligada** (assim uma sessão anônima não se apropria do e-mail de um membro); login anônimo pode ficar desligado até a E3 (decisão D5 do PLA-002; se já estiver ligado, nada quebra).
+4. **Supabase → Authentication → URL Configuration:** **Site URL** `https://<domínio da Vercel>`; **Redirect URLs** só `https://<domínio da Vercel>/**`, `http://localhost:5173/**` (desenvolvimento) e `http://localhost:4173/**` (prévia local, `npm run preview`), como no DES-001 §12. O `/**` é curinga de **caminho** (o login volta a `/painel`, `/controle` ou `/entrar`); **nenhum curinga de host**, como `https://*-<time>.vercel.app/**`:
+   - por quê: qualquer pessoa cria na Vercel um projeto `x-<time>`, cujo domínio casa com o padrão, começa ela mesma o login com o próprio `code_challenge` e manda o link a um membro; o Supabase devolve o código ao domínio dela (que está na lista), que tem o verificador PKCE, e ela troca o código pela sessão do membro (de um `admin`, inclusive). O PKCE não protege um fluxo começado pelo atacante;
+   - para testar o login num deploy de prévia, acrescentar a URL **exata** daquela prévia (`https://<url exata da prévia>/**`), testar e **tirá-la depois**;
+   - um endereço fora da lista faz o retorno cair na Site URL (produção), mesmo em desenvolvimento.
+5. **Supabase → validade do token de acesso (JWT): 10 min** (600 s; DES-001 §8, Revogação). Pela documentação do Supabase (guia de sessões), fica em *Authentication → Settings → Sessions*; em painéis mais antigos, nas configurações de JWT do projeto (*Project Settings → JWT Keys* ou *Settings → API → JWT Settings*). **Realtime:** acesso público desligado (*Realtime → Settings*); pode esperar a E3, quando os canais entram.
+6. **Vercel → Settings → Environment Variables**, em **Production** e **Preview**: `VITE_SUPABASE_URL` (só a origem, `https://<ref>.supabase.co`) e `VITE_SUPABASE_PUBLISHABLE_KEY` (a chave publicável `sb_publishable_...`; nunca a `sb_secret_...`, que o app recusa). Fazer um **novo deploy**: as variáveis entram no build (sem elas, `/entrar`, `/painel` e `/controle` mostram "Configuração incompleta").
+7. **Conferência real** (anotar o resultado para o registro seguinte em `docs/verificacoes/`):
+   - entrar em `/entrar` com a conta do primeiro `admin` → vai para `/painel` com a aba **Membros**; a própria linha aparece como "Você", sem controles (o `admin` não altera nem remove a si mesmo; no banco, a política da segunda migração);
+   - incluir uma segunda conta Google sua como `equipe`; entrar com ela em outro navegador → `/painel` sem a aba Membros;
+   - trocar o papel dela para `apresentadora` e voltar à aba do outro navegador → "Sem acesso a esta página" com o link para `/controle`;
+   - remover a conta e voltar à aba → "Acesso não liberado";
+   - entrar com uma conta fora da lista → "Acesso não liberado" com o e-mail dela;
+   - cancelar a tela do Google → "O login com o Google foi cancelado."
 
 ## Exemplo
 
@@ -95,7 +121,7 @@ Alternativa pela **Supabase CLI** (quando ela passar a ser usada):
 
 ## Riscos
 
-- A segunda migração (`20261126142500_membros_sem_autoalteracao.sql`) também **não foi aplicada num Supabase real**: aplicá-la depois da de fundação é passo do responsável (Tarefa 6 do PLA-002); até lá, no banco real um `admin` ainda consegue remover a própria linha. O limite da corrida de dois admins e a recuperação estão acima (passo 2 de "Lógica") e em [`migrations/README.md`](migrations/README.md).
+- A segunda migração (`20261126142500_membros_sem_autoalteracao.sql`) também **não foi aplicada num Supabase real**: aplicá-la depois da de fundação é passo do responsável (Tarefa 6 do PLA-002, passo 1 de "Login Google (E1)"); até lá, no banco real um `admin` ainda consegue remover a própria linha. O limite da corrida de dois admins e a recuperação estão acima (passo 2 de "Lógica") e em [`migrations/README.md`](migrations/README.md).
 - A migração **não foi aplicada num Supabase real** nesta tarefa: a simulação reproduz só o que a migração usa (papéis `anon`, `authenticated`, `service_role` e `supabase_auth_admin`, privilégios padrão no padrão vigente desde 2026-10-30, nas variantes com a exposição automática de tabelas desligada e ligada, `auth.users` com seis colunas, `auth.jwt()` e `auth.uid()`). Diferenças de versão do Postgres do projeto (por exemplo, `on delete set null (coluna)` exige Postgres 15 ou mais novo) só aparecem ao aplicar.
 - Privilégios de tabela (Correção 13 da Tarefa 3): desde 2026-10-30 o Supabase não dá mais `select`, `insert`, `update` e `delete` automáticos em tabelas novas de `public` ([changelog](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically)); a migração dá `grant` explícito a `authenticated` só do que as políticas usam e revoga o resto (detalhes em [`migrations/README.md`](migrations/README.md)). A premissa veio do changelog e da documentação, não de um projeto real. `service_role` não tem nenhum privilégio de tabela nem de sequência (a migração revoga dele o que os privilégios padrão do Supabase dariam: hoje `truncate`, `references`, `trigger` e `maintain`; com "Automatically expose new tables" ligado, tudo) nem `EXECUTE` nas 3 funções (Correção 14). A chave de serviço continua passando por cima da RLS (`BYPASSRLS`), mas sem privilégio não acessa nada: um uso futuro no servidor (por exemplo, uma Edge Function com a chave secreta) pede decisão própria, com o `grant` explícito a `service_role` na migração que precisar dele e, a partir do VER-011, o ajuste do `data-api:check`, que acusa qualquer privilégio de `service_role`; tabela criada por outro papel que não o das migrações (por exemplo, pelo painel com outro dono) recebe os privilégios padrão do projeto, também para `service_role`.
 - O editor SQL não registra a migração para a CLI: esquecer o `migration repair` faz o `db push` tentar aplicá-la de novo (e falhar em objetos que já existem).
@@ -105,3 +131,4 @@ Alternativa pela **Supabase CLI** (quando ela passar a ser usada):
 - `criado_por`, `enviado_por` e `atualizado_por` são declarados pelo cliente (como a autoria de `registro_acoes`, DES-001 seção 8); uma migração futura pode prendê-los a `auth.uid()` com `with check`.
 - Uma cena ou um som usado em `mapa_gestos` não pode ser apagado (chave estrangeira sem ação): é preciso trocar o gesto antes.
 - O comando do primeiro `admin` depende de o e-mail ser digitado certo; um erro deixa o responsável sem papel até corrigir a linha pelo editor SQL.
+- O guia "Login Google (E1)" foi escrito sem acesso a um projeto Supabase, a um console do Google Cloud nem à Vercel: os nomes de menu vêm da documentação e podem ter mudado, e nenhuma das configurações foi conferida num projeto real. A conferência real (passo 7) é do responsável; até ela, o login de verdade, o papel lido do banco real e a política da segunda migração não foram exercitados fora dos testes (registro VER-020).
