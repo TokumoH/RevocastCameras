@@ -307,6 +307,82 @@ describe('premissas do Postgres usadas na leitura do corpo', () => {
   })
 })
 
+// PLA-003, D13 (Tarefa 2 da E2): a simulação tem o schema storage; o catálogo devolve, para as relações dele, as
+// mudanças por item (mudancasEmStorage, no lugar de relacoesPreexistentes), as políticas em relações pré-existentes com
+// o texto das expressões e, no fim, as linhas de storage.buckets (bucketsFinais).
+describe('storage (PLA-003, D13)', () => {
+  const POLITICA = "create policy m_le on storage.objects for select to authenticated using (bucket_id = 'midias' and name like 'som/%');"
+
+  test('política em relação pré-existente: forma nova, com relação, papéis, comando e o texto das expressões', async () => {
+    const r = await analisarMigracoes(POLITICA)
+    expect(r.catalogo.politicasEmPreexistentes).toEqual([{
+      rotulo: 'm_le em storage.objects', relacao: 'storage.objects', papeis: ['authenticated'], comando: 'r',
+      usando: "((bucket_id = 'midias'::text) AND (name ~~ 'som/%'::text))", comCheck: null, mudanca: 'criação',
+    }])
+    expect(r.catalogo.relacoesPreexistentes).toEqual([])
+    expect(r.catalogo.mudancasEmStorage).toEqual([])
+  })
+
+  test.each([
+    ['RLS', 'alter table storage.objects disable row level security;'],
+    ['coluna', 'alter table storage.objects rename column metadata to meta;'],
+    ['padrão', 'alter table storage.objects alter column created_at drop default;'],
+    ['índice', 'create index on storage.objects (owner_id);'],
+    ['gatilho', 'alter table storage.objects enable replica trigger protect_objects_delete;'],
+    ['restrição', 'alter table storage.objects drop constraint "objects_bucketId_fkey";'],
+    ['comentário', "comment on column storage.objects.name is 'x';"],
+    ['replica identity', 'alter table storage.objects replica identity nothing;'],
+    ['privilégio', 'revoke select on storage.objects from anon;'],
+  ])('mudancasEmStorage: %s', async (item, sql) => {
+    const r = await analisarMigracoes(sql)
+    expect(r.catalogo.mudancasEmStorage).toEqual([{ rotulo: 'storage.objects', itens: [item], mudanca: 'alteração' }])
+    expect(r.catalogo.relacoesPreexistentes).toEqual([])
+  })
+
+  test('mudancasEmStorage: estatística, herança e chave estrangeira vindas de public', async () => {
+    const r = await analisarMigracoes(`create statistics public.st on bucket_id, name from storage.objects;
+create table public.filha () inherits (storage.objects);
+create table public.ref (o uuid references storage.objects (id));`)
+    expect(r.catalogo.mudancasEmStorage).toEqual([{ rotulo: 'storage.objects', itens: ['estatística', 'herança', 'chave estrangeira'], mudanca: 'alteração' }])
+  })
+
+  test('mudancasEmStorage: relação removida', async () => {
+    const r = await analisarMigracoes('drop table storage.objects;')
+    expect(r.catalogo.mudancasEmStorage).toEqual([{ rotulo: 'storage.objects', itens: [], mudanca: 'remoção' }])
+    expect(r.catalogo.relacoesPreexistentes).toEqual([])
+  })
+
+  test('relação pré-existente fora de storage continua em relacoesPreexistentes', async () => {
+    const r = await analisarMigracoes('set session authorization postgres; grant select on auth.users to anon; set session authorization postgres_sim;')
+    expect(r.catalogo.relacoesPreexistentes).toEqual([{ rotulo: 'auth.users', mudanca: 'alteração' }])
+    expect(r.catalogo.mudancasEmStorage).toEqual([])
+  })
+
+  test('aclPadraoEmStorage: privilégios padrão de supabase_storage_admin ou do schema storage', async () => {
+    const r = await analisarMigracoes('alter default privileges for role supabase_storage_admin in schema storage grant truncate on tables to authenticated;')
+    expect(r.catalogo.aclPadraoEmStorage).toEqual([{ rotulo: 'alter default privileges (papel supabase_storage_admin, schema storage, tabelas)', mudanca: 'alteração' }])
+    expect((await analisarMigracoes('alter default privileges in schema public grant select on tables to authenticated;')).catalogo.aclPadraoEmStorage).toEqual([])
+  })
+
+  test('objetosEmStorage: objeto que não é relação no schema storage; bucketsFinais null com storage.buckets movida', async () => {
+    const r = await analisarMigracoes("create type storage.e as enum ('a'); alter table storage.buckets set schema public;")
+    expect(r.catalogo.objetosEmStorage).toEqual([{ rotulo: 'type storage.e', mudanca: 'criação' }])
+    expect(r.catalogo.bucketsFinais).toBeNull()
+    expect((await analisarMigracoes(TABELA)).catalogo.objetosEmStorage).toEqual([])
+  })
+
+  test('bucketsFinais: vazio sem linha; com a linha, os quatro campos lidos como superusuário', async () => {
+    expect((await analisarMigracoes(TABELA)).catalogo.bucketsFinais).toEqual([])
+    const r = await analisarMigracoes("insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values ('midias', 'midias', false, 52428800, array['image/png']);")
+    expect(r.catalogo.bucketsFinais).toEqual([{ id: 'midias', public: false, file_size_limit: 52428800, allowed_mime_types: ['image/png'] }])
+  })
+
+  test('a linha gravada em storage.buckets não fica na base: a análise seguinte não a vê', async () => {
+    await analisarMigracoes("insert into storage.buckets (id, name) values ('x', 'x');")
+    expect((await analisarMigracoes(TABELA)).catalogo.bucketsFinais).toEqual([])
+  })
+})
+
 let banco
 /** PGlite puro (sem a simulação), criado no primeiro uso e fechado no fim do arquivo. */
 function premissas() {

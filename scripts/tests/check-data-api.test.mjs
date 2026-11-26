@@ -982,9 +982,267 @@ create policy ev_le on public.ev for select to authenticated using (true); grant
 describe('regrasDeTabela (sobre um catálogo montado à mão)', () => {
   test('sem nenhuma tabela', () => {
     const c = {
-      relacoes: [], relacoesPreexistentes: [], politicasEmPreexistentes: [], schemas: [], schemasPreexistentes: [], aclPadrao: [], aclPadraoFinal: [],
+      relacoes: [], relacoesPreexistentes: [], politicasEmPreexistentes: [], mudancasEmStorage: [], aclPadraoEmStorage: [], objetosEmStorage: [], bucketsFinais: [], schemas: [], schemasPreexistentes: [], aclPadrao: [], aclPadraoFinal: [],
       papeisNovos: [], papeisPreexistentes: [], participacoesNovas: [], outros: [], papeisDoSupabase: { anon: '1', authenticated: '2' }, donoDasMigracoes: 'postgres',
     }
     expect(regrasDeTabela(c)).toEqual(['nenhuma tabela criada pelas migrações: a checagem não conferiu nada'])
+  })
+
+  // PLA-003, D13: a simulação não tem política em relação pré-existente, então a remoção de uma (que só nega mais) só
+  // pode ser provada sobre um catálogo montado à mão: em storage.objects é aceita; em outra relação continua erro.
+  test('política removida: em storage.objects aceita; em auth.users, forma não suportada', () => {
+    const removida = (relacao, nome) => ({ rotulo: `${nome} em ${relacao}`, relacao, papeis: ['anon'], comando: '*', usando: 'true', comCheck: null, mudanca: 'remoção' })
+    const c = {
+      relacoes: [{ rotulo: 'public.t', schema: 'public', nome: 't', tipo: 'r', rls: true, dono: 'postgres_sim', politicas: [{ nome: 'p', comando: 'r', papeis: ['authenticated'] }],
+        gatilhos_instead: [], acl: [], acl_colunas: [], anon: [], authenticated: ['SELECT'], service_role: [], anon_colunas: false, authenticated_colunas: false, service_role_colunas: false }],
+      relacoesPreexistentes: [], politicasEmPreexistentes: [removida('storage.objects', 'velha'), removida('auth.users', 'outra')], mudancasEmStorage: [], aclPadraoEmStorage: [], objetosEmStorage: [], bucketsFinais: [],
+      schemas: [], schemasPreexistentes: [], aclPadrao: [], aclPadraoFinal: [], papeisNovos: [], papeisPreexistentes: [], participacoesNovas: [], outros: [],
+      papeisDoSupabase: { anon: '1', authenticated: '2', serviceRole: '3' }, donoDasMigracoes: 'postgres_sim', donoDasMigracoesOid: '4', nomeDoPapel: String,
+    }
+    expect(regrasDeTabela(c)).toEqual(['política outra em auth.users: política em relação pré-existente: forma não suportada'])
+  })
+})
+
+// PLA-003, D13 (Tarefa 2 da E2): a simulação ganhou o schema storage, com storage.buckets e storage.objects de
+// supabase_storage_admin, e o dono das migrações é membro desse papel (supabase/tests/dono-migracao.sql). Três regras:
+// (1) nenhuma mudança em storage.* além de create/alter/drop policy em storage.objects (substitui o erro genérico de
+// relação pré-existente para essas relações); (2) a política de storage.objects só no formato da D13; (3) os buckets
+// do estado final só os do app, privados e com limites.
+describe('storage (PLA-003, D13)', () => {
+  /** papel_atual() e dispositivo_atual() mínimas, só para as políticas poderem chamá-las (o data-api:check não julga função). */
+  const FUNCOES_DE_PAPEL = `create function public.papel_atual() returns text language sql stable security definer set search_path = '' as $$ select null::text $$;
+create function public.dispositivo_atual() returns table (id uuid, tipo text) language sql stable security definer set search_path = '' as $$ select null::uuid, null::text $$;`
+  const BASE_STORAGE = `${BASE}\n${FUNCOES_DE_PAPEL}`
+  const B = "bucket_id = 'midias'"
+  const P = "(select public.papel_atual()) in ('equipe','admin')"
+  const politica = (resto, nome = 'm_le') => `create policy ${nome} on storage.objects ${resto};`
+  const pol = (nome) => `política ${nome} em storage.objects`
+  const MSG_STORAGE = '(no Supabase o dono das migrações não é dono das relações de storage e receberia 42501; em storage só create/alter/drop policy em storage.objects é aceito, PLA-003 D13)'
+  const alteradoEmStorage = (rotulo, itens) => `${rotulo}: relação do schema storage: ${itens} alterado pelas migrações ${MSG_STORAGE}`
+  const semBucket = (nome, expr = 'using') => `${pol(nome)}: o ${expr} não começa pelo bucket como conjunção de topo (((bucket_id = '<bucket>'::text) AND ..., com o bucket em BUCKETS_DO_APP: midias)`
+  const semPapel = (nome) => `${pol(nome)}: não chama public.papel_atual() nem public.dispositivo_atual() (fora de textos e comentários)`
+  const comando = (nome, cmd) => `${pol(nome)}: comando ${cmd} não permitido em storage.objects (só select, insert e delete; sem update, PLA-003 D5)`
+  const MSG_BUCKET = '(PLA-003 D13: só os buckets de BUCKETS_DO_APP, privados, com file_size_limit até 52428800 e allowed_mime_types não vazio e dentro de TIPOS_DO_BUCKET)'
+  const bucket = (id, problemas) => `bucket ${id} (storage.buckets): ${problemas} ${MSG_BUCKET}`
+
+  describe('políticas de storage.objects', () => {
+    test.each([
+      ['storage-politica-aceita', politica(`for select to authenticated using (${B} and ${P})`)],
+      ['storage-insert-aceito', politica(`for insert to authenticated with check (${B} and ${P} and name ~ '^som/')`)],
+      ['storage-delete-aceito', politica(`for delete to authenticated using (${B} and ${P})`)],
+      ['storage-politica-com-dispositivo', politica(`for select to authenticated using (${B} and (select tipo from public.dispositivo_atual()) = 'obs_palco')`)],
+    ])('%s: aceita', async (_caso, sql) => {
+      expect(await verificar(`${BASE_STORAGE} ${sql}`)).toEqual([])
+    })
+
+    test.each([
+      ['storage-sem-bucket', politica(`for select to authenticated using (${P})`), [semBucket('m_le')]],
+      // Exemplo da revisão: abriria todos os buckets a quem não tem papel (as políticas permissivas se somam por OR).
+      ['storage-bucket-em-or', politica("for select to authenticated using (bucket_id = 'midias' or (select public.papel_atual()) is null)"), [semBucket('m_le')]],
+      ['storage-bucket-negado', politica(`for select to authenticated using (not (${B}) and ${P})`), [semBucket('m_le')]],
+      // Estrita de propósito: a migração escreve o bucket primeiro.
+      ['storage-bucket-depois', politica(`for select to authenticated using (${P} and ${B})`), [semBucket('m_le')]],
+      ['storage-outro-bucket', politica(`for select to authenticated using (bucket_id = 'outro' and ${P})`), [semBucket('m_le')]],
+      ['storage-sem-papel', politica("for select to authenticated using (bucket_id = 'midias' and name like 'som/%')"), [semPapel('m_le')]],
+      // A função só aparece dentro de um texto: codigoDoCorpo apaga o conteúdo dos textos antes de procurar.
+      ['storage-papel-em-texto', politica("for select to authenticated using (bucket_id = 'midias' and name <> 'public.papel_atual()')"), [semPapel('m_le')]],
+      ['storage-check-sem-bucket', politica(`for insert to authenticated with check (${P})`), [semBucket('m_le', 'with check')]],
+      ['storage-update', politica(`for update to authenticated using (${B} and ${P}) with check (${B} and ${P})`), [comando('m_le', 'update')]],
+      ['storage-all', politica(`for all to authenticated using (${B} and ${P})`), [comando('m_le', 'all')]],
+      ['storage-para-anon', politica(`for select to anon using (${B} and ${P})`), [`${pol('m_le')}: vale para anon (só "to authenticated" é permitido)`]],
+      // Revisão 1 da Tarefa 2 (I2): PUBLIC inclui anon; papel a mais ao lado de authenticated também é recusado.
+      ['storage-para-public', politica(`for select to public using (${B} and ${P})`), [`${pol('m_le')}: vale para PUBLIC (só "to authenticated" é permitido)`]],
+      ['storage-papeis-a-mais', politica(`for select to authenticated, service_role using (${B} and ${P})`), [`${pol('m_le')}: vale para service_role (só "to authenticated" é permitido)`]],
+      // Sem a expressão do comando, a política vale para tudo (using ausente = true): abriria todos os buckets.
+      ['storage-select-sem-using', politica('for select to authenticated'), [semBucket('m_le'), semPapel('m_le')]],
+      ['storage-insert-sem-check', politica('for insert to authenticated'), [semBucket('m_le', 'with check'), semPapel('m_le')]],
+    ])('%s: recusada', async (_caso, sql, esperado) => {
+      expect(await verificar(`${BASE_STORAGE} ${sql}`)).toEqual(esperado)
+    })
+
+    test('storage-buckets-politica: política em storage.buckets continua forma não suportada', async () => {
+      expect(await verificar(`${BASE_STORAGE} create policy pb on storage.buckets for select to authenticated using (true);`)).toEqual([
+        'política pb em storage.buckets: política em relação pré-existente: forma não suportada',
+      ])
+    })
+
+    test('auth-users-politica: política em auth.users continua forma não suportada', async () => {
+      expect(await verificar(`${BASE_STORAGE} ${su(`create policy pa on auth.users for select to authenticated using (${P});`)}`)).toEqual([
+        'política pa em auth.users: política em relação pré-existente: forma não suportada',
+      ])
+    })
+
+    // Numa segunda migração, sobre m_le válida. O comando de uma política não muda depois de criada (alter policy ... for
+    // update é erro de sintaxe), então não há caso para isso.
+    test.each([
+      ['alter que tira o bucket', `alter policy m_le on storage.objects using (${P});`, [semBucket('m_le')]],
+      ['alter que acrescenta anon', 'alter policy m_le on storage.objects to authenticated, anon;', [`${pol('m_le')}: vale para anon (só "to authenticated" é permitido)`]],
+      ['renomear: a política resultante segue a regra', 'alter policy m_le on storage.objects rename to m_le2;', []],
+      ['drop: remover política só nega mais', 'drop policy m_le on storage.objects;', []],
+    ])('storage-politica-alterada-ou-removida: %s', async (_caso, sql, esperado) => {
+      const migracoes = [
+        { arquivo: '1_base.sql', sql: `${BASE_STORAGE} ${politica(`for select to authenticated using (${B} and ${P})`)}` },
+        { arquivo: '2_altera.sql', sql },
+      ]
+      expect(await verificar(migracoes)).toEqual(esperado)
+    })
+  })
+
+  describe('nenhuma outra mudança em storage.* (a regra substitui o erro genérico de relação pré-existente)', () => {
+    test.each([
+      // Sonda da revisão do plano: com a participação da D13, o dono simulado consegue; no Supabase daria 42501.
+      ['storage-rls-desligada', 'alter table storage.objects disable row level security;', 'RLS'],
+      ['storage-rls-forcada', 'alter table storage.objects force row level security;', 'RLS'],
+      ['storage-coluna', 'alter table storage.objects add column extra text;', 'coluna'],
+      // A coluna id já tem o padrão gen_random_uuid(): trocar um padrão existente também é acusado.
+      ['storage-padrao-trocado', "alter table storage.objects alter column id set default '00000000-0000-4000-8000-000000000000';", 'padrão'],
+      ['storage-comentario', "comment on table storage.objects is 'x';", 'comentário'],
+      ['storage-replica-identity', 'alter table storage.objects replica identity full;', 'replica identity'],
+      // O gatilho protect_objects_delete vem das migrações do Storage (0055); a simulação o reproduz.
+      ['storage-gatilho-desligado', 'alter table storage.objects disable trigger protect_objects_delete;', 'gatilho'],
+      ['storage-indice', 'create index on storage.objects (name);', 'índice'],
+      // Trocar o dono reescreve o concessor na ACL; renomear muda o texto dos índices e dos gatilhos (pg_get_indexdef e
+      // pg_get_triggerdef citam a tabela): a mensagem lista todos os itens que mudaram, num erro só.
+      ['storage-dono', 'alter table storage.objects owner to postgres_sim;', 'dono, privilégio'],
+      ['storage-opcoes', 'alter table storage.objects set (fillfactor = 50);', 'opções'],
+      ['storage-nome', 'alter table storage.objects rename to objetos;', 'nome, índice, gatilho'],
+      ['storage-restricao', "alter table storage.objects add constraint nome_curto check (length(name) < 1000);", 'restrição'],
+    ])('%s: exatamente 1 erro, que nomeia o item', async (_caso, sql, item) => {
+      const rotulo = _caso === 'storage-nome' ? 'storage.objetos' : 'storage.objects'
+      expect(await verificar(`${BASE} ${sql}`)).toEqual([alteradoEmStorage(rotulo, item)])
+    })
+
+    test('storage-estatistica: o erro com "estatística" está entre os erros', async () => {
+      expect(await verificar(`${BASE} create statistics public.st on bucket_id, name from storage.objects;`)).toContain(alteradoEmStorage('storage.objects', 'estatística'))
+    })
+
+    test('storage-heranca: o erro com "herança" está entre os erros', async () => {
+      const filha = `create table public.filha () inherits (storage.objects); alter table public.filha enable row level security;
+create policy filha_le on public.filha for select to authenticated using (true); grant select on public.filha to authenticated;`
+      expect(await verificar(`${BASE} ${filha}`)).toContain(alteradoEmStorage('storage.objects', 'herança'))
+    })
+
+    test('storage-chave-estrangeira: o erro com "chave estrangeira" está entre os erros', async () => {
+      const sql = `${PADRAO} ${soFuncoes()} create table public.cenas (id int, nome text, objeto_id uuid references storage.objects (id));
+alter table public.cenas enable row level security; create policy cenas_le on public.cenas for select to authenticated using (true);
+grant select on public.cenas to authenticated;`
+      expect(await verificar(sql)).toContain(alteradoEmStorage('storage.objects', 'chave estrangeira'))
+    })
+
+    test('storage-gatilho: o erro com "gatilho" está entre os erros (o rpc:grants-check julga a função à parte)', async () => {
+      const sql = `${BASE} create function public.f() returns trigger language plpgsql security invoker as $$ begin return new; end $$;
+create trigger g before insert on storage.objects for each row execute function public.f();`
+      expect(await verificar(sql)).toContain(alteradoEmStorage('storage.objects', 'gatilho'))
+    })
+
+    // Mudanças que alteram de fato a ACL. Na simulação fiel, anon e authenticated já têm SELECT, INSERT, UPDATE e DELETE
+    // (0002 do Storage dá ALL; 0073 tira TRUNCATE, REFERENCES, TRIGGER e MAINTAIN), e o grant de algo que já têm não muda nada.
+    test.each([
+      ['grant a supabase_auth_admin', 'grant select on storage.objects to supabase_auth_admin;'],
+      ['grant option a authenticated', 'grant select on storage.objects to authenticated with grant option;'],
+      ['truncate a authenticated (tirado pela 0073 do Storage)', 'grant truncate on storage.objects to authenticated;'],
+      ['revoke de insert de authenticated', 'revoke insert on storage.objects from authenticated;'],
+    ])('storage-grant-alterado: %s: exatamente 1 erro, com "privilégio"', async (_caso, sql) => {
+      expect(await verificar(`${BASE} ${sql}`)).toEqual([alteradoEmStorage('storage.objects', 'privilégio')])
+    })
+
+    test('grant de algo que authenticated já tem em storage.objects: a ACL não muda e nada é acusado', async () => {
+      expect(await verificar(`${BASE} grant select, insert, update, delete on storage.objects to authenticated;`)).toEqual([])
+    })
+
+    test('duas mudanças na mesma relação: um erro só, com os dois itens', async () => {
+      expect(await verificar(`${BASE} alter table storage.objects disable row level security; comment on table storage.objects is 'x';`)).toEqual([
+        alteradoEmStorage('storage.objects', 'RLS, comentário'),
+      ])
+    })
+
+    test('storage.buckets também é coberta (RLS desligada)', async () => {
+      expect(await verificar(`${BASE} alter table storage.buckets disable row level security;`)).toEqual([alteradoEmStorage('storage.buckets', 'RLS')])
+    })
+
+    test('relação de storage removida', async () => {
+      const erros = await verificar(`${BASE} drop table storage.objects;`)
+      expect(erros).toContain(`storage.objects: relação do schema storage: removida pelas migrações ${MSG_STORAGE}`)
+      expect(erros.filter((e) => e.includes('relação pré-existente'))).toEqual([])
+    })
+
+    // A participação da D13 também deixa o dono simulado mudar os privilégios padrão de supabase_storage_admin (que valem
+    // para as tabelas que o servidor do Storage criar depois); o postgres real não consegue (não é membro).
+    test.each([
+      ['grant nos privilégios padrão de supabase_storage_admin', 'alter default privileges for role supabase_storage_admin in schema storage grant truncate on tables to authenticated;', 'tabelas', 'alteração'],
+      ['revoke de tudo: a linha some', 'alter default privileges for role supabase_storage_admin in schema storage revoke all on sequences from anon, authenticated, service_role;', 'sequências', 'remoção'],
+      ['privilégios padrão globais de supabase_storage_admin', 'alter default privileges for role supabase_storage_admin grant select on tables to authenticated;', 'tabelas', 'criação', 'supabase_storage_admin', 'todos os schemas'],
+      ['privilégios padrão do próprio dono no schema storage', 'alter default privileges in schema storage grant select on tables to authenticated;', 'tabelas', 'criação', 'postgres_sim'],
+    ])('privilégios padrão em storage: %s', async (_caso, sql, tipo, mudanca, papel = 'supabase_storage_admin', onde = 'schema storage') => {
+      expect(await verificar(`${BASE} ${sql}`)).toEqual([
+        `alter default privileges (papel ${papel}, ${onde}, ${tipo}): privilégios padrão de storage: ${mudanca} pelas migrações ${MSG_STORAGE}`,
+      ])
+    })
+
+    // Revisão 1 da Tarefa 2 (I1, sondas do revisor): objeto que não é relação, criado, alterado ou removido no schema
+    // storage. No Supabase o postgres não tem CREATE em storage (revoke create on schema storage from postgres, 2025).
+    const objetoEmStorage = (rotulo, mudanca = 'criação') => `${rotulo}: objeto no schema storage: ${mudanca} pelas migrações ${MSG_STORAGE}`
+    test.each([
+      ['domínio', 'create domain storage.d as text;', ['type storage.d']],
+      ['domínio com check', 'create domain storage.d as text check (value <> \'\');', ['type storage.d', 'constraint d_check']],
+      ['enum', "create type storage.e as enum ('a');", ['type storage.e']],
+      ['tipo composto', 'create type storage.c as (a int);', ['type storage.c']],
+      ['operador', 'create function public.ig(text, text) returns boolean language sql immutable as $$ select true $$; create operator storage.=== (leftarg = text, rightarg = text, function = public.ig);', ['operator storage.===(text,text)']],
+      ['collation', "create collation storage.c (provider = icu, locale = 'und');", ['collation storage.c']],
+      ['configuração de text search', 'create text search configuration storage.ts (copy = pg_catalog.simple);', ['text search configuration storage.ts']],
+      ['dicionário de text search', 'create text search dictionary storage.dic (template = pg_catalog.simple);', ['text search dictionary storage.dic']],
+      ['estatística em storage sobre tabela de public', `${tabela('x')} create statistics storage.st on id, nome from public.x;`, ['statistics object storage.st']],
+    ])('objeto novo em storage: %s', async (_caso, sql, rotulos) => {
+      expect(await verificar(`${BASE} ${sql}`)).toEqual(rotulos.map((r) => objetoEmStorage(r)))
+    })
+
+    test('função nova em storage: acusada aqui também (o rpc:grants-check a acusa como fora de public)', async () => {
+      expect(await verificar(`${BASE} create function storage.f() returns int language sql as $$ select 1 $$;`)).toEqual([objetoEmStorage('function storage.f()')])
+    })
+
+    test.each([
+      ['função de storage alterada', 'alter function storage.foldername(text) owner to postgres_sim;', 'function storage.foldername(text)', 'alteração'],
+      ['função de storage removida', 'drop trigger protect_objects_delete on storage.objects; drop function storage.protect_delete();', 'function storage.protect_delete()', 'remoção'],
+    ])('%s', async (_caso, sql, rotulo, mudanca) => {
+      expect(await verificar(`${BASE} ${sql}`)).toContain(objetoEmStorage(rotulo, mudanca))
+    })
+
+    test('sequência nova em storage: acusada como relação fora do schema public', async () => {
+      expect(await verificar(`${BASE} create sequence storage.s;`)).toContain('storage.s: fora do schema public (o DES-001 põe tudo em public)')
+    })
+
+    test.each([
+      ['set schema', 'alter table storage.buckets set schema public;'],
+      ['rename', 'alter table storage.buckets rename to baldes;'],
+    ])('storage.buckets movida ou renomeada (%s): a mensagem diz a causa', async (_caso, sql) => {
+      expect(await verificar(`${BASE} ${sql}`)).toContain(`storage.buckets: tabela movida, renomeada ou ausente no fim das migrações: a regra do bucket não conferiu nada ${MSG_STORAGE}`)
+    })
+
+    test('storage-tabela-nova: relação nova em storage é acusada como fora do schema public', async () => {
+      expect(await verificar(`${BASE} create table storage.extra (id int);`)).toContain('storage.extra: fora do schema public (o DES-001 põe tudo em public)')
+    })
+  })
+
+  describe('buckets do estado final', () => {
+    const TIPOS = "array['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'image/png', 'image/jpeg', 'image/webp', 'image/gif']"
+    const insere = ({ id = 'midias', publico = 'false', limite = '52428800', tipos = TIPOS } = {}) =>
+      `insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values ('${id}', '${id}', ${publico}, ${limite}, ${tipos});`
+
+    test('bucket-publico: a linha certa é aceita', async () => {
+      expect(await verificar(`${BASE} ${insere()}`)).toEqual([])
+    })
+
+    test.each([
+      ['público', insere({ publico: 'true', tipos: "array['image/png']" }), bucket('midias', 'público (public não é false)')],
+      ['sem file_size_limit', insere({ limite: 'null' }), bucket('midias', 'sem file_size_limit')],
+      ['file_size_limit acima de 50 MB', insere({ limite: '52428801' }), bucket('midias', 'file_size_limit acima de 52428800')],
+      ['allowed_mime_types nulo', insere({ tipos: 'null' }), bucket('midias', 'sem allowed_mime_types (nulo ou vazio aceita qualquer tipo)')],
+      ['allowed_mime_types vazio', insere({ tipos: "'{}'" }), bucket('midias', 'sem allowed_mime_types (nulo ou vazio aceita qualquer tipo)')],
+      ['com image/svg+xml', insere({ tipos: "array['image/png', 'image/svg+xml']" }), bucket('midias', 'allowed_mime_types fora de TIPOS_DO_BUCKET: image/svg+xml')],
+      ['bucket outro', insere({ id: 'outro' }), bucket('outro', 'fora de BUCKETS_DO_APP')],
+      ['allowed_mime_types com valor nulo', insere({ tipos: 'array[null]::text[]' }), bucket('midias', 'allowed_mime_types fora de TIPOS_DO_BUCKET: NULL')],
+    ])('bucket-publico: %s: 1 erro', async (_caso, sql, esperado) => {
+      expect(await verificar(`${BASE} ${sql}`)).toEqual([esperado])
+    })
   })
 })

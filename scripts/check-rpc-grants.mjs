@@ -91,8 +91,14 @@ const id = (f) => (f.homonimas > 1 ? `${f.rotulo}(${f.args})` : f.rotulo);
  */
 function chamaPapel(f) {
   if (f.linguagem !== "sql" && f.linguagem !== "plpgsql") return false;
-  return /(?<![\w$.\u0080-\uffff"])public\s*\.\s*(?:papel_atual|dispositivo_atual)\s*\(/.test(codigoDoCorpo(f.corpo));
+  return CHAMA_FUNCAO_DE_PAPEL.test(codigoDoCorpo(f.corpo));
 }
+
+/**
+ * Chamada de public.papel_atual() ou public.dispositivo_atual() no código devolvido por codigoDoCorpo(). Exportada com
+ * codigoDoCorpo() para o data-api:check conferir as políticas de storage.objects com o mesmo método (PLA-003, D13).
+ */
+export const CHAMA_FUNCAO_DE_PAPEL = /(?<![\w$.\u0080-\uffff"])public\s*\.\s*(?:papel_atual|dispositivo_atual)\s*\(/;
 
 /**
  * Código de um corpo SQL ou PL/pgSQL sem comentários e sem o conteúdo de textos: comentários (`--` até a

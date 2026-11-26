@@ -242,7 +242,8 @@ describe('diretório padrão das migrações', () => {
   ])('simulação do Supabase sem o papel %s: falha fechada, mensagem clara, sem stack trace', (papel, simulacao) => {
     const projeto = path.join(raiz, `projeto-sem-${papel}`)
     fs.mkdirSync(path.join(projeto, 'scripts'), { recursive: true })
-    for (const f of ['_lib.mjs', '_catalogo.mjs', 'check-data-api.mjs']) fs.copyFileSync(path.join(scripts, f), path.join(projeto, 'scripts', f))
+    // check-data-api.mjs importa a leitura do corpo de check-rpc-grants.mjs (PLA-003, D13).
+    for (const f of ['_lib.mjs', '_catalogo.mjs', 'check-rpc-grants.mjs', 'check-data-api.mjs']) fs.copyFileSync(path.join(scripts, f), path.join(projeto, 'scripts', f))
     fs.symlinkSync(path.join(scripts, '..', 'node_modules'), path.join(projeto, 'node_modules'))
     fs.mkdirSync(path.join(projeto, 'supabase', 'migrations'), { recursive: true })
     fs.mkdirSync(path.join(projeto, 'supabase', 'tests'))

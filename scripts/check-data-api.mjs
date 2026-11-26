@@ -10,10 +10,23 @@
 // BEFORE ou de comando (for each statement) faz: o WITH CHECK da política não a contém (o BEFORE ROW roda antes
 // dele); por isso o rpc:grants-check recusa função de gatilho SECURITY DEFINER ligada a relação criada pelas
 // migrações (revisão 15, I1; correção 17b), e a SECURITY INVOKER fica sob a RLS. Vale o estado final das migrações.
+// Storage (PLA-003, D13): nenhuma mudança em storage.* além de create/alter/drop policy em storage.objects; as políticas
+// de storage.objects só no formato da D13; os buckets do estado final só os do app, privados e com limites.
 import { analisarMigracoes, executadoDiretamente, executar, PRIVS_SEQUENCIA, PRIVS_TABELA } from "./_catalogo.mjs";
+// A mesma leitura do corpo do rpc:grants-check, sem cópia (D13): apaga textos e comentários antes de procurar a chamada.
+import { CHAMA_FUNCAO_DE_PAPEL, codigoDoCorpo } from "./check-rpc-grants.mjs";
 
 /** Tabelas (de public) que só se acessam por função: sem política e sem privilégio de anon e authenticated. */
 export const SOMENTE_FUNCOES = ["codigos_pareamento"];
+
+/** Buckets do app (PLA-003, D13): os únicos aceitos em storage.buckets e no início das políticas de storage.objects. */
+export const BUCKETS_DO_APP = ["midias"];
+
+/** Tipos aceitos no bucket (PLA-003, D4): allowed_mime_types tem de estar contido nesta lista (sem image/svg+xml). */
+export const TIPOS_DO_BUCKET = ["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4", "image/png", "image/jpeg", "image/webp", "image/gif"];
+
+/** Limite por arquivo do bucket, em bytes (50 MB do plano Free, DES-001 §3; PLA-003, D4). */
+export const LIMITE_DO_BUCKET = 52428800;
 
 /**
  * Privilégios que passam por cima da RLS ou mexem na estrutura: authenticated não pode ter (anon não pode ter nenhum).
@@ -124,7 +137,21 @@ export function regrasDeTabela(c) {
   }
 
   for (const o of c.relacoesPreexistentes) erros.push(`${o.rotulo}: relação pré-existente (Postgres ou simulação do Supabase): ${o.mudanca} pelas migrações: forma não suportada`);
-  for (const p of c.politicasEmPreexistentes) erros.push(`política ${p}: política em relação pré-existente: forma não suportada`);
+  // PLA-003, D13: em storage.objects, a política criada ou alterada segue a regra própria; a removida é aceita (remover
+  // política só nega mais). Em qualquer outra relação pré-existente (inclusive storage.buckets e auth.users), erro.
+  for (const p of c.politicasEmPreexistentes) {
+    if (p.relacao !== "storage.objects") erros.push(`política ${p.rotulo}: política em relação pré-existente: forma não suportada`);
+    else if (p.mudanca !== "remoção") erros.push(...politicaDeStorage(p));
+  }
+  // PLA-003, D13: as relações de storage não aceitam mudança nenhuma (no Supabase o dono das migrações recebe 42501).
+  for (const m of c.mudancasEmStorage) {
+    erros.push(`${m.rotulo}: relação do schema storage: ${m.mudanca === "remoção" ? "removida" : `${m.itens.join(", ")} alterado`} pelas migrações ${MSG_STORAGE}`);
+  }
+  for (const a of c.aclPadraoEmStorage) erros.push(`${a.rotulo}: privilégios padrão de storage: ${a.mudanca} pelas migrações ${MSG_STORAGE}`);
+  // Revisão 1 da Tarefa 2 (I1): tipo, domínio, operador, collation, text search, função, estatística... no schema storage.
+  for (const o of c.objetosEmStorage) erros.push(`${o.rotulo}: objeto no schema storage: ${o.mudanca} pelas migrações ${MSG_STORAGE}`);
+  if (c.bucketsFinais === null) erros.push(`storage.buckets: tabela movida, renomeada ou ausente no fim das migrações: a regra do bucket não conferiu nada ${MSG_STORAGE}`);
+  else erros.push(...regraDosBuckets(c.bucketsFinais));
 
   // Schemas: dono e privilégios ganhos por anon/PUBLIC; schema pré-existente (nome, dono ou privilégios) alterado ou removido.
   const { anon, authenticated, serviceRole } = c.papeisDoSupabase;
@@ -198,6 +225,66 @@ function grantsEPoliticas(r) {
   for (const p of politicas) {
     const semGrant = OPERACOES_DA_POLITICA[p.comando].filter((op) => !concedidas.has(op));
     if (semGrant.length) erros.push(`${r.rotulo}: política ${p.nome} sem o grant de ${semGrant.join(", ")} a authenticated (no Supabase a política não vale: permission denied)`);
+  }
+  return erros;
+}
+
+const MSG_STORAGE = "(no Supabase o dono das migrações não é dono das relações de storage e receberia 42501; em storage só create/alter/drop policy em storage.objects é aceito, PLA-003 D13)";
+
+/** Comandos de política aceitos em storage.objects (select, insert, delete; sem update, PLA-003 D5) e o nome de cada polcmd. */
+const COMANDOS_DE_STORAGE = ["r", "a", "d"];
+const NOME_DO_COMANDO = { r: "select", a: "insert", w: "update", d: "delete", "*": "all" };
+
+/**
+ * Regra das políticas de storage.objects (PLA-003, D13): só "to authenticated"; comando select, insert ou delete; cada
+ * expressão (using e with check), e sempre a do comando (using em select e delete, with check em insert; ausente vale
+ * true), começando pelo bucket como conjunção de topo, `((bucket_id = '<bucket>'::text) AND `, com o bucket em
+ * BUCKETS_DO_APP (um `bucket_id = 'midias' or ...` abriria todos os buckets: as políticas permissivas se somam por OR); e
+ * chamada de public.papel_atual() ou public.dispositivo_atual() em cada expressão, fora de textos e comentários
+ * (codigoDoCorpo). Limite: confere a presença da chamada, não o uso (`B and (papel is null or true)` passa).
+ */
+function politicaDeStorage(p) {
+  const erros = [];
+  const outros = p.papeis.filter((x) => x !== "authenticated");
+  if (outros.length) erros.push(`política ${p.rotulo}: vale para ${outros.join(", ")} (só "to authenticated" é permitido)`);
+  if (!COMANDOS_DE_STORAGE.includes(p.comando)) {
+    erros.push(`política ${p.rotulo}: comando ${NOME_DO_COMANDO[p.comando] ?? p.comando} não permitido em storage.objects (só select, insert e delete; sem update, PLA-003 D5)`);
+  }
+  const expressoes = [["using", p.usando, p.comando !== "a"], ["with check", p.comCheck, p.comando === "a"]];
+  for (const [nome, expr, doComando] of expressoes) {
+    if (expr === null && !doComando) continue;
+    if (expr === null || !BUCKETS_DO_APP.some((b) => expr.startsWith(`((bucket_id = '${b}'::text) AND `))) {
+      erros.push(`política ${p.rotulo}: o ${nome} não começa pelo bucket como conjunção de topo (((bucket_id = '<bucket>'::text) AND ..., com o bucket em BUCKETS_DO_APP: ${BUCKETS_DO_APP.join(", ")})`);
+    }
+  }
+  const existentes = expressoes.map(([, expr]) => expr).filter((expr) => expr !== null);
+  if (existentes.length === 0 || !existentes.every((expr) => CHAMA_FUNCAO_DE_PAPEL.test(codigoDoCorpo(expr)))) {
+    erros.push(`política ${p.rotulo}: não chama public.papel_atual() nem public.dispositivo_atual() (fora de textos e comentários)`);
+  }
+  return erros;
+}
+
+/**
+ * Regra do bucket (PLA-003, D13; dados, não catálogo): cada linha de storage.buckets no fim das migrações tem de estar em
+ * BUCKETS_DO_APP, com public = false, file_size_limit não nulo e até LIMITE_DO_BUCKET e allowed_mime_types não vazio e
+ * contido em TIPOS_DO_BUCKET (nulo ou vazio, o Storage aceita qualquer tipo). Um erro por bucket, com os problemas.
+ */
+function regraDosBuckets(buckets) {
+  const erros = [];
+  for (const b of buckets) {
+    const problemas = [];
+    if (!BUCKETS_DO_APP.includes(b.id)) problemas.push("fora de BUCKETS_DO_APP");
+    if (b.public !== false) problemas.push("público (public não é false)");
+    if (b.file_size_limit === null) problemas.push("sem file_size_limit");
+    else if (Number(b.file_size_limit) > LIMITE_DO_BUCKET) problemas.push(`file_size_limit acima de ${LIMITE_DO_BUCKET}`);
+    if (!b.allowed_mime_types?.length) problemas.push("sem allowed_mime_types (nulo ou vazio aceita qualquer tipo)");
+    else {
+      const fora = b.allowed_mime_types.filter((t) => !TIPOS_DO_BUCKET.includes(t));
+      if (fora.length) problemas.push(`allowed_mime_types fora de TIPOS_DO_BUCKET: ${fora.map((t) => t ?? "NULL").join(", ")}`);
+    }
+    if (problemas.length) {
+      erros.push(`bucket ${b.id} (storage.buckets): ${problemas.join("; ")} (PLA-003 D13: só os buckets de BUCKETS_DO_APP, privados, com file_size_limit até ${LIMITE_DO_BUCKET} e allowed_mime_types não vazio e dentro de TIPOS_DO_BUCKET)`);
+    }
   }
   return erros;
 }
