@@ -11,7 +11,7 @@
 -- nos testes e nas checagens de banco, que também carregam este arquivo. LOGIN e REPLICATION não têm efeito no
 -- PGlite (uma sessão só, sem replicação) e entram só para os atributos baterem com os do real.
 -- O que continua diferente do real: sem BYPASSRLS; só os privilégios que a migração usa (abaixo), e não o
--- GRANT ALL nos schemas auth e extensions nem nas suas funções e sequências; em storage, a participação do fim do arquivo.
+-- GRANT ALL nos schemas auth e extensions nem nas suas funções e sequências; em storage e em realtime, as participações do fim do arquivo.
 --
 -- Os privilégios imitam os do postgres no mesmo repositório: membro de anon, authenticated e service_role
 -- (20230201083204_grant_auth_roles_to_postgres.sql), todos os privilégios nas tabelas de auth
@@ -65,3 +65,28 @@ alter default privileges for role postgres_sim in schema public grant all on fun
 -- membro, e postgres_sim foi criado com INHERIT (o padrão do create role, acima), então a participação nasce com
 -- inherit_option = true.
 grant supabase_storage_admin to postgres_sim;
+
+-- Realtime (PLA-004, D6; fontes lidas em 2026-11-27). No Supabase, o postgres cria política em realtime.messages sem ser
+-- dono dela pela mesma supautils: supautils.policy_grants = '{"postgres":[..., "realtime.messages", "realtime.subscription",
+-- ...]}' (ansible/files/postgresql_config/supautils.conf.j2 do github.com/supabase/postgres, commit cceedbd). Ele NÃO é membro
+-- de supabase_realtime_admin: a migração do servidor do Realtime 20260707120000_restrict_realtime_schema.ex (github.com/
+-- supabase/realtime, commit 9a2cfba) faz "REVOKE supabase_realtime_admin FROM postgres" e "REVOKE CREATE ON SCHEMA realtime
+-- FROM postgres" quando supautils.policy_grants contém realtime.messages e realtime.subscription (o caso acima; a
+-- 20240401105812 tinha dado "GRANT supabase_realtime_admin TO postgres"); a 20250421084701_revoke_admin_roles_from_postgres.sql
+-- do supabase/postgres só cuida de storage e auth. Ele fica com "GRANT USAGE ON SCHEMA realtime TO postgres WITH GRANT
+-- OPTION" (20260916120000) e "GRANT SELECT, INSERT ON realtime.messages TO postgres WITH GRANT OPTION" (20260914120000), e
+-- recebe 42501 em alter table realtime.messages (não é dono). O PGlite não tem a supautils: o mínimo que dá o mesmo efeito
+-- para a migração da E3 (create policy em realtime.messages) é ser membro do dono das relações; sem esta linha, o create
+-- policy falha ("must be owner of table messages").
+-- O que ela dá a mais que o real: o postgres_sim passa a poder tudo o que o dono pode em realtime (desligar ou forçar a RLS,
+-- criar coluna, índice, gatilho ou restrição, mudar privilégios, dono, nome e comentário de realtime.messages e da partição,
+-- trocar realtime.topic() e realtime.authorize(...), criar objeto no schema, mudar os privilégios padrão de
+-- supabase_realtime_admin), o que no Supabase daria 42501. Isso é compensado pela regra dos SCHEMAS_PROTEGIDOS do
+-- data-api:check (scripts/check-data-api.mjs e scripts/_catalogo.mjs; a mesma de storage): é erro toda mudança nas relações
+-- de realtime (impressão ampliada, com a partição no item "partição" do pai), em qualquer outro objeto com schema realtime
+-- (inclusive realtime.topic() e realtime.authorize(...): a linha do catálogo e o comentário, pg_description; ficam de fora o
+-- que não está nessas linhas, como security label; o que fica de fora das relações está nos Riscos de scripts/README.md) e nos privilégios padrão de supabase_realtime_admin ou do schema
+-- realtime; em realtime.messages só create, alter e drop policy são aceitos, e a política criada ou alterada tem de ser igual
+-- a uma de POLITICAS_DO_CANAL, chamando exatamente public.pode_usar_canal(text, text, boolean) e realtime.topic() (pelo oid).
+-- Como em storage, a herança vem da inherit_option desta participação (postgres_sim é INHERIT), não do NOINHERIT do papel.
+grant supabase_realtime_admin to postgres_sim;

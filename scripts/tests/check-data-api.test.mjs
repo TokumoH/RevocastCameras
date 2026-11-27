@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
-import { regrasDeTabela, verificarDataApi } from '../check-data-api.mjs'
+import { POLITICAS_DO_CANAL, regrasDeTabela, verificarDataApi } from '../check-data-api.mjs'
 
 // O SQL de cada teste é aplicado de verdade num PGlite com a simulação do Supabase (scripts/_catalogo.mjs);
 // as regras leem o catálogo resultante. Todo caso usa SQL aceito pelo Postgres, salvo os de erro de SQL.
@@ -979,9 +979,15 @@ create policy ev_le on public.ev for select to authenticated using (true); grant
   })
 })
 
+/**
+ * Campos de realtime vazios (PLA-004, D6; revisão 1 da Tarefa 2 da E3, I1) para os catálogos montados à mão anteriores à E3:
+ * a regra dos schemas protegidos exige cada campo como lista e lança erro quando falta (falha fechada).
+ */
+const SEM_REALTIME = { mudancasEmRealtime: [], aclPadraoEmRealtime: [], objetosEmRealtime: [] }
+
 describe('regrasDeTabela (sobre um catálogo montado à mão)', () => {
   test('sem nenhuma tabela', () => {
-    const c = {
+    const c = { ...SEM_REALTIME,
       relacoes: [], relacoesPreexistentes: [], politicasEmPreexistentes: [], mudancasEmStorage: [], aclPadraoEmStorage: [], objetosEmStorage: [], bucketsFinais: [], schemas: [], schemasPreexistentes: [], aclPadrao: [], aclPadraoFinal: [],
       papeisNovos: [], papeisPreexistentes: [], participacoesNovas: [], outros: [], papeisDoSupabase: { anon: '1', authenticated: '2' }, donoDasMigracoes: 'postgres',
     }
@@ -992,7 +998,7 @@ describe('regrasDeTabela (sobre um catálogo montado à mão)', () => {
   // pode ser provada sobre um catálogo montado à mão: em storage.objects é aceita; em outra relação continua erro.
   test('política removida: em storage.objects aceita; em auth.users, forma não suportada', () => {
     const removida = (relacao, nome) => ({ rotulo: `${nome} em ${relacao}`, relacao, papeis: ['anon'], comando: '*', usando: 'true', comCheck: null, mudanca: 'remoção' })
-    const c = {
+    const c = { ...SEM_REALTIME,
       relacoes: [{ rotulo: 'public.t', schema: 'public', nome: 't', tipo: 'r', rls: true, dono: 'postgres_sim', politicas: [{ nome: 'p', comando: 'r', papeis: ['authenticated'] }],
         gatilhos_instead: [], acl: [], acl_colunas: [], anon: [], authenticated: ['SELECT'], service_role: [], anon_colunas: false, authenticated_colunas: false, service_role_colunas: false }],
       relacoesPreexistentes: [], politicasEmPreexistentes: [removida('storage.objects', 'velha'), removida('auth.users', 'outra')], mudancasEmStorage: [], aclPadraoEmStorage: [], objetosEmStorage: [], bucketsFinais: [],
@@ -1244,5 +1250,210 @@ create trigger g before insert on storage.objects for each row execute function 
     ])('bucket-publico: %s: 1 erro', async (_caso, sql, esperado) => {
       expect(await verificar(`${BASE} ${sql}`)).toEqual([esperado])
     })
+  })
+})
+
+// PLA-004, D6 (Tarefa 2 da E3): a simulação ganhou o schema realtime (realtime.messages particionada, realtime.topic() e
+// realtime.authorize(), de supabase_realtime_admin), e o dono das migrações é membro desse papel
+// (supabase/tests/dono-migracao.sql), como em storage. As regras de storage passam a valer para os SCHEMAS_PROTEGIDOS
+// (storage e realtime): nenhuma mudança em realtime.* além de create, alter e drop policy em realtime.messages, e as
+// políticas de realtime.messages só iguais a uma de POLITICAS_DO_CANAL, chamando exatamente
+// public.pode_usar_canal(text, text, boolean) e realtime.topic(), conferidas pelo oid (revisão do plano, N5).
+describe('realtime (PLA-004, D6)', () => {
+  const FUNCOES = `create function public.papel_atual() returns text language sql stable security definer set search_path = '' as $$ select null::text $$;
+create function public.pode_usar_canal(p_topico text, p_extensao text, p_enviar boolean) returns boolean language sql stable security definer set search_path = ''
+  as $$ select (select public.papel_atual()) is not null $$;`
+  const BASE_CANAL = `${BASE}\n${FUNCOES}`
+  const R = 'public.pode_usar_canal(realtime.topic(), extension, false)'
+  const E = 'public.pode_usar_canal(realtime.topic(), extension, true)'
+  const RECEBE = `create policy canal_recebe on realtime.messages for select to authenticated using (${R});`
+  const ENVIA = `create policy canal_envia on realtime.messages for insert to authenticated with check (${E});`
+  const MSG_REALTIME = '(no Supabase o dono das migrações não é dono das relações de realtime e receberia 42501; em realtime só create/alter/drop policy em realtime.messages, com as políticas de POLITICAS_DO_CANAL, é aceito, PLA-004 D6)'
+  const alteradoEmRealtime = (itens, rotulo = 'realtime.messages') => `${rotulo}: relação do schema realtime: ${itens} alterado pelas migrações ${MSG_REALTIME}`
+  const objetoEmRealtime = (rotulo, mudanca) => `${rotulo}: objeto no schema realtime: ${mudanca} pelas migrações ${MSG_REALTIME}`
+  const diferente = (nome) => `política ${nome} em realtime.messages: diferente das políticas do canal (só as de POLITICAS_DO_CANAL, iguais no nome, no comando, nos papéis, em permissive e no texto das expressões, PLA-004 D6)`
+  const outraFuncao = (nome, funcoes) => `política ${nome} em realtime.messages: as funções chamadas não são exatamente public.pode_usar_canal(text, text, boolean) e realtime.topic() (conferidas pelo oid no catálogo: ${funcoes}; PLA-004 D6)`
+
+  test('realtime-politicas-aceitas: as duas políticas do canal', async () => {
+    expect(await verificar(`${BASE_CANAL} ${RECEBE} ${ENVIA}`)).toEqual([])
+  })
+
+  test('POLITICAS_DO_CANAL: o texto exato que o PGlite imprime (pg_get_expr, Passo 3 da Tarefa 2)', () => {
+    expect(POLITICAS_DO_CANAL).toEqual([
+      { nome: 'canal_recebe', comando: 'r', papeis: ['authenticated'], permissiva: true, usando: R, comCheck: null },
+      { nome: 'canal_envia', comando: 'a', papeis: ['authenticated'], permissiva: true, usando: null, comCheck: E },
+    ])
+  })
+
+  test.each([
+    ['using (true)', 'create policy canal_recebe on realtime.messages for select to authenticated using (true);', 'canal_recebe'],
+    ['papel_atual no lugar da função do canal', 'create policy canal_recebe on realtime.messages for select to authenticated using (public.papel_atual() is not null);', 'canal_recebe'],
+    ['R or true', `create policy canal_recebe on realtime.messages for select to authenticated using (${R} or true);`, 'canal_recebe'],
+    ['tópico em texto e R', `create policy canal_recebe on realtime.messages for select to authenticated using (realtime.topic() = 'estudio' and ${R});`, 'canal_recebe'],
+    ['select com E (troca dos lados)', `create policy canal_recebe on realtime.messages for select to authenticated using (${E});`, 'canal_recebe'],
+    ['nome fora da lista', `create policy outra on realtime.messages for select to authenticated using (${R});`, 'outra'],
+    ['restrictive', `create policy canal_recebe on realtime.messages as restrictive for select to authenticated using (${R});`, 'canal_recebe'],
+  ])('realtime-outra-forma: %s: 1 erro, que cita realtime.messages e a política', async (_caso, sql, nome) => {
+    expect(await verificar(`${BASE_CANAL} ${sql}`)).toEqual([diferente(nome)])
+  })
+
+  // O nome é o de canal_recebe e o texto é R: só o comando difere (a sabotagem "comparar só o texto" cai aqui).
+  test.each([['update'], ['delete'], ['all']])('realtime-comando: for %s com R: 1 erro', async (cmd) => {
+    expect(await verificar(`${BASE_CANAL} create policy canal_recebe on realtime.messages for ${cmd} to authenticated using (${R});`)).toEqual([diferente('canal_recebe')])
+  })
+
+  test.each([
+    ['anon', 'anon'],
+    ['public', 'public'],
+    ['authenticated e anon', 'authenticated, anon'],
+  ])('realtime-para-anon: to %s com R: 1 erro', async (_caso, papeis) => {
+    expect(await verificar(`${BASE_CANAL} create policy canal_recebe on realtime.messages for select to ${papeis} using (${R});`)).toEqual([diferente('canal_recebe')])
+  })
+
+  // Numa segunda migração, sobre as duas válidas. A análise compara com a base, que não tem política em realtime.messages:
+  // a política criada na 1ª migração e alterada na 2ª sai como "criação", com o texto final, e o drop não deixa entrada
+  // (a política nasce e some). O teste prova a forma final depois de alter ou drop, não os caminhos de "alteração" e
+  // "remoção", que só existiriam sobre política da base; esses estão nos testes do catálogo montado à mão, abaixo. O teste
+  // equivalente da E2 (storage-politica-alterada-ou-removida) tem o mesmo limite (revisão 1 da Tarefa 2 da E3, N2).
+  test.each([
+    ['alter policy ... using (true)', 'alter policy canal_recebe on realtime.messages using (true);', [diferente('canal_recebe')]],
+    ['alter policy ... to authenticated, anon', 'alter policy canal_recebe on realtime.messages to authenticated, anon;', [diferente('canal_recebe')]],
+    ['drop policy: remover política só nega mais', 'drop policy canal_recebe on realtime.messages;', []],
+  ])('realtime-forma-final-depois-de-alter-ou-drop: %s', async (_caso, sql, esperado) => {
+    const migracoes = [
+      { arquivo: '1_base.sql', sql: `${BASE_CANAL} ${RECEBE} ${ENVIA}` },
+      { arquivo: '2_altera.sql', sql },
+    ]
+    expect(await verificar(migracoes)).toEqual(esperado)
+  })
+
+  test('realtime-rls-desligada: exatamente 1 erro, com "relação do schema realtime" e "RLS"', async () => {
+    const erros = await verificar(`${BASE} alter table realtime.messages disable row level security;`)
+    expect(erros).toEqual([alteradoEmRealtime('RLS')])
+    expect(erros[0]).toContain('relação do schema realtime')
+  })
+
+  // realtime.messages é particionada (como na fonte): a coluna, o índice e o gatilho criados no pai descem à partição da
+  // simulação, e a mudança da partição sai no item "partição" do pai, no mesmo erro.
+  test.each([
+    ['coluna nova', 'alter table realtime.messages add column extra text;', 'coluna, partição'],
+    ['índice novo', 'create index on realtime.messages (event);', 'índice, partição'],
+    ['gatilho novo', `create function public.f() returns trigger language plpgsql security invoker as $$ begin return new; end $$;
+create trigger g before insert on realtime.messages for each row execute function public.f();`, 'gatilho, partição'],
+    ['privilégio a supabase_auth_admin', 'grant select on realtime.messages to supabase_auth_admin;', 'privilégio'],
+    ['comentário', "comment on table realtime.messages is 'x';", 'comentário'],
+    ['privilégio na partição', 'grant select on realtime.messages_simulacao to authenticated;', 'partição'],
+    ['RLS forçada', 'alter table realtime.messages force row level security;', 'RLS'],
+  ])('realtime-mudancas: %s: exatamente 1 erro, com o item', async (_caso, sql, itens) => {
+    expect(await verificar(`${BASE} ${sql}`)).toEqual([alteradoEmRealtime(itens)])
+  })
+
+  test('realtime-topic-trocada: erro de objeto no schema realtime', async () => {
+    expect(await verificar(`${BASE} create or replace function realtime.topic() returns text language sql as $$ select 'estudio' $$;`)).toEqual([
+      objetoEmRealtime('function realtime.topic()', 'alteração'),
+    ])
+  })
+
+  test('realtime-authorize-trocada: o mesmo cabeçalho, com corpo que libera tudo: erro de objeto no schema realtime', async () => {
+    const sql = `create or replace function realtime.authorize(role_name text, topic_name text, claims text, sub text, headers text,
+  read_extensions text[], write_extensions text[], out read_allowed boolean[], out write_allowed boolean[]) language plpgsql volatile as $$
+begin
+  read_allowed := array(select true from unnest(read_extensions));
+  write_allowed := array(select true from unnest(write_extensions));
+end;
+$$;`
+    expect(await verificar(`${BASE} ${sql}`)).toEqual([objetoEmRealtime('function realtime.authorize(text,text,text,text,text,text[],text[])', 'alteração')])
+  })
+
+  // Revisão 1 da Tarefa 2 da E3 (N1): o comentário de um objeto do schema (pg_description) está na impressão, em realtime e
+  // em storage; no Supabase o postgres não é dono e receberia 42501 no comment on.
+  test.each([
+    ['realtime.topic()', "comment on function realtime.topic() is 'x';", objetoEmRealtime('function realtime.topic()', 'alteração')],
+    ['realtime.authorize(...)', "comment on function realtime.authorize(text, text, text, text, text, text[], text[]) is 'x';",
+      objetoEmRealtime('function realtime.authorize(text,text,text,text,text,text[],text[])', 'alteração')],
+    ['storage.foldername(text)', "comment on function storage.foldername(text) is 'x';",
+      'function storage.foldername(text): objeto no schema storage: alteração pelas migrações (no Supabase o dono das migrações não é dono das relações de storage e receberia 42501; em storage só create/alter/drop policy em storage.objects é aceito, PLA-003 D13)'],
+  ])('comentário em função de schema protegido (%s): 1 erro', async (_caso, sql, esperado) => {
+    expect(await verificar(`${BASE} ${sql}`)).toEqual([esperado])
+  })
+
+  test('realtime-tabela-nova: relação nova em realtime é acusada como fora do schema public', async () => {
+    expect(await verificar(`${BASE} create table realtime.extra (id int);`)).toContain('realtime.extra: fora do schema public (o DES-001 põe tudo em public)')
+  })
+
+  test('privilégios padrão de supabase_realtime_admin: acusados', async () => {
+    expect(await verificar(`${BASE} alter default privileges for role supabase_realtime_admin in schema realtime grant truncate on tables to authenticated;`)).toEqual([
+      `alter default privileges (papel supabase_realtime_admin, schema realtime, tabelas): privilégios padrão de realtime: criação pelas migrações ${MSG_REALTIME}`,
+    ])
+  })
+
+  test('política em outra relação de realtime (a partição): forma não suportada', async () => {
+    expect(await verificar(`${BASE_CANAL} create policy p on realtime.messages_simulacao for select to authenticated using (${R});`)).toEqual([
+      'política p em realtime.messages_simulacao: política em relação pré-existente: forma não suportada',
+    ])
+  })
+
+  // A simulação não tem política em realtime.messages, então a remoção de uma (que só nega mais) só pode ser provada sobre
+  // um catálogo montado à mão, como a de storage.objects: em realtime.messages é aceita; na partição continua erro.
+  /** Catálogo montado à mão com uma tabela correta e as políticas dadas em relações pré-existentes. */
+  const catalogoComPoliticas = (politicasEmPreexistentes, detalheDasPoliticas) => ({
+    relacoes: [{ rotulo: 'public.t', schema: 'public', nome: 't', tipo: 'r', rls: true, dono: 'postgres_sim', politicas: [{ nome: 'p', comando: 'r', papeis: ['authenticated'] }],
+      gatilhos_instead: [], acl: [], acl_colunas: [], anon: [], authenticated: ['SELECT'], service_role: [], anon_colunas: false, authenticated_colunas: false, service_role_colunas: false }],
+    relacoesPreexistentes: [], politicasEmPreexistentes, detalheDasPoliticas,
+    mudancasEmStorage: [], aclPadraoEmStorage: [], objetosEmStorage: [], ...SEM_REALTIME, bucketsFinais: [],
+    schemas: [], schemasPreexistentes: [], aclPadrao: [], aclPadraoFinal: [], papeisNovos: [], papeisPreexistentes: [], participacoesNovas: [], outros: [],
+    papeisDoSupabase: { anon: '1', authenticated: '2', serviceRole: '3' }, donoDasMigracoes: 'postgres_sim', donoDasMigracoesOid: '4', nomeDoPapel: String,
+  })
+
+  // O caminho real de "alteração" (política da base alterada): a mesma regra da criação, sobre a forma final.
+  test.each([
+    ['alterada para using (true)', { usando: 'true' }, [diferente('canal_recebe')]],
+    ['alterada para to authenticated, anon', { papeis: ['authenticated', 'anon'] }, [diferente('canal_recebe')]],
+    ['alterada e igual à canônica', {}, []],
+  ])('política do canal alterada (catálogo montado à mão): %s', (_caso, troca, esperado) => {
+    const p = { rotulo: 'canal_recebe em realtime.messages', relacao: 'realtime.messages', papeis: ['authenticated'], comando: 'r', usando: R, comCheck: null, mudanca: 'alteração', ...troca }
+    const detalhe = { 'canal_recebe em realtime.messages': { nome: 'canal_recebe', permissiva: true, funcoes: ['public.pode_usar_canal(text, text, boolean)', 'realtime.topic()'] } }
+    expect(regrasDeTabela(catalogoComPoliticas([p], detalhe))).toEqual(esperado)
+  })
+
+  // Revisão 1 da Tarefa 2 da E3 (I1): sem um campo de schema protegido, a checagem lança (falha fechada), em vez de aceitar.
+  test.each([['objetosEmRealtime'], ['mudancasEmStorage'], ['aclPadraoEmRealtime']])('catálogo sem %s: lança erro', (campo) => {
+    const c = catalogoComPoliticas([], {})
+    delete c[campo]
+    expect(() => regrasDeTabela(c)).toThrow(`catálogo sem ${campo}`)
+  })
+
+  test('política do canal removida: aceita em realtime.messages; em outra relação de realtime, forma não suportada', () => {
+    const removida = (relacao, nome) => ({ rotulo: `${nome} em ${relacao}`, relacao, papeis: ['anon'], comando: '*', usando: 'true', comCheck: null, mudanca: 'remoção' })
+    const c = {
+      relacoes: [{ rotulo: 'public.t', schema: 'public', nome: 't', tipo: 'r', rls: true, dono: 'postgres_sim', politicas: [{ nome: 'p', comando: 'r', papeis: ['authenticated'] }],
+        gatilhos_instead: [], acl: [], acl_colunas: [], anon: [], authenticated: ['SELECT'], service_role: [], anon_colunas: false, authenticated_colunas: false, service_role_colunas: false }],
+      relacoesPreexistentes: [], politicasEmPreexistentes: [removida('realtime.messages', 'canal_recebe'), removida('realtime.messages_simulacao', 'outra')], detalheDasPoliticas: {},
+      mudancasEmStorage: [], aclPadraoEmStorage: [], objetosEmStorage: [], mudancasEmRealtime: [], aclPadraoEmRealtime: [], objetosEmRealtime: [], bucketsFinais: [],
+      schemas: [], schemasPreexistentes: [], aclPadrao: [], aclPadraoFinal: [], papeisNovos: [], papeisPreexistentes: [], participacoesNovas: [], outros: [],
+      papeisDoSupabase: { anon: '1', authenticated: '2', serviceRole: '3' }, donoDasMigracoes: 'postgres_sim', donoDasMigracoesOid: '4', nomeDoPapel: String,
+    }
+    expect(regrasDeTabela(c)).toEqual(['política outra em realtime.messages_simulacao: política em relação pré-existente: forma não suportada'])
+  })
+
+  test.each([
+    // A função não existe: o create policy falha (erro de SQL, 1 erro).
+    ['public.pode_usar_canal ausente', `${BASE} ${FUNCOES.split('\n')[0]} ${RECEBE} ${ENVIA}`, 1, 'erro de SQL'],
+    // Num schema de teste: o texto sai qualificado com outro. e já difere.
+    ['outro.pode_usar_canal(text, text, boolean)', `${BASE_CANAL} create schema outro; create function outro.pode_usar_canal(a text, b text, c boolean) returns boolean language sql as $$ select true $$;
+create policy canal_recebe on realtime.messages for select to authenticated using (outro.pode_usar_canal(realtime.topic(), extension, false));`, [diferente('canal_recebe')]],
+    // Sem conversão de boolean para text: o create policy falha (erro de SQL, 1 erro).
+    ['public.pode_usar_canal(text, text, text)', `${BASE} ${FUNCOES.split('\n')[0]} create function public.pode_usar_canal(a text, b text, c text) returns boolean language sql as $$ select true $$; ${RECEBE}`, 1, 'erro de SQL'],
+    // O texto impresso é igual ao canônico (o pg_get_expr não mostra o parâmetro com valor padrão), mas a função é outra:
+    // só a conferência pelo oid pega (sonda da Tarefa 2; a sabotagem "conferir só pelo texto" cai aqui).
+    ['public.pode_usar_canal com um 4º parâmetro com valor padrão: o mesmo texto, outra função', `${BASE} ${FUNCOES.split('\n')[0]}
+create function public.pode_usar_canal(a text, b text, c boolean, d int default 0) returns boolean language sql as $$ select true $$; ${RECEBE}`,
+    [outraFuncao('canal_recebe', 'public.pode_usar_canal(text, text, boolean, integer), realtime.topic()')]],
+  ])('realtime-funcao-do-canal: %s: 1 erro', async (_caso, sql, esperado, trecho) => {
+    const erros = await verificar(sql)
+    if (typeof esperado === 'number') {
+      expect(erros).toHaveLength(esperado)
+      expect(erros[0]).toContain(trecho)
+    } else expect(erros).toEqual(esperado)
   })
 })

@@ -218,3 +218,54 @@ export async function comoSessao<T>(
     if (opcoes.deleteDoStorage) await db.query(`select set_config('storage.allow_delete_query', '', true)`)
   }
 }
+
+/** Extensões que o servidor do Realtime confere: leitura só de broadcast e presence; escrita também de persistence. */
+export type ExtensaoDoCanal = 'broadcast' | 'presence' | 'persistence'
+
+/**
+ * Autorização de um canal privado como o servidor do Realtime faz (PLA-004, D6; revisão do plano, I6): o caminho principal
+ * de `lib/realtime/tenants/authorization.ex` (`@authorize_query`), que chama `realtime.authorize(role_name, topic_name,
+ * claims, sub, headers, read_extensions, write_extensions)` numa ida só, como o papel da conexão (no servidor, o
+ * supabase_admin; aqui, o superusuário do PGlite), e lê a resposta: `receber` pede a extensão em `read_extensions` e devolve
+ * o `read_allowed` dela; `enviar` pede em `write_extensions` e devolve o `write_allowed`. O papel é a claim `role` (`null`
+ * = anon sem claims, como a chave publicável), as claims vão em JSON, `sub` é a claim `sub` e os cabeçalhos ficam vazios.
+ * O servidor só pede leitura de broadcast e presence (`@all_extensions`): `receber` com persistence lança erro.
+ * Roda dentro de um savepoint sempre desfeito (a própria função já desfaz as sondas, o papel e os parâmetros com o raise
+ * RTA01). Um erro da função (por exemplo, numa política) é repassado: o servidor o trataria como negado, mas nos testes ele
+ * esconderia um defeito. A reserva do servidor (insert e select numa transação) não é imitada: ela só roda quando a
+ * própria `realtime.authorize` falha (`fallback?/1`), e a simulação a tem.
+ */
+export async function comoCanal(
+  db: PGlite,
+  claims: Claims | null,
+  topico: string,
+  extensao: ExtensaoDoCanal,
+  operacao: 'receber' | 'enviar',
+): Promise<boolean> {
+  if (operacao === 'receber' && extensao === 'persistence') {
+    throw new Error('o servidor do Realtime não confere leitura de persistence (só broadcast e presence)')
+  }
+  const extensoes = [extensao]
+  await db.exec('savepoint canal')
+  try {
+    const r = await db.query<{ read_allowed: boolean[]; write_allowed: boolean[] }>(
+      `select read_allowed, write_allowed from realtime.authorize(role_name => $1, topic_name => $2, claims => $3, sub => $4,
+         headers => '{}', read_extensions => $5::text[], write_extensions => $6::text[])`,
+      [
+        claims ? claims.role : 'anon',
+        topico,
+        JSON.stringify(claims ?? { role: 'anon' }),
+        claims?.sub ?? null,
+        operacao === 'receber' ? extensoes : [],
+        operacao === 'enviar' ? extensoes : [],
+      ],
+    )
+    const [linha] = r.rows
+    const resposta = operacao === 'receber' ? linha.read_allowed : linha.write_allowed
+    if (resposta.length !== 1) throw new Error(`realtime.authorize devolveu ${JSON.stringify(linha)} para uma extensão`)
+    return resposta[0] === true
+  } finally {
+    await db.exec('rollback to savepoint canal')
+    await db.exec('release savepoint canal')
+  }
+}

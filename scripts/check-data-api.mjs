@@ -12,7 +12,10 @@
 // migrações (revisão 15, I1; correção 17b), e a SECURITY INVOKER fica sob a RLS. Vale o estado final das migrações.
 // Storage (PLA-003, D13): nenhuma mudança em storage.* além de create/alter/drop policy em storage.objects; as políticas
 // de storage.objects só no formato da D13; os buckets do estado final só os do app, privados e com limites.
-import { analisarMigracoes, executadoDiretamente, executar, PRIVS_SEQUENCIA, PRIVS_TABELA } from "./_catalogo.mjs";
+// Realtime (PLA-004, D6): a mesma regra dos SCHEMAS_PROTEGIDOS (nenhuma mudança em realtime.* além de create/alter/drop policy
+// em realtime.messages), e a política criada ou alterada em realtime.messages só igual a uma de POLITICAS_DO_CANAL, chamando
+// exatamente as FUNCOES_DO_CANAL (conferidas pelo oid).
+import { analisarMigracoes, campoProtegido, executadoDiretamente, executar, PRIVS_SEQUENCIA, PRIVS_TABELA, SCHEMAS_PROTEGIDOS } from "./_catalogo.mjs";
 // A mesma leitura do corpo do rpc:grants-check, sem cópia (D13): apaga textos e comentários antes de procurar a chamada.
 import { CHAMA_FUNCAO_DE_PAPEL, codigoDoCorpo } from "./check-rpc-grants.mjs";
 
@@ -27,6 +30,23 @@ export const TIPOS_DO_BUCKET = ["audio/mpeg", "audio/wav", "audio/ogg", "audio/m
 
 /** Limite por arquivo do bucket, em bytes (50 MB do plano Free, DES-001 §3; PLA-003, D4). */
 export const LIMITE_DO_BUCKET = 52428800;
+
+/**
+ * As duas políticas do canal (PLA-004, D6), as únicas aceitas em realtime.messages, com o texto exato que o PGlite imprime
+ * (pg_get_expr, sonda do Passo 3 da Tarefa 2 da E3, 2026-11-27): receber (select) e enviar (insert) decididos só por
+ * public.pode_usar_canal(tópico, extensão, enviar). Comando como em pg_policy.polcmd (r select, a insert).
+ */
+export const POLITICAS_DO_CANAL = [
+  { nome: "canal_recebe", comando: "r", papeis: ["authenticated"], permissiva: true, usando: "public.pode_usar_canal(realtime.topic(), extension, false)", comCheck: null },
+  { nome: "canal_envia", comando: "a", papeis: ["authenticated"], permissiva: true, usando: null, comCheck: "public.pode_usar_canal(realtime.topic(), extension, true)" },
+];
+
+/**
+ * As funções que as políticas do canal chamam, exatamente estas (revisão do plano, N5): o catálogo as lê pelo oid
+ * (pg_depend da política) e as escreve com o schema e os tipos dos parâmetros, então uma homônima em outro schema, com outros
+ * tipos ou com um parâmetro a mais com valor padrão (que o texto da política não mostra) não passa.
+ */
+export const FUNCOES_DO_CANAL = ["public.pode_usar_canal(text, text, boolean)", "realtime.topic()"];
 
 /**
  * Privilégios que passam por cima da RLS ou mexem na estrutura: authenticated não pode ter (anon não pode ter nenhum).
@@ -138,18 +158,31 @@ export function regrasDeTabela(c) {
 
   for (const o of c.relacoesPreexistentes) erros.push(`${o.rotulo}: relação pré-existente (Postgres ou simulação do Supabase): ${o.mudanca} pelas migrações: forma não suportada`);
   // PLA-003, D13: em storage.objects, a política criada ou alterada segue a regra própria; a removida é aceita (remover
-  // política só nega mais). Em qualquer outra relação pré-existente (inclusive storage.buckets e auth.users), erro.
+  // política só nega mais). PLA-004, D6: em realtime.messages, a mesma coisa, com a regra das políticas do canal. Em
+  // qualquer outra relação pré-existente (inclusive storage.buckets, a partição de realtime.messages e auth.users), erro.
+  const REGRA_DA_RELACAO = { "storage.objects": (p) => politicaDeStorage(p), "realtime.messages": (p) => politicaDoCanal(p, c.detalheDasPoliticas[p.rotulo]) };
   for (const p of c.politicasEmPreexistentes) {
-    if (p.relacao !== "storage.objects") erros.push(`política ${p.rotulo}: política em relação pré-existente: forma não suportada`);
-    else if (p.mudanca !== "remoção") erros.push(...politicaDeStorage(p));
+    if (!Object.hasOwn(REGRA_DA_RELACAO, p.relacao)) erros.push(`política ${p.rotulo}: política em relação pré-existente: forma não suportada`);
+    else if (p.mudanca !== "remoção") erros.push(...REGRA_DA_RELACAO[p.relacao](p));
   }
-  // PLA-003, D13: as relações de storage não aceitam mudança nenhuma (no Supabase o dono das migrações recebe 42501).
-  for (const m of c.mudancasEmStorage) {
-    erros.push(`${m.rotulo}: relação do schema storage: ${m.mudanca === "remoção" ? "removida" : `${m.itens.join(", ")} alterado`} pelas migrações ${MSG_STORAGE}`);
+  // PLA-003, D13 e PLA-004, D6: as relações dos schemas protegidos não aceitam mudança nenhuma (no Supabase o dono das
+  // migrações recebe 42501), nem os privilégios padrão do dono delas ou do schema, nem os outros objetos do schema (revisão 1
+  // da Tarefa 2 da E2, I1: tipo, domínio, operador, collation, text search, função, estatística...). Falha fechada (revisão 1
+  // da Tarefa 2 da E3, I1): cada campo de cada schema protegido tem de ser uma lista; se faltar, a checagem lança erro em vez
+  // de tratar a falta como "nada mudou".
+  for (const s of SCHEMAS_PROTEGIDOS) {
+    const msg = MSG_DO_SCHEMA[s];
+    const lista = (prefixo) => {
+      const campo = campoProtegido(prefixo, s);
+      if (!Array.isArray(c[campo])) throw new Error(`catálogo sem ${campo}: a checagem não conferiu o schema ${s}`);
+      return c[campo];
+    };
+    for (const m of lista("mudancas")) {
+      erros.push(`${m.rotulo}: relação do schema ${s}: ${m.mudanca === "remoção" ? "removida" : `${m.itens.join(", ")} alterado`} pelas migrações ${msg}`);
+    }
+    for (const a of lista("aclPadrao")) erros.push(`${a.rotulo}: privilégios padrão de ${s}: ${a.mudanca} pelas migrações ${msg}`);
+    for (const o of lista("objetos")) erros.push(`${o.rotulo}: objeto no schema ${s}: ${o.mudanca} pelas migrações ${msg}`);
   }
-  for (const a of c.aclPadraoEmStorage) erros.push(`${a.rotulo}: privilégios padrão de storage: ${a.mudanca} pelas migrações ${MSG_STORAGE}`);
-  // Revisão 1 da Tarefa 2 (I1): tipo, domínio, operador, collation, text search, função, estatística... no schema storage.
-  for (const o of c.objetosEmStorage) erros.push(`${o.rotulo}: objeto no schema storage: ${o.mudanca} pelas migrações ${MSG_STORAGE}`);
   if (c.bucketsFinais === null) erros.push(`storage.buckets: tabela movida, renomeada ou ausente no fim das migrações: a regra do bucket não conferiu nada ${MSG_STORAGE}`);
   else erros.push(...regraDosBuckets(c.bucketsFinais));
 
@@ -230,6 +263,28 @@ function grantsEPoliticas(r) {
 }
 
 const MSG_STORAGE = "(no Supabase o dono das migrações não é dono das relações de storage e receberia 42501; em storage só create/alter/drop policy em storage.objects é aceito, PLA-003 D13)";
+const MSG_REALTIME = "(no Supabase o dono das migrações não é dono das relações de realtime e receberia 42501; em realtime só create/alter/drop policy em realtime.messages, com as políticas de POLITICAS_DO_CANAL, é aceito, PLA-004 D6)";
+/** Complemento das mensagens de cada schema protegido (a de storage é a da E2, sem mudança). */
+const MSG_DO_SCHEMA = { storage: MSG_STORAGE, realtime: MSG_REALTIME };
+
+/**
+ * Regra das políticas de realtime.messages (PLA-004, D6): a política criada ou alterada tem de ser igual a uma de
+ * POLITICAS_DO_CANAL no nome, no comando, nos papéis, em permissive e no texto das duas expressões (um erro, se não for); e,
+ * sendo igual, as funções que ela chama, lidas pelo oid (detalhe.funcoes), têm de ser exatamente FUNCOES_DO_CANAL (outro
+ * erro, se não forem). Limite que sobra (revisão do plano, N5; Riscos): um create or replace de public.pode_usar_canal que
+ * devolva true mantém o oid e passa aqui; só os testes de banco da E3 o pegam.
+ */
+function politicaDoCanal(p, detalhe) {
+  const igual = POLITICAS_DO_CANAL.some((q) => q.nome === detalhe.nome && q.comando === p.comando && q.permissiva === detalhe.permissiva
+    && q.papeis.length === p.papeis.length && q.papeis.every((x, i) => x === p.papeis[i]) && q.usando === p.usando && q.comCheck === p.comCheck);
+  if (!igual) {
+    return [`política ${p.rotulo}: diferente das políticas do canal (só as de POLITICAS_DO_CANAL, iguais no nome, no comando, nos papéis, em permissive e no texto das expressões, PLA-004 D6)`];
+  }
+  if (detalhe.funcoes.length !== FUNCOES_DO_CANAL.length || !FUNCOES_DO_CANAL.every((f) => detalhe.funcoes.includes(f))) {
+    return [`política ${p.rotulo}: as funções chamadas não são exatamente ${FUNCOES_DO_CANAL.join(" e ")} (conferidas pelo oid no catálogo: ${detalhe.funcoes.join(", ")}; PLA-004 D6)`];
+  }
+  return [];
+}
 
 /** Comandos de política aceitos em storage.objects (select, insert, delete; sem update, PLA-003 D5) e o nome de cada polcmd. */
 const COMANDOS_DE_STORAGE = ["r", "a", "d"];

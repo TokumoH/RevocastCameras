@@ -6,7 +6,8 @@
 // Devolve só o que as migrações criaram, alteraram ou removeram: a diferença contra um retrato do catálogo
 // tirado logo depois da simulação e do dono (a "base"). As regras ficam em check-rpc-grants.mjs e check-data-api.mjs;
 // a única importação entre elas é a leitura do corpo do rpc:grants-check (codigoDoCorpo e CHAMA_FUNCAO_DE_PAPEL), que o
-// data-api:check reaproveita nas políticas de storage.objects (PLA-003, D13), em vez de copiar.
+// data-api:check reaproveita nas políticas de storage.objects (PLA-003, D13), em vez de copiar. Os schemas do Supabase que as
+// migrações não podem mudar (SCHEMAS_PROTEGIDOS: storage desde a E2, realtime desde a E3) têm a impressão ampliada abaixo.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,9 +40,28 @@ const FUNCOES = `select p.oid::int8 as k, pg_catalog.format('%I.%I', n.nspname, 
     p.prolang, p.prosrc, p.probin, p.prosqlbody::text, p.proargtypes::text, p.prorettype)) as v
   from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace where ${SEM_TEMPORARIOS}`;
 
+/**
+ * Schemas do Supabase em que o dono das migrações só pode criar, alterar e apagar as políticas permitidas (storage: PLA-003,
+ * D13; realtime: PLA-004, D6). No Supabase ele não é dono das relações deles e receberia 42501; na simulação é membro do dono
+ * (supabase/tests/dono-migracao.sql) e consegue, então toda mudança neles é conferida aqui.
+ */
+export const SCHEMAS_PROTEGIDOS = ["storage", "realtime"];
+
+/** Dono das relações de cada schema protegido no Supabase: os privilégios padrão dele também são protegidos. */
+const DONO_DO_SCHEMA = { storage: "supabase_storage_admin", realtime: "supabase_realtime_admin" };
+
+/**
+ * Nome do campo do catálogo, por schema protegido: campoProtegido("mudancas", "storage") = "mudancasEmStorage" (os nomes da
+ * E2 continuam os mesmos; realtime ganha mudancasEmRealtime, aclPadraoEmRealtime e objetosEmRealtime).
+ */
+export const campoProtegido = (prefixo, schema) => `${prefixo}Em${schema[0].toUpperCase()}${schema.slice(1)}`;
+
+// Lista dos schemas protegidos em SQL (nomes fixos acima, sem dado de fora).
+const PROTEGIDOS_SQL = `array[${SCHEMAS_PROTEGIDOS.map((s) => `'${s}'`).join(", ")}]::text[]`;
+
 // Relações com privilégio próprio (tabela, particionada, view, materialized view, foreign table, sequência).
-// A impressão inclui os privilégios de coluna (attacl); não inclui gatilhos nem índices (para as relações do schema
-// storage, a impressão ampliada fica em STORAGE, abaixo).
+// A impressão inclui os privilégios de coluna (attacl); não inclui gatilhos nem índices (para as relações dos schemas
+// protegidos, a impressão ampliada fica em PROTEGIDAS, abaixo).
 const RELACOES = `select c.oid::int8 as k, pg_catalog.format('%I.%I', n.nspname, c.relname) as rot,
   pg_catalog.md5(pg_catalog.concat_ws('|', c.relname, c.relnamespace, c.relkind, c.relowner, c.relacl::text, c.relrowsecurity,
     c.relforcerowsecurity, c.reloptions::text,
@@ -63,31 +83,42 @@ const PARTICIPACOES = `select pg_catalog.concat_ws('|', m.roleid, m.member, m.ad
 
 // Além da impressão, cada linha traz a relação, os papéis, o comando e o texto das expressões (pg_get_expr, com o
 // search_path seguro da leitura: as funções de public saem qualificadas), que a regra das políticas de storage.objects
-// lê (PLA-003, D13). Numa política removida, valem os da base.
+// lê (PLA-003, D13). Numa política removida, valem os da base. Para a regra das políticas de realtime.messages (PLA-004,
+// D6; revisão do plano, N5), também o nome, se é permissive e as funções que a política chama, lidas pelo oid (pg_depend da
+// política para pg_proc) e escritas como schema.nome(tipos), sempre com o schema.
 const POLITICAS = `select p.oid::int8 as k, p.polrelid::int8 as rel, pg_catalog.quote_ident(p.polname) || ' em ' || pg_catalog.format('%I.%I', n.nspname, c.relname) as rot,
   pg_catalog.md5(pg_catalog.concat_ws('|', p.polrelid, p.polname, p.polcmd, p.polpermissive, p.polroles::text,
     pg_catalog.pg_get_expr(p.polqual, p.polrelid), pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid))) as v,
   pg_catalog.format('%I.%I', n.nspname, c.relname) as relacao, p.polcmd::text as comando,
   array(select case when r = 0 then 'PUBLIC' else pg_catalog.pg_get_userbyid(r) end from pg_catalog.unnest(p.polroles) r) as papeis,
-  pg_catalog.pg_get_expr(p.polqual, p.polrelid) as usando, pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) as com_check
+  pg_catalog.pg_get_expr(p.polqual, p.polrelid) as usando, pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) as com_check,
+  p.polname::text as nome, p.polpermissive as permissiva,
+  array(select distinct pg_catalog.format('%I.%I', fn.nspname, f.proname) || '(' || pg_catalog.oidvectortypes(f.proargtypes) || ')'
+    from pg_catalog.pg_depend d join pg_catalog.pg_proc f on f.oid = d.refobjid join pg_catalog.pg_namespace fn on fn.oid = f.pronamespace
+    where d.classid = 'pg_catalog.pg_policy'::pg_catalog.regclass and d.objid = p.oid and d.refclassid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+    order by 1) as funcoes
   from pg_catalog.pg_policy p join pg_catalog.pg_class c on c.oid = p.polrelid join pg_catalog.pg_namespace n on n.oid = c.relnamespace`;
 
 /**
- * Itens da impressão ampliada das relações do schema storage, na ordem em que as mensagens os listam (PLA-003, D13).
- * Políticas ficam de fora (create, alter e drop policy em storage.objects são julgados pela regra das políticas).
+ * Itens da impressão ampliada das relações dos schemas protegidos, na ordem em que as mensagens os listam (PLA-003, D13;
+ * "partição" desde a PLA-004, D6). Políticas ficam de fora (create, alter e drop policy em storage.objects e em
+ * realtime.messages são julgados pelas regras das políticas).
  */
-export const ITENS_STORAGE = ["nome", "dono", "privilégio", "RLS", "opções", "replica identity", "coluna", "padrão", "índice", "gatilho",
-  "restrição", "comentário", "estatística", "herança", "chave estrangeira"];
+export const ITENS_PROTEGIDOS = ["nome", "dono", "privilégio", "RLS", "opções", "replica identity", "coluna", "padrão", "índice", "gatilho",
+  "restrição", "comentário", "estatística", "herança", "chave estrangeira", "partição"];
 
-// Relações do schema storage (PLA-003, D13): no Supabase, o dono das migrações (postgres) não é dono delas e recebe 42501
-// em qualquer alter table; aqui, como membro de supabase_storage_admin (supabase/tests/dono-migracao.sql), ele consegue.
-// Por isso a impressão delas vai além da de RELACOES: v é um objeto JSON (em texto) com um campo por item de
-// ITENS_STORAGE, e lerCatalogo() devolve os itens que mudaram. Os campos longos vão em md5. Comentários: da relação, das
-// colunas, dos índices, das restrições e dos gatilhos (os de política ficam de fora, como as políticas). Chave
-// estrangeira: as de outras relações (fora de storage) que apontam para esta; as internas de storage ficam em "restrição".
-// Herança: a relação como pai ou como filha. Gatilhos: só os não internos (os internos são os das chaves estrangeiras).
-const STORAGE = `select c.oid::int8 as k, pg_catalog.format('%I.%I', n.nspname, c.relname) as rot,
-  pg_catalog.json_build_object(
+// Relações dos schemas protegidos (PLA-003, D13; PLA-004, D6): no Supabase, o dono das migrações (postgres) não é dono delas
+// e recebe 42501 em qualquer alter table; aqui, como membro de supabase_storage_admin e de supabase_realtime_admin
+// (supabase/tests/dono-migracao.sql), ele consegue. Por isso a impressão delas vai além da de RELACOES: v é um objeto JSON
+// (em texto) com um campo por item de ITENS_PROTEGIDOS, e lerCatalogo() devolve os itens que mudaram. Os campos longos vão em
+// md5. Comentários: da relação, das colunas, dos índices, das restrições e dos gatilhos (os de política ficam de fora, como
+// as políticas). Chave estrangeira: as de outras relações (fora do schema) que apontam para esta; as internas ficam em
+// "restrição". Herança: a relação como pai ou como filha. Gatilhos: só os não internos (os internos são os das chaves
+// estrangeiras). Partição (realtime.messages é particionada, como na fonte): o md5 da impressão das partições do mesmo grupo,
+// para que a coluna, o índice ou o gatilho criado no pai, que desce às partições, saia num erro só, no pai, e a mudança feita
+// só numa partição também; a linha da própria partição (particao) não é devolvida sozinha (mudancasProtegidas).
+const PROTEGIDAS = `with r as (select c.oid, n.nspname, c.relname, c.relispartition,
+  pg_catalog.jsonb_build_object(
     'nome', pg_catalog.concat_ws('|', c.relname, c.relnamespace),
     'dono', c.relowner::text,
     'privilégio', pg_catalog.concat_ws('|', c.relacl::text, (select pg_catalog.string_agg(a.attnum || ':' || a.attacl::text, ',' order by a.attnum)
@@ -118,9 +149,13 @@ const STORAGE = `select c.oid::int8 as k, pg_catalog.format('%I.%I', n.nspname, 
     'chave estrangeira', (select pg_catalog.md5(pg_catalog.string_agg(pg_catalog.concat_ws(':', o.conrelid, o.conname, pg_catalog.pg_get_constraintdef(o.oid)),
       ',' order by o.conrelid, o.conname)) from pg_catalog.pg_constraint o where o.confrelid = c.oid and o.contype = 'f'
       and o.conrelid not in (select x.oid from pg_catalog.pg_class x where x.relnamespace = c.relnamespace))
-  )::text as v
+  ) as j
   from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-  where c.relkind in ('r', 'p', 'v', 'm', 'f', 'S') and n.nspname = 'storage'`;
+  where c.relkind in ('r', 'p', 'v', 'm', 'f', 'S') and n.nspname = any(${PROTEGIDOS_SQL}))
+select r.oid::int8 as k, pg_catalog.format('%I.%I', r.nspname, r.relname) as rot, r.nspname::text as esquema, r.relispartition as particao,
+  (r.j || pg_catalog.jsonb_build_object('partição', (select pg_catalog.md5(pg_catalog.string_agg(f.j::text, ',' order by f.oid))
+    from r f join pg_catalog.pg_inherits h on h.inhrelid = f.oid where h.inhparent = r.oid and f.relispartition)))::text as v
+  from r`;
 
 // Privilégios padrão (alter default privileges): a impressão é a própria lista; os ganhos são calculados à parte.
 const ACL_PADRAO = `select pg_catalog.concat_ws('|', d.defaclrole, d.defaclnamespace, d.defaclobjtype) as k, d.defaclrole::int8 as papel, d.defaclnamespace::int8 as esquema,
@@ -167,12 +202,14 @@ const OUTROS = [
   ["assinatura (subscription)", `select s.oid::int8 as k, pg_catalog.quote_ident(s.subname) as rot, pg_catalog.md5(s::text) as v from pg_catalog.pg_subscription s`],
 ];
 
-// Objetos do schema storage que não são relação (revisão 1 da Tarefa 2 da E2, I1): todo catálogo com coluna *namespace
-// (pg_catalog, Postgres 18), menos pg_class (relações: STORAGE e RELACOES; índices: item "índice"), pg_default_acl
-// (aclPadraoEmStorage) e as restrições de tabela (item "restrição"; ficam as de domínio, conrelid = 0). Em pg_type, ficam de
+// Objetos dos schemas protegidos que não são relação (revisão 1 da Tarefa 2 da E2, I1; realtime desde a PLA-004, D6, com
+// realtime.topic() e realtime.authorize(...) em pg_proc): todo catálogo com coluna *namespace
+// (pg_catalog, Postgres 18), menos pg_class (relações: PROTEGIDAS e RELACOES; índices: item "índice"), pg_default_acl
+// (aclPadraoEm<Schema>) e as restrições de tabela (item "restrição"; ficam as de domínio, conrelid = 0). Em pg_type, ficam de
 // fora os tipos de linha de tabela, view e sequência (seguem a relação) e os arrays implícitos (seguem o tipo); o tipo
-// composto (relkind 'c') fica. A impressão é a linha inteira do catálogo (md5 do texto da linha). [catálogo, alias, coluna do
-// schema, filtro extra].
+// composto (relkind 'c') fica. A impressão é a linha inteira do catálogo e o comentário do objeto (pg_description, por
+// obj_description; revisão 1 da Tarefa 2 da E3, N1: no Supabase o postgres não é dono e receberia 42501 no comment on), em
+// md5. Um comentário que já existe na base só conta se mudar. [catálogo, alias, coluna do schema, filtro extra].
 const CATALOGOS_COM_SCHEMA = [
   ["pg_type", "t", "typnamespace", `(t.typrelid = 0 or (select r.relkind from pg_catalog.pg_class r where r.oid = t.typrelid) = 'c')
     and not exists (select 1 from pg_catalog.pg_type e where e.oid = t.typelem and e.typarray = t.oid)`],
@@ -190,12 +227,13 @@ const CATALOGOS_COM_SCHEMA = [
   ["pg_ts_template", "t", "tmplnamespace", "true"],
   ["pg_extension", "t", "extnamespace", "true"],
 ];
-const OBJETOS_STORAGE = CATALOGOS_COM_SCHEMA.map(([cat, a, col, filtro]) => `select '${cat}:' || ${a}.oid::int8 as k,
-  pg_catalog.pg_describe_object('pg_catalog.${cat}'::pg_catalog.regclass, ${a}.oid, 0) as rot, pg_catalog.md5(${a}::text) as v
-  from pg_catalog.${cat} ${a} join pg_catalog.pg_namespace n on n.oid = ${a}.${col} where n.nspname = 'storage' and ${filtro}`).join("\nunion all\n");
+const OBJETOS_PROTEGIDOS = CATALOGOS_COM_SCHEMA.map(([cat, a, col, filtro]) => `select '${cat}:' || ${a}.oid::int8 as k,
+  pg_catalog.pg_describe_object('pg_catalog.${cat}'::pg_catalog.regclass, ${a}.oid, 0) as rot,
+  pg_catalog.md5(${a}::text || '|' || coalesce(pg_catalog.obj_description(${a}.oid, '${cat}'), '')) as v, n.nspname::text as esquema
+  from pg_catalog.${cat} ${a} join pg_catalog.pg_namespace n on n.oid = ${a}.${col} where n.nspname = any(${PROTEGIDOS_SQL}) and ${filtro}`).join("\nunion all\n");
 
-const GRUPOS = { funcoes: FUNCOES, relacoes: RELACOES, schemas: SCHEMAS, papeis: PAPEIS, participacoes: PARTICIPACOES, politicas: POLITICAS, aclPadrao: ACL_PADRAO, storage: STORAGE,
-  objetosStorage: OBJETOS_STORAGE };
+const GRUPOS = { funcoes: FUNCOES, relacoes: RELACOES, schemas: SCHEMAS, papeis: PAPEIS, participacoes: PARTICIPACOES, politicas: POLITICAS, aclPadrao: ACL_PADRAO,
+  protegidas: PROTEGIDAS, objetosProtegidos: OBJETOS_PROTEGIDOS };
 
 // Grupos grandes (milhares de linhas, quase todas do próprio Postgres): em vez de trazer todas as linhas a cada
 // análise, compara um resumo (md5) das linhas com chave até a maior chave da base; se o resumo bate, só as
@@ -345,9 +383,12 @@ async function criarInstancia() {
     serviceRole: oid("service_role"),
     dono: DONO,
     donoOid: Number(dono.oid),
-    // PLA-003, D13: o dono das relações de storage e o schema (oids como texto; ausentes se a simulação não os tiver).
-    storageAdmin: (await db.query("select oid::int8::text as k from pg_catalog.pg_roles where rolname = 'supabase_storage_admin'")).rows[0]?.k,
-    schemaStorage: (await db.query("select oid::int8::text as k from pg_catalog.pg_namespace where nspname = 'storage'")).rows[0]?.k,
+    // PLA-003, D13 e PLA-004, D6: o dono das relações de cada schema protegido e o schema (oids como texto; ausentes se a
+    // simulação não os tiver).
+    donosProtegidos: Object.fromEntries(await Promise.all(SCHEMAS_PROTEGIDOS.map(async (s) =>
+      [s, (await db.query("select oid::int8::text as k from pg_catalog.pg_roles where rolname = $1", [DONO_DO_SCHEMA[s]])).rows[0]?.k]))),
+    schemasProtegidos: Object.fromEntries(await Promise.all(SCHEMAS_PROTEGIDOS.map(async (s) =>
+      [s, (await db.query("select oid::int8::text as k from pg_catalog.pg_namespace where nspname = $1", [s])).rows[0]?.k]))),
     bucketsOid: (await db.query("select pg_catalog.to_regclass('storage.buckets')::oid::int8::text as k")).rows[0]?.k ?? null,
     superusuario,
   };
@@ -657,8 +698,10 @@ async function lerCatalogo(db, base) {
   });
 
   const nomes = new Map([["0", "PUBLIC"], ...(await db.query("select oid::int8 as k, rolname from pg_catalog.pg_roles")).rows.map((l) => [String(l.k), l.rolname])]);
-  // Relações de storage da base: as mudanças nelas saem em mudancasEmStorage, não em relacoesPreexistentes (PLA-003, D13).
-  const emStorage = new Set(base.retrato.storage.keys());
+  // Relações dos schemas protegidos da base (inclusive as partições): as mudanças nelas saem em mudancasEm<Schema>, não em
+  // relacoesPreexistentes (PLA-003, D13; PLA-004, D6).
+  const emProtegidos = new Set(base.retrato.protegidas.keys());
+  const comMudanca = (novos, alterados, removidos) => [["criação", novos], ["alteração", alterados], ["remoção", removidos]];
   return {
     papeisDoSupabase: { anon: String(base.anon), authenticated: String(base.authenticated), serviceRole: String(base.serviceRole) },
     nomeDoPapel: (oid) => nomes.get(String(oid)) ?? `papel ${oid}`,
@@ -667,13 +710,26 @@ async function lerCatalogo(db, base) {
     funcoes,
     funcoesPreexistentes: mudancas(dif.funcoes),
     relacoes,
-    relacoesPreexistentes: mudancas(dif.relacoes, emStorage),
-    mudancasEmStorage: mudancasEmStorage(dif.storage, base.retrato.storage),
-    // Privilégios padrão de supabase_storage_admin ou do schema storage criados, alterados ou removidos (D13: a participação
-    // do dono simulado em supabase_storage_admin deixa mudá-los, e o postgres real não consegue).
-    aclPadraoEmStorage: [["criação", dif.aclPadrao.novos], ["alteração", dif.aclPadrao.alterados], ["remoção", dif.aclPadrao.removidos]].flatMap(([mudanca, linhas]) =>
-      linhas.filter((l) => String(l.papel) === base.storageAdmin || String(l.esquema) === base.schemaStorage).map((l) => ({ rotulo: l.rot, mudanca }))),
+    relacoesPreexistentes: mudancas(dif.relacoes, emProtegidos),
+    // Um campo de cada tipo por schema protegido (campoProtegido): mudancasEmStorage e mudancasEmRealtime (relações),
+    // aclPadraoEm<Schema> (privilégios padrão do dono das relações do schema, ou do próprio schema, criados, alterados ou
+    // removidos: a participação do dono simulado nesse papel deixa mudá-los, e o postgres real não consegue) e
+    // objetosEm<Schema> (objetos que não são relação: tipo, domínio, operador, collation, text search, função, estatística...;
+    // revisão 1 da Tarefa 2 da E2, I1). O schema de uma linha alterada ou removida é o da base.
+    ...Object.fromEntries(SCHEMAS_PROTEGIDOS.flatMap((s) => {
+      const doSchema = (l) => (base.retrato.objetosProtegidos.get(String(l.k)) ?? l).esquema === s;
+      return [
+        [campoProtegido("mudancas", s), mudancasProtegidas(dif.protegidas, base.retrato.protegidas, s)],
+        [campoProtegido("aclPadrao", s), comMudanca(dif.aclPadrao.novos, dif.aclPadrao.alterados, dif.aclPadrao.removidos).flatMap(([mudanca, linhas]) =>
+          linhas.filter((l) => String(l.papel) === base.donosProtegidos[s] || String(l.esquema) === base.schemasProtegidos[s]).map((l) => ({ rotulo: l.rot, mudanca })))],
+        [campoProtegido("objetos", s), comMudanca(dif.objetosProtegidos.novos, dif.objetosProtegidos.alterados, dif.objetosProtegidos.removidos)
+          .flatMap(([mudanca, linhas]) => linhas.filter(doSchema).map((l) => ({ rotulo: l.rot, mudanca })))],
+      ];
+    })),
     politicasEmPreexistentes: politicasEmPreexistentes(dif.politicas, new Set(ids(dif.relacoes.novos))),
+    // Nome, permissive e funções chamadas (pelo oid) das políticas criadas ou alteradas em relações pré-existentes, pelo
+    // rótulo (PLA-004, D6: a regra das políticas de realtime.messages; revisão do plano, N5).
+    detalheDasPoliticas: detalheDasPoliticas(dif.politicas, new Set(ids(dif.relacoes.novos))),
     schemas,
     schemasPreexistentes: mudancas(dif.schemas),
     tiposNovos,
@@ -684,9 +740,6 @@ async function lerCatalogo(db, base) {
     // Estado final só dos privilégios padrão do dono: só ele cria objetos (a regra de dono recusa os de outro papel).
     aclPadraoFinal: [...atual.aclPadrao.values()].filter((l) => Number(l.papel) === base.donoOid).map((l) => ({ rotulo: l.rot, tipo: l.tipo, itens: l.itens ?? [] })),
     outros,
-    // Objetos do schema storage que não são relação, criados, alterados ou removidos (revisão 1 da Tarefa 2, I1).
-    objetosEmStorage: [["criação", dif.objetosStorage.novos], ["alteração", dif.objetosStorage.alterados], ["remoção", dif.objetosStorage.removidos]]
-      .flatMap(([mudanca, linhas]) => linhas.map((l) => ({ rotulo: l.rot, mudanca }))),
     // Linhas de storage.buckets no fim (dados, não catálogo), lidas como superusuário (PLA-003, D13: regra do bucket); null
     // quando a tabela da base não está mais em storage.buckets (movida, renomeada ou apagada; revisão 1, N3). Sem
     // storage.buckets na base (simulação sem storage), lista vazia.
@@ -709,17 +762,20 @@ function mudancas(d, fora = new Set()) {
 }
 
 /**
- * Relações do schema storage da base alteradas ou removidas: [{ rotulo, itens, mudanca }], com os itens de ITENS_STORAGE
- * que mudaram (vazio na remoção). Relação nova em storage não entra aqui: ela já é acusada como relação nova.
+ * Relações do schema protegido `schema` da base alteradas ou removidas: [{ rotulo, itens, mudanca }], com os itens de
+ * ITENS_PROTEGIDOS que mudaram (vazio na remoção). Relação nova no schema não entra aqui: ela já é acusada como relação nova.
+ * A partição da base também não: a mudança dela sai no item "partição" (e, se ela sair do pai, em "herança") do pai.
  */
-function mudancasEmStorage(d, base) {
+function mudancasProtegidas(d, base, schema) {
+  const daBase = (l) => base.get(String(l.k));
+  const fica = (l) => daBase(l).esquema === schema && !daBase(l).particao;
   return [
-    ...d.alterados.map((l) => {
-      const antes = JSON.parse(base.get(String(l.k)).v);
+    ...d.alterados.filter(fica).map((l) => {
+      const antes = JSON.parse(daBase(l).v);
       const depois = JSON.parse(l.v);
-      return { rotulo: l.rot, itens: ITENS_STORAGE.filter((i) => antes[i] !== depois[i]), mudanca: "alteração" };
+      return { rotulo: l.rot, itens: ITENS_PROTEGIDOS.filter((i) => antes[i] !== depois[i]), mudanca: "alteração" };
     }),
-    ...d.removidos.map((l) => ({ rotulo: l.rot, itens: [], mudanca: "remoção" })),
+    ...d.removidos.filter(fica).map((l) => ({ rotulo: l.rot, itens: [], mudanca: "remoção" })),
   ];
 }
 
@@ -731,6 +787,16 @@ function politicasEmPreexistentes(d, relacoesNovas) {
   const forma = (mudanca) => (l) => ({ rotulo: l.rot, relacao: l.relacao, papeis: l.papeis, comando: l.comando, usando: l.usando, comCheck: l.com_check, mudanca });
   const fica = (l) => !relacoesNovas.has(String(l.rel));
   return [...d.novos.filter(fica).map(forma("criação")), ...d.alterados.filter(fica).map(forma("alteração")), ...d.removidos.filter(fica).map(forma("remoção"))];
+}
+
+/**
+ * { [rótulo]: { nome, permissiva, funcoes } } das políticas criadas ou alteradas em relações que não foram criadas pelas
+ * migrações (a removida não tem: remover política só nega mais). `funcoes`: as funções que a política chama, pelo oid
+ * (pg_depend), como schema.nome(tipos), em ordem.
+ */
+function detalheDasPoliticas(d, relacoesNovas) {
+  return Object.fromEntries([...d.novos, ...d.alterados].filter((l) => !relacoesNovas.has(String(l.rel)))
+    .map((l) => [l.rot, { nome: l.nome, permissiva: l.permissiva, funcoes: l.funcoes }]));
 }
 
 // --- Linha de comando -------------------------------------------------------------------------------------

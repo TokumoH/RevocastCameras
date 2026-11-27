@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite'
 import { afterAll, describe, expect, test, vi } from 'vitest'
-import { analisarMigracoes } from '../_catalogo.mjs'
+import { analisarMigracoes, campoProtegido, SCHEMAS_PROTEGIDOS } from '../_catalogo.mjs'
 
 // O primeiro teste inicializa o PGlite (alguns segundos, mais com a máquina ocupada).
 vi.setConfig({ testTimeout: 60_000 })
@@ -380,6 +380,62 @@ create table public.ref (o uuid references storage.objects (id));`)
   test('a linha gravada em storage.buckets não fica na base: a análise seguinte não a vê', async () => {
     await analisarMigracoes("insert into storage.buckets (id, name) values ('x', 'x');")
     expect((await analisarMigracoes(TABELA)).catalogo.bucketsFinais).toEqual([])
+  })
+})
+
+// PLA-004, D6 (Tarefa 2 da E3): a simulação tem o schema realtime; a regra de storage passa a valer para os
+// SCHEMAS_PROTEGIDOS, com um campo por schema (mudancasEm<Schema>, aclPadraoEm<Schema>, objetosEm<Schema>; os de storage
+// continuam com o mesmo nome e a mesma forma). As políticas criadas ou alteradas em relações pré-existentes ganham o
+// detalhe (nome, permissive e as funções chamadas, lidas pelo oid em pg_depend) em detalheDasPoliticas.
+describe('realtime (PLA-004, D6)', () => {
+  test('SCHEMAS_PROTEGIDOS e um campo de cada tipo por schema, sempre presente', async () => {
+    expect(SCHEMAS_PROTEGIDOS).toEqual(['storage', 'realtime'])
+    expect(campoProtegido('mudancas', 'storage')).toBe('mudancasEmStorage')
+    const r = await analisarMigracoes(TABELA)
+    for (const s of SCHEMAS_PROTEGIDOS) {
+      for (const p of ['mudancas', 'aclPadrao', 'objetos']) expect(r.catalogo[campoProtegido(p, s)], campoProtegido(p, s)).toEqual([])
+    }
+  })
+
+  test.each([
+    ['RLS', 'alter table realtime.messages disable row level security;', ['RLS']],
+    ['comentário', "comment on table realtime.messages is 'x';", ['comentário']],
+    ['privilégio', 'revoke insert on realtime.messages from authenticated;', ['privilégio']],
+    ['índice: desce à partição, que sai no item "partição" do pai', 'create index on realtime.messages (event);', ['índice', 'partição']],
+    ['só a partição', 'alter table realtime.messages_simulacao enable row level security;', ['partição']],
+  ])('mudancasEmRealtime: %s', async (_caso, sql, itens) => {
+    const r = await analisarMigracoes(sql)
+    expect(r.catalogo.mudancasEmRealtime).toEqual([{ rotulo: 'realtime.messages', itens, mudanca: 'alteração' }])
+    expect(r.catalogo.relacoesPreexistentes).toEqual([])
+    expect(r.catalogo.mudancasEmStorage).toEqual([])
+  })
+
+  test('objetosEmRealtime: realtime.topic() e realtime.authorize(...) estão na impressão', async () => {
+    const r = await analisarMigracoes(`alter function realtime.topic() owner to postgres_sim;
+alter function realtime.authorize(text, text, text, text, text, text[], text[]) owner to postgres_sim;`)
+    expect(r.catalogo.objetosEmRealtime).toEqual([
+      { rotulo: 'function realtime.topic()', mudanca: 'alteração' },
+      { rotulo: 'function realtime.authorize(text,text,text,text,text,text[],text[])', mudanca: 'alteração' },
+    ])
+    expect(r.catalogo.objetosEmStorage).toEqual([])
+  })
+
+  test('aclPadraoEmRealtime: privilégios padrão de supabase_realtime_admin ou do schema realtime', async () => {
+    const r = await analisarMigracoes('alter default privileges in schema realtime grant select on tables to authenticated;')
+    expect(r.catalogo.aclPadraoEmRealtime).toEqual([{ rotulo: 'alter default privileges (papel postgres_sim, schema realtime, tabelas)', mudanca: 'criação' }])
+    expect(r.catalogo.aclPadraoEmStorage).toEqual([])
+  })
+
+  test('detalheDasPoliticas: nome, permissive e as funções chamadas (pelo oid), da política criada em realtime.messages', async () => {
+    const r = await analisarMigracoes(`create function public.pode_usar_canal(a text, b text, c boolean) returns boolean language sql as $$ select true $$;
+create policy canal_recebe on realtime.messages for select to authenticated using (public.pode_usar_canal(realtime.topic(), extension, false));`)
+    expect(r.catalogo.politicasEmPreexistentes).toEqual([{
+      rotulo: 'canal_recebe em realtime.messages', relacao: 'realtime.messages', papeis: ['authenticated'], comando: 'r',
+      usando: 'public.pode_usar_canal(realtime.topic(), extension, false)', comCheck: null, mudanca: 'criação',
+    }])
+    expect(r.catalogo.detalheDasPoliticas).toEqual({
+      'canal_recebe em realtime.messages': { nome: 'canal_recebe', permissiva: true, funcoes: ['public.pode_usar_canal(text, text, boolean)', 'realtime.topic()'] },
+    })
   })
 })
 

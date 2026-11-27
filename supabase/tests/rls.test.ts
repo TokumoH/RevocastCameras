@@ -27,6 +27,7 @@ import {
   UID_SESSAO_OBS_CAMERA,
   UID_SESSAO_PALCO,
   cadastrarUsuario,
+  comoCanal,
   comoSessao,
   criarBanco,
   membroGoogle,
@@ -1244,5 +1245,56 @@ describe('E2 — Biblioteca e preparação', () => {
     expect(linhas(await comoSessao(db, ana,
       `update public.episodios set titulo = 'Novo', data = '2026-12-01' where id = $1 returning estado, gestos_ligados`, [ID_EPISODIO])))
       .toEqual([{ estado: 'rascunho', gestos_ligados: false }])
+  })
+})
+
+// PLA-004, Tarefa 2 (D6; revisão do plano, I6 e N6): a simulação do Realtime. comoCanal segue o caminho principal do
+// servidor do Realtime (lib/realtime/tenants/authorization.ex, @authorize_query): chama realtime.authorize(...), que
+// insere a sonda como o papel da conexão, troca para o papel da sessão com as claims e o tópico e lê de volta (receber) ou
+// tenta inserir (enviar) em realtime.messages, sob a RLS. Sem política nenhuma, nada passa; com uma política de teste, só
+// o que ela permite. Este é o teste que a sabotagem "tirar a RLS de realtime.messages da simulação" derruba nesta tarefa.
+describe('Simulação do Realtime (E3, Tarefa 2)', () => {
+  /** Cria, como superusuário e dentro da transação do teste (desfeita no fim), uma política de teste em realtime.messages. */
+  const politica = (sql: string) => db.exec(`create policy teste_${Math.random().toString(36).slice(2, 8)} on realtime.messages ${sql}`)
+
+  test('simulacao-realtime-respeita-rls', async () => {
+    // Sem política nenhuma em realtime.messages: a RLS nega receber e enviar, em qualquer extensão.
+    for (const ext of ['broadcast', 'presence'] as const) {
+      expect(await comoCanal(db, ana, 'x', ext, 'receber'), `receber ${ext}`).toBe(false)
+    }
+    for (const ext of ['broadcast', 'presence', 'persistence'] as const) {
+      expect(await comoCanal(db, ana, 'x', ext, 'enviar'), `enviar ${ext}`).toBe(false)
+    }
+
+    // Política de receber só no tópico x: receber em x, não em y, e enviar continua negado.
+    await politica(`for select to authenticated using (realtime.topic() = 'x')`)
+    expect(await comoCanal(db, ana, 'x', 'broadcast', 'receber')).toBe(true)
+    expect(await comoCanal(db, ana, 'x', 'presence', 'receber')).toBe(true)
+    expect(await comoCanal(db, ana, 'y', 'broadcast', 'receber')).toBe(false)
+    for (const ext of ['broadcast', 'presence', 'persistence'] as const) {
+      expect(await comoCanal(db, ana, 'x', ext, 'enviar'), `enviar ${ext} com só a política de receber`).toBe(false)
+    }
+    // A política de teste não vale para anon (to authenticated).
+    expect(await comoCanal(db, null, 'x', 'broadcast', 'receber')).toBe(false)
+
+    // Política de enviar só persistence em x: a coluna extension chega à política como a extensão pedida.
+    await politica(`for insert to authenticated with check (realtime.topic() = 'x' and extension = 'persistence')`)
+    expect(await comoCanal(db, ana, 'x', 'persistence', 'enviar')).toBe(true)
+    expect(await comoCanal(db, ana, 'y', 'persistence', 'enviar')).toBe(false)
+    expect(await comoCanal(db, ana, 'x', 'broadcast', 'enviar')).toBe(false)
+    expect(await comoCanal(db, ana, 'x', 'presence', 'enviar')).toBe(false)
+
+    // As claims e o sub chegam à política (request.jwt.claims, como o servidor define): só a ana recebe em z.
+    await politica(`for select to authenticated using (realtime.topic() = 'z' and auth.uid() = '${UID_ANA}'::uuid)`)
+    expect(await comoCanal(db, ana, 'z', 'broadcast', 'receber')).toBe(true)
+    expect(await comoCanal(db, bia, 'z', 'broadcast', 'receber')).toBe(false)
+
+    // Nada fica gravado: as sondas são desfeitas dentro de realtime.authorize, e comoCanal desfaz o próprio savepoint.
+    expect((await db.query('select count(*)::int as n from realtime.messages')).rows).toEqual([{ n: 0 }])
+    expect((await db.query("select current_user as u, coalesce(current_setting('realtime.topic', true), '') as t")).rows).toEqual([{ u: 'postgres', t: '' }])
+  })
+
+  test('comoCanal: o servidor não confere leitura de persistence (só broadcast e presence)', async () => {
+    await expect(comoCanal(db, ana, 'x', 'persistence', 'receber')).rejects.toThrow('persistence')
   })
 })

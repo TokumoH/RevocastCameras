@@ -1,7 +1,7 @@
 -- Simulação mínima do Supabase para os testes de RLS em PGlite (só para testes; NÃO aplicar no Supabase).
 -- Reproduz o que a migração usa do Supabase: os papéis anon, authenticated e service_role, os privilégios padrão
 -- que o Supabase dá a esses papéis no schema public, o papel supabase_auth_admin (que grava em auth.users), a tabela auth.users (só as colunas usadas), o schema storage (bloco no fim, PLA-003 D13)
--- e as funções auth.jwt() e auth.uid(). Os privilégios padrão são os de hoje (abaixo): tabelas novas não
+-- e as funções auth.jwt() e auth.uid(), e o schema realtime (bloco no fim, PLA-004 D6). Os privilégios padrão são os de hoje (abaixo): tabelas novas não
 -- recebem select/insert/update/delete, então o acesso nos testes vem só dos GRANT explícitos da migração, e
 -- quem bloqueia dentro deles é a RLS.
 
@@ -159,3 +159,153 @@ create trigger protect_objects_delete before delete on storage.objects
   for each statement execute function storage.protect_delete();
 
 reset role;
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- Realtime (PLA-004, Tarefa 2, D6): o schema realtime com realtime.messages (particionada), realtime.topic() e
+-- realtime.authorize(...), a RLS e os privilégios que mudam o resultado da autorização de um canal privado.
+-- Fontes (lidas em 2026-11-27):
+-- - github.com/supabase/realtime (commit 9a2cfba), lib/realtime/tenants/authorization.ex: o servidor confere a
+--   autorização de um canal privado pela função do banco realtime.authorize(role_name, topic_name, claims, sub, headers,
+--   read_extensions, write_extensions), numa ida só (@authorize_query, com role = a claim role do JWT, as claims em JSON,
+--   sub = a claim sub e os cabeçalhos em JSON); só cai na reserva (insert e select numa transação, read_policies_with_
+--   transaction e write_policies_with_transaction) quando a própria função falha (fallback?/1: undefined_function sem
+--   "where", ou resposta inesperada). Extensões de leitura: broadcast e presence (@all_extensions; só broadcast sem
+--   presença); de escrita: broadcast, presence e persistence (@write_extensions; persistence vira broadcast.persist).
+--   lib/realtime_web/channels/realtime_channel.ex: a leitura é conferida na entrada (maybe_assign_policies) e de novo a
+--   cada token novo (handle_in "access_token" → apply_access_token, que fecha o canal se a leitura foi revogada:
+--   "You no longer have permission to read from this Channel topic"); a escrita, no primeiro envio
+--   (broadcast_handler.ex, authorize_write) e de novo depois de cada token novo (as políticas voltam a nil). O
+--   :confirm_token periódico só confere o JWT (validade), sem refazer as políticas. Reconectar é entrar de novo.
+-- - Migrações do servidor (lib/realtime/tenants/repo/migrations/, aplicadas pelo Realtime como supabase_admin, que é
+--   superusuário; DB_USER do docker/docker-compose.yml do github.com/supabase/supabase): 20240401105812 (papel
+--   supabase_realtime_admin NOINHERIT NOLOGIN NOREPLICATION, "grant all privileges on schema realtime"),
+--   20240523004032 (realtime.topic(), sql stable, de supabase_realtime_admin), 20241030150047 (messages particionada por
+--   range de inserted_at, chave primária com inserted_at, RLS ativa, "grant select/insert/update" a anon, authenticated e
+--   service_role, dono supabase_realtime_admin), 20241108114728 (id uuid), 20240919163303 e 20260514120000 (payload,
+--   event, private, binary_payload e a restrição messages_payload_exclusive), 20260714120000 (skip_broadcast),
+--   20261007120000 (expires_at), 20261009120000 (padrões com clock_timestamp), 20260925120000 (os privilégios de
+--   anon, authenticated e service_role de hoje: select, insert e update), 20260922120000 (sem grant option no schema
+--   para supabase_realtime_admin), 20261002120000, 20261008120000 e 20261111120000 (realtime.authorize: plpgsql
+--   volatile, NÃO security definer, de supabase_realtime_admin; o corpo abaixo é o da 20261111120000, copiado sem os
+--   comentários). Nenhuma migração cria gatilho em realtime.messages. As partições são diárias, criadas pelo servidor
+--   (lib/realtime/tenants.ex, create_messages_partitions: de ontem a daqui a 3 dias, sem RLS própria, de
+--   supabase_realtime_admin); aqui uma partição só, de minvalue a maxvalue, cobre os testes.
+-- - github.com/supabase/postgres (commit cceedbd): migrations/db/migrations/20211118015519_create-realtime-schema.sql
+--   (o schema, criado pelo supabase_admin; aqui o dono é o superusuário do PGlite, como em storage).
+-- - Documentação "Realtime Authorization" (supabase.com/docs/guides/realtime/authorization, lida em 2026-11-27): as
+--   políticas de realtime.messages leem realtime.topic(), a coluna extension ('broadcast' ou 'presence') e as claims em
+--   request.jwt.claims; as permissões ficam guardadas durante a conexão e são refeitas na entrada e a cada token novo;
+--   canal privado só é obrigatório com "Allow public access" desligado (passo do responsável).
+-- Como realtime.authorize decide: insere uma sonda por extensão de leitura como o papel da conexão (o servidor conecta
+-- como supabase_admin, superusuário; nos testes, comoCanal chama como o superusuário do PGlite), troca o papel para
+-- role_name e define realtime.topic, request.jwt.claims, request.jwt.claim.sub e request.headers (set_config local),
+-- lê de volta as sondas (receber = a sonda é visível pela RLS de select) e tenta inserir uma linha por extensão de
+-- escrita (enviar = o insert passou pela RLS de insert; 42501 = negado); no fim, o raise RTA01 desfaz tudo (sondas,
+-- papel e parâmetros). O que fica de fora: os índices (só desempenho), as colunas não lidas pela autorização continuam
+-- (com os tipos da fonte), as demais funções e tabelas de realtime (send, broadcast_changes, subscription, as do
+-- Postgres Changes...), os privilégios do papel postgres e de dashboard_user (o postgres_sim é o dono via
+-- supabase_realtime_admin, dono-migracao.sql) e a publicação de mensagens.
+
+create role supabase_realtime_admin nologin noinherit noreplication;
+create schema realtime;
+grant usage on schema realtime to anon, authenticated, service_role;
+grant all on schema realtime to supabase_realtime_admin;
+
+create table realtime.messages (
+  topic text not null,
+  extension text not null,
+  payload jsonb,
+  event text,
+  private boolean default false,
+  updated_at timestamp not null default timezone('utc', clock_timestamp()),
+  inserted_at timestamp not null default timezone('utc', clock_timestamp()),
+  id uuid not null default gen_random_uuid(),
+  binary_payload bytea,
+  skip_broadcast boolean not null default false,
+  expires_at timestamp,
+  primary key (id, inserted_at)
+) partition by range (inserted_at);
+alter table realtime.messages add constraint messages_payload_exclusive check (payload is null or binary_payload is null) not valid;
+alter table realtime.messages enable row level security;
+grant select, insert, update on realtime.messages to anon, authenticated, service_role;
+alter table realtime.messages owner to supabase_realtime_admin;
+
+create table realtime.messages_simulacao partition of realtime.messages for values from (minvalue) to (maxvalue);
+alter table realtime.messages_simulacao owner to supabase_realtime_admin;
+
+create function realtime.topic() returns text as $$
+select nullif(current_setting('realtime.topic', true), '')::text;
+$$ language sql stable;
+alter function realtime.topic() owner to supabase_realtime_admin;
+
+create function realtime.authorize(
+  role_name text,
+  topic_name text,
+  claims text,
+  sub text,
+  headers text,
+  read_extensions text[],
+  write_extensions text[],
+  out read_allowed boolean[],
+  out write_allowed boolean[])
+language plpgsql
+volatile
+as $$
+declare
+  probe_ids uuid[];
+  probe_inserted_at timestamp := now() at time zone 'utc';
+  visible_ids uuid[];
+  ext text;
+  allowed boolean;
+begin
+  perform set_config('synchronous_commit', 'off', true);
+
+  begin
+    probe_ids := array(select gen_random_uuid() from unnest(read_extensions));
+
+    insert into realtime.messages (id, topic, extension, inserted_at, updated_at)
+    select p.id, topic_name, p.extension, probe_inserted_at, probe_inserted_at
+    from unnest(probe_ids, read_extensions) as p(id, extension);
+
+    perform set_config('role', role_name, true),
+            set_config('realtime.topic', topic_name, true),
+            set_config('request.jwt.claims', claims, true),
+            set_config('request.jwt.claim.sub', sub, true),
+            set_config('request.jwt.claim.role', role_name, true),
+            set_config('request.headers', headers, true);
+
+    if cardinality(probe_ids) > 0 then
+      visible_ids := array(
+        select m.id
+        from realtime.messages m
+        where m.inserted_at = probe_inserted_at
+          and m.id = any(probe_ids));
+    end if;
+
+    read_allowed := array(
+      select p.id = any(visible_ids)
+      from unnest(probe_ids) with ordinality as p(id, n)
+      order by p.n);
+
+    write_allowed := '{}';
+
+    foreach ext in array write_extensions loop
+      begin
+        insert into realtime.messages (topic, extension, inserted_at, updated_at)
+        values (topic_name, ext, now() at time zone 'utc', now() at time zone 'utc');
+
+        allowed := true;
+      exception when insufficient_privilege then
+        allowed := false;
+      end;
+
+      write_allowed := write_allowed || allowed;
+    end loop;
+
+    raise sqlstate 'RTA01';
+  exception when sqlstate 'RTA01' then
+    null;
+  end;
+end;
+$$;
+alter function realtime.authorize(text, text, text, text, text, text[], text[]) owner to supabase_realtime_admin;
