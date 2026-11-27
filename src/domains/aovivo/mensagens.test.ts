@@ -238,6 +238,36 @@ describe('mensagens-validadas', () => {
     })
   })
 
+  describe('presenca-com-video', () => {
+    const VIDEO = { estado: 'conectado', telaLigada: 'travada', bateria: 0.8 }
+
+    test('camera e obs_camera com video válido → aceitos, com objeto novo; sem video → aceito, como na E3', () => {
+      const lida = lerPresenca({ tipo: 'camera', dispositivoId: ID, obs: null, video: VIDEO, presence_ref: 'r' })
+      expect(lida).toEqual({ tipo: 'camera', dispositivoId: ID, obs: null, video: VIDEO })
+      expect(lida !== null && 'video' in lida ? lida.video : null).not.toBe(VIDEO)
+      expect(lerPresenca({ tipo: 'obs_camera', dispositivoId: ID, obs: null, video: { estado: 'aguardando_par', telaLigada: null, bateria: null } })).toEqual({
+        tipo: 'obs_camera',
+        dispositivoId: ID,
+        obs: null,
+        video: { estado: 'aguardando_par', telaLigada: null, bateria: null },
+      })
+      const semVideo = lerPresenca({ tipo: 'camera', dispositivoId: ID, obs: null })
+      expect(semVideo).toEqual({ tipo: 'camera', dispositivoId: ID, obs: null })
+      expect(Object.keys(semVideo ?? {})).not.toContain('video')
+    })
+
+    test.each<[string, unknown]>([
+      ['obs_palco com video', { tipo: 'obs_palco', dispositivoId: ID, obs: OBS, video: VIDEO }],
+      ['membro com video', { tipo: 'membro', papel: 'admin', video: VIDEO }],
+      ['video com bateria 1.2', { tipo: 'camera', dispositivoId: ID, obs: null, video: { ...VIDEO, bateria: 1.2 } }],
+      ['video com estado fora da lista', { tipo: 'camera', dispositivoId: ID, obs: null, video: { ...VIDEO, estado: 'gravando' } }],
+      ['video nulo', { tipo: 'camera', dispositivoId: ID, obs: null, video: null }],
+      ['video com campo extra', { tipo: 'obs_camera', dispositivoId: ID, obs: null, video: { ...VIDEO, ip: '192.0.2.1' } }],
+    ])('%s → null', (_nome, payload) => {
+      expect(lerPresenca(payload)).toBeNull()
+    })
+  })
+
   describe('lerRemetente', () => {
     test('uuid minúsculo próprio → texto; o resto → null', () => {
       expect(lerRemetente({ remetente: REMETENTE, id: ID })).toBe(REMETENTE)

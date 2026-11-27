@@ -1,4 +1,5 @@
 import type { TipoDeDispositivo } from '../acesso/dispositivos'
+import { lerSituacaoDoVideo, type SituacaoDoVideo } from '../captura/sinais'
 import { UUID } from '../preparacao/midia'
 
 /*
@@ -55,8 +56,13 @@ export interface SituacaoDoObs {
   gravando: boolean | null
 }
 
-/** Corpo da presença em `estudio` (D14): a chave é o `auth.uid()`; sem e-mail e sem nome. */
-export type PresencaNoEstudio = { tipo: 'membro'; papel: 'admin' | 'equipe' | 'apresentadora' } | { tipo: TipoDeDispositivo; dispositivoId: string; obs: SituacaoDoObs | null }
+/**
+ * Corpo da presença em `estudio` (D14): a chave é o `auth.uid()`; sem e-mail e sem nome. Desde a E4 (PLA-005, D13), a
+ * presença de `camera` e `obs_camera` pode levar `video` (a situação do vídeo daquele lado); no `obs_palco`, não.
+ */
+export type PresencaNoEstudio =
+  | { tipo: 'membro'; papel: 'admin' | 'equipe' | 'apresentadora' }
+  | { tipo: TipoDeDispositivo; dispositivoId: string; obs: SituacaoDoObs | null; video?: SituacaoDoVideo }
 
 /** Comando por toque (D9); o `id` (uuid) deduplica no palco. */
 export type Comando = { id: string } & (
@@ -298,7 +304,13 @@ export function lerMensagemDoEstado(evento: string, payload: unknown): EstadoNoA
   return evento === EVENTOS_DO_ESTADO.estado ? lerEstadoNoAr(payload) : null
 }
 
-/** Um registro de presença de `estudio` (o `presence_ref` do realtime-js é tolerado e descartado). */
+/** Tipos de dispositivo cuja presença pode levar `video` (D13 do PLA-005): só os dois lados do vídeo. */
+const TIPOS_COM_VIDEO: readonly TipoDeDispositivo[] = Object.freeze(['camera', 'obs_camera'] as const)
+
+/**
+ * Um registro de presença de `estudio` (o `presence_ref` do realtime-js é tolerado e descartado). O `video` opcional
+ * (desde a E4) só vale em `camera` e `obs_camera` e passa por `lerSituacaoDoVideo`; no `obs_palco`, ou inválido → `null`.
+ */
 export function lerPresenca(payload: unknown): PresencaNoEstudio | null {
   if (typeof payload !== 'object' || payload === null) return null
   const tipo = campo(payload as Objeto, 'tipo')
@@ -309,13 +321,16 @@ export function lerPresenca(payload: unknown): PresencaNoEstudio | null {
     return daLista(papel, PAPEIS) ? { tipo, papel } : null
   }
   if (!daLista(tipo, TIPOS_DE_DISPOSITIVO)) return null
-  const o = objetoComChaves(payload, ['tipo', 'dispositivoId', 'obs', 'presence_ref'])
+  const o = objetoComChaves(payload, ['tipo', 'dispositivoId', 'obs', 'video', 'presence_ref'])
   if (o === null || !referenciaValida(o) || !todasPresentes(o, ['dispositivoId', 'obs'])) return null
   const dispositivoId = campo(o, 'dispositivoId')
   if (!ehUuid(dispositivoId)) return null
-  if (o.obs === null) return { tipo, dispositivoId, obs: null }
-  const obs = lerSituacaoDoObs(o.obs)
-  return obs === null ? null : { tipo, dispositivoId, obs }
+  const obs = o.obs === null ? null : lerSituacaoDoObs(o.obs)
+  if (o.obs !== null && obs === null) return null
+  if (!Object.hasOwn(o, 'video')) return { tipo, dispositivoId, obs }
+  if (!TIPOS_COM_VIDEO.includes(tipo)) return null
+  const video = lerSituacaoDoVideo(o.video)
+  return video === null ? null : { tipo, dispositivoId, obs, video }
 }
 
 /** Por quanto tempo um remetente revogado é descartado: 15 min, mais que os 10 min do JWT (D5). */
