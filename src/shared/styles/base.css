@@ -423,3 +423,22 @@ html.palco { color-scheme: light; }
 .comandos__lista { display: flex; flex-wrap: wrap; gap: 10px; min-width: 0; }
 .comandos__lista--coluna { display: grid; grid-template-columns: minmax(0, 1fr); }
 .botao-grande { min-width: 44px; min-height: 44px; max-width: 100%; overflow-wrap: anywhere; touch-action: manipulation; }
+
+/* Aba Ao vivo, dispositivos (E3, Tarefa 8): lista, botões de pareamento, link e QR; nada estoura em 320 px */
+.dispositivos { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
+.dispositivos h2 { font-size: 28px; }
+.dispositivos__rotulo { min-width: 12ch; font-weight: 700; overflow-wrap: anywhere; }
+.dispositivos__situacao { padding: 0 10px; font-size: 15px; font-weight: 700; white-space: nowrap; background: var(--sand-soft); border: var(--border); border-radius: 999px; }
+.dispositivos__situacao--conectado { background: var(--cyan-soft); }
+.dispositivos__situacao--revogado { background: var(--pink-soft); }
+.dispositivos__acoes { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; min-width: 0; }
+.dispositivos__acoes .botao { max-width: 100%; overflow-wrap: anywhere; }
+.dispositivos__dica { font-size: 15px; color: var(--gray); }
+.link-de-pareamento { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; justify-items: start; min-width: 0; padding: 12px 14px; background: var(--sand-soft); border: var(--border); border-radius: 12px; }
+.link-de-pareamento .campo { justify-self: stretch; }
+.link-de-pareamento input { font-size: 15px; } /* o link longo rola dentro do campo, sem alargar o cartão */
+.link-de-pareamento__rodape { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; min-width: 0; }
+.link-de-pareamento__validade { font-weight: 800; }
+/* QR: escuro sobre claro nos dois modos (é o que os leitores esperam); quadrado, até 280 px, sem passar da coluna */
+.qr { display: block; width: 280px; max-width: 100%; height: auto; aspect-ratio: 1; background: var(--qr-fundo); border: var(--border); border-radius: 12px; }
+.qr__modulos { fill: var(--qr-modulo); }

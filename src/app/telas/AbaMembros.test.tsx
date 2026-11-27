@@ -4,8 +4,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { MembroPermitido, PerfilDeMembro } from '../../domains/acesso/listaDeAcesso'
 import { ErroDeAcesso } from '../../domains/acesso/portas'
 import type { RepositorioDeAcesso } from '../../domains/acesso/portas'
+import type { RespostaDoEnvio } from '../../domains/aovivo/portas'
 import { criarFalsos, usuarioGoogle } from '../servicosFalsos'
-import { AbaMembros } from './AbaMembros'
+import { AbaMembros, TEXTO_DA_ABA } from './AbaMembros'
 
 afterEach(cleanup)
 
@@ -13,7 +14,7 @@ const MUDOU = 'A lista ou o seu papel mudou; conferindo de novo.'
 const PROPRIA = 'Você não pode alterar o próprio acesso; peça a outro admin.'
 
 /** Lista do plano: `adm` admin (a sessão), `ana` equipe com perfil "Ana", `bia` apresentadora sem perfil. */
-function abrir(opcoes: { emailDaSessao?: string; perfis?: PerfilDeMembro[] } = {}) {
+function abrir(opcoes: { emailDaSessao?: string; perfis?: PerfilDeMembro[]; avisarRevogacao?: (usuario: string) => Promise<RespostaDoEnvio> } = {}) {
   const f = criarFalsos({
     permitidos: [
       { email: 'bia@revocast.test', papel: 'apresentadora', criadoPor: 'id-adm' },
@@ -30,7 +31,7 @@ function abrir(opcoes: { emailDaSessao?: string; perfis?: PerfilDeMembro[] } = {
   // conta as leituras da lista sem mudar o falso (os métodos não usam `this`)
   const listarPermitidos = vi.fn(f.servicos.repo.listarPermitidos)
   const repo: RepositorioDeAcesso = { ...f.servicos.repo, listarPermitidos }
-  const tela = render(<AbaMembros repo={repo} usuario={usuario} reavaliar={reavaliar} />)
+  const tela = render(<AbaMembros repo={repo} usuario={usuario} reavaliar={reavaliar} avisarRevogacao={opcoes.avisarRevogacao} />)
   return { f, repo, reavaliar, listarPermitidos, ...tela }
 }
 
@@ -436,5 +437,97 @@ describe('aba Membros', () => {
     await screen.findByRole('table')
     expect(screen.getByText(nome)).toBeTruthy()
     expect(container.querySelector('img[src="x"]')).toBeNull()
+  })
+  test('membros-remove-avisa', async () => {
+    // só a remoção revoga (D5, I4): e-mail ligado a perfil → aviso com o id do perfil; troca de papel e
+    // e-mail sem perfil → nada; a falha do aviso não desfaz a remoção
+    const avisarRevogacao = vi.fn(async (_usuario: string): Promise<RespostaDoEnvio> => 'ok')
+    const { f } = abrir({
+      avisarRevogacao,
+      perfis: [
+        { id: 'id-ana', email: 'ana@revocast.test', nome: 'Ana' },
+        { id: 'id-adm', email: 'adm@revocast.test', nome: 'Adm' },
+        { id: 'id-cris', email: 'Cris@Revocast.test', nome: 'Cris' },
+      ],
+    })
+    await linhaDe('ana@revocast.test')
+    incluir('cris@revocast.test', 'equipe')
+    await screen.findByText('Lista atualizada.')
+    // trocar o papel, inclusive de equipe para apresentadora (os três papéis comandam pelo /controle): sem aviso
+    for (const papel of ['apresentadora', 'admin', 'equipe']) {
+      const ana = await linhaDe('ana@revocast.test')
+      fireEvent.change(within(ana).getByRole('combobox'), { target: { value: papel } })
+      fireEvent.click(within(ana).getByRole('button', { name: 'Salvar papel' }))
+      await waitFor(() => expect(f.chamadas.alterar.at(-1)).toEqual(['ana@revocast.test', papel]))
+      await screen.findByText('Lista atualizada.')
+    }
+    expect(avisarRevogacao).not.toHaveBeenCalled()
+    // e-mail sem perfil (nunca entrou): remove sem aviso
+    const bia = await linhaDe('bia@revocast.test')
+    fireEvent.click(within(bia).getByRole('button', { name: 'Remover' }))
+    fireEvent.click(within(bia).getByRole('button', { name: 'Confirmar remoção' }))
+    await waitFor(() => expect(f.chamadas.remover).toEqual(['bia@revocast.test']))
+    await screen.findByText('Lista atualizada.')
+    expect(avisarRevogacao).not.toHaveBeenCalled()
+    // e-mail com perfil: aviso com o id do perfil (o e-mail do perfil é comparado sem maiúsculas)
+    const cris = await linhaDe('cris@revocast.test')
+    fireEvent.click(within(cris).getByRole('button', { name: 'Remover' }))
+    fireEvent.click(within(cris).getByRole('button', { name: 'Confirmar remoção' }))
+    await screen.findByText('Lista atualizada.')
+    expect(avisarRevogacao).toHaveBeenCalledTimes(1)
+    expect(avisarRevogacao).toHaveBeenCalledWith('id-cris')
+    // o aviso falha (canal fora): a remoção fica e a tela diz que o corte vem em até 10 minutos
+    avisarRevogacao.mockResolvedValueOnce('falhou')
+    const ana = await linhaDe('ana@revocast.test')
+    fireEvent.click(within(ana).getByRole('button', { name: 'Remover' }))
+    fireEvent.click(within(ana).getByRole('button', { name: 'Confirmar remoção' }))
+    const alerta = await screen.findByText(TEXTO_DA_ABA.removidoSemAviso)
+    expect(TEXTO_DA_ABA.removidoSemAviso).toBe('Removido da lista. O aviso pelo canal não saiu; o corte do canal vem em até 10 minutos.')
+    expect(alerta.getAttribute('role')).toBe('alert')
+    await waitFor(() => expect(document.activeElement).toBe(alerta))
+    expect(avisarRevogacao).toHaveBeenLastCalledWith('id-ana')
+    expect(f.chamadas.remover).toEqual(['bia@revocast.test', 'cris@revocast.test', 'ana@revocast.test'])
+    expect(screen.queryByText('ana@revocast.test')).toBeNull()
+    // um aviso que lança conta como falha, sem desfazer
+    avisarRevogacao.mockRejectedValueOnce(new Error('canal'))
+    incluir('ana@revocast.test', 'equipe')
+    await screen.findByText('Lista atualizada.')
+    const ana2 = await linhaDe('ana@revocast.test')
+    fireEvent.click(within(ana2).getByRole('button', { name: 'Remover' }))
+    fireEvent.click(within(ana2).getByRole('button', { name: 'Confirmar remoção' }))
+    expect(await screen.findByText(TEXTO_DA_ABA.removidoSemAviso)).toBeTruthy()
+    expect(screen.queryByText('ana@revocast.test')).toBeNull()
+  })
+
+  test('membros-remove-avisa-perfil-relido', async () => {
+    // a pessoa entrou pela primeira vez depois que a lista foi lida: o perfil é relido na remoção
+    const avisarRevogacao = vi.fn(async (_usuario: string): Promise<RespostaDoEnvio> => 'ok')
+    const { f, repo } = abrir({ avisarRevogacao })
+    const bia = await linhaDe('bia@revocast.test')
+    expect(within(bia).getByText('ainda não entrou')).toBeTruthy()
+    const perfisAgora = [{ id: 'id-bia', email: 'bia@revocast.test', nome: 'Bia' }]
+    vi.spyOn(repo, 'listarPerfis').mockResolvedValueOnce(perfisAgora) // só a releitura da remoção; a recarga lê os perfis de antes
+    fireEvent.click(within(bia).getByRole('button', { name: 'Remover' }))
+    fireEvent.click(within(bia).getByRole('button', { name: 'Confirmar remoção' }))
+    await screen.findByText('Lista atualizada.')
+    expect(f.chamadas.remover).toEqual(['bia@revocast.test'])
+    expect(avisarRevogacao).toHaveBeenCalledWith('id-bia')
+    // a releitura falha: vale o perfil da tela (ana tem perfil)
+    vi.spyOn(repo, 'listarPerfis').mockRejectedValueOnce(new ErroDeAcesso('rede'))
+    const ana = await linhaDe('ana@revocast.test')
+    fireEvent.click(within(ana).getByRole('button', { name: 'Remover' }))
+    fireEvent.click(within(ana).getByRole('button', { name: 'Confirmar remoção' }))
+    await waitFor(() => expect(avisarRevogacao).toHaveBeenLastCalledWith('id-ana'))
+    expect(f.chamadas.remover).toEqual(['bia@revocast.test', 'ana@revocast.test'])
+  })
+
+  test('membros-remove-sem-canal-no-painel', async () => {
+    // sem `avisarRevogacao` (aba desenhada fora do painel): remove como antes, sem aviso nem frase nova
+    const { f } = abrir()
+    const ana = await linhaDe('ana@revocast.test')
+    fireEvent.click(within(ana).getByRole('button', { name: 'Remover' }))
+    fireEvent.click(within(ana).getByRole('button', { name: 'Confirmar remoção' }))
+    expect(await screen.findByText('Lista atualizada.')).toBeTruthy()
+    expect(f.chamadas.remover).toEqual(['ana@revocast.test'])
   })
 })

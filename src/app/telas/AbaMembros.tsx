@@ -2,12 +2,13 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import type { FormEvent, ReactNode } from 'react'
 import { mesmoEmail, normalizarEmail } from '../../domains/acesso/email'
 import { conferirInclusao, conferirMudanca, montarLista } from '../../domains/acesso/listaDeAcesso'
-import type { LinhaDaLista, Mudanca, Recusa } from '../../domains/acesso/listaDeAcesso'
+import type { LinhaDaLista, Mudanca, PerfilDeMembro, Recusa } from '../../domains/acesso/listaDeAcesso'
 import { ehPapel, PAPEIS, ROTULO_DO_PAPEL } from '../../domains/acesso/papeis'
 import type { Papel } from '../../domains/acesso/papeis'
 import { ErroDeAcesso } from '../../domains/acesso/portas'
 import type { MotivoDoErro, RepositorioDeAcesso } from '../../domains/acesso/portas'
 import type { UsuarioDaSessao } from '../../domains/acesso/sessao'
+import type { RespostaDoEnvio } from '../../domains/aovivo/portas'
 import { Mensagem } from '../../shared/ui/Mensagem'
 
 /** Textos fixos da aba (PLA-002, Tarefa 5). Nenhum vem do servidor nem de um erro. */
@@ -21,6 +22,7 @@ export const TEXTO_DA_ABA = {
   naoSalvou: 'Não foi possível salvar. Tente de novo.',
   naoCarregou: 'Não foi possível carregar a lista.',
   atualizada: 'Lista atualizada.',
+  removidoSemAviso: 'Removido da lista. O aviso pelo canal não saiu; o corte do canal vem em até 10 minutos.',
 } as const
 
 const TEXTO_DA_RECUSA: Record<Recusa, string> = {
@@ -34,7 +36,8 @@ const TEXTO_DA_RECUSA: Record<Recusa, string> = {
 type Aviso = { tom: 'info' | 'erro'; texto: string }
 /** Para onde o foco vai depois de uma ação (WCAG 2.4.3): os botões desabilitados durante a escrita perdem o foco. */
 type Foco = { tipo: 'campo' } | { tipo: 'linha'; email: string } | { tipo: 'status' } | { tipo: 'erro' }
-type Carga = { tipo: 'carregando' } | { tipo: 'pronta'; lista: LinhaDaLista[] } | { tipo: 'falha' }
+/** `perfis`: os da última leitura, para ligar um e-mail removido ao `id` da sessão (aviso de revogação, D5). */
+type Carga = { tipo: 'carregando' } | { tipo: 'pronta'; lista: LinhaDaLista[]; perfis: readonly PerfilDeMembro[] } | { tipo: 'falha' }
 
 function motivoDe(erro: unknown): MotivoDoErro {
   return erro instanceof ErroDeAcesso ? erro.motivo : 'outro'
@@ -45,15 +48,23 @@ function motivoDe(erro: unknown): MotivoDoErro {
  * remover. Antes de cada escrita, as regras do domínio (`normalizarEmail`, `conferirInclusao`,
  * `conferirMudanca`); recusa local → mensagem e nenhuma chamada ao repositório. A própria linha não tem
  * controles: o banco também recusa (D1); a interface é defesa em profundidade e mensagem clara.
+ *
+ * Aviso de revogação (PLA-004, D5 com I4; PLA-002, D4): só a **remoção** de um e-mail ligado a um perfil
+ * avisa em `estudio` (`avisarRevogacao` com o `id` do perfil, o `auth.uid()` da pessoa); trocar o papel
+ * não avisa (os três papéis comandam pelo `/controle`) e e-mail sem perfil não tem sessão a avisar. A
+ * remoção já valeu no banco: a falha do aviso não a desfaz e a tela diz que o corte vem em até 10 min.
  */
 export function AbaMembros({
   repo,
   usuario,
   reavaliar,
+  avisarRevogacao,
 }: {
   repo: RepositorioDeAcesso
   usuario: UsuarioDaSessao
   reavaliar: () => void
+  /** Publica `{ evento: 'revogacao', usuario }` no `estudio` do painel; ausente fora do painel. */
+  avisarRevogacao?: (usuario: string) => Promise<RespostaDoEnvio>
 }): ReactNode {
   const [carga, setCarga] = useState<Carga>({ tipo: 'carregando' })
   const [aviso, setAviso] = useState<Aviso | null>(null)
@@ -82,7 +93,7 @@ export function AbaMembros({
     try {
       const [permitidos, perfis] = await Promise.all([repo.listarPermitidos(), repo.listarPerfis()])
       if (!montada.current || numero !== ultimaLeitura.current) return
-      setCarga({ tipo: 'pronta', lista: montarLista(permitidos, perfis) })
+      setCarga({ tipo: 'pronta', lista: montarLista(permitidos, perfis), perfis })
       setRascunhos({})
       setConfirmando(null)
     } catch (erro) {
@@ -123,14 +134,17 @@ export function AbaMembros({
     focoPendente.current = novo.tom === 'erro' ? { tipo: 'erro' } : foco
   }
 
-  /** Faz uma escrita já conferida e trata o resultado com as mensagens fixas. Devolve se deu certo. */
-  async function escrever(acao: () => Promise<void>, focoNoSucesso: Foco): Promise<boolean> {
+  /**
+   * Faz uma escrita já conferida e trata o resultado com as mensagens fixas. Devolve se deu certo. A
+   * ação pode devolver um aviso no lugar de "Lista atualizada." (a remoção cujo aviso pelo canal falhou).
+   */
+  async function escrever(acao: () => Promise<Aviso | undefined | void>, focoNoSucesso: Foco): Promise<boolean> {
     setOcupado(true)
     setAviso(null)
     try {
-      await acao()
+      const avisoDaAcao = await acao()
       await carregar()
-      if (montada.current) mostrar({ tom: 'info', texto: TEXTO_DA_ABA.atualizada }, focoNoSucesso)
+      if (montada.current) mostrar(avisoDaAcao ?? { tom: 'info', texto: TEXTO_DA_ABA.atualizada }, focoNoSucesso)
       return true
     } catch (erro) {
       if (!montada.current) return false
@@ -173,10 +187,32 @@ export function AbaMembros({
       return
     }
     // Depois de salvar, o foco volta ao "Salvar papel" da linha; depois de remover (a linha some), ao aviso.
-    void escrever(
-      () => (mudanca.tipo === 'remover' ? repo.remover(linha.email) : repo.alterarPapel(linha.email, mudanca.papel)),
-      mudanca.tipo === 'remover' ? { tipo: 'status' } : { tipo: 'linha', email: linha.email },
-    )
+    if (mudanca.tipo === 'remover') {
+      const perfisDaTela = carga.tipo === 'pronta' ? carga.perfis : []
+      void escrever(async (): Promise<Aviso | undefined> => {
+        await repo.remover(linha.email)
+        if (avisarRevogacao === undefined) return undefined
+        // O perfil é relido depois da remoção (a pessoa pode ter entrado pela primeira vez depois que a lista
+        // foi lida); se a releitura falhar, vale o da tela. O mesmo e-mail, sem maiúsculas; sem perfil, ninguém a avisar.
+        let perfis = perfisDaTela
+        try {
+          perfis = await repo.listarPerfis()
+        } catch {
+          // fica o da tela
+        }
+        const perfil = perfis.find((p) => mesmoEmail(p.email, linha.email))
+        if (perfil === undefined) return undefined
+        let resposta: RespostaDoEnvio
+        try {
+          resposta = await avisarRevogacao(perfil.id)
+        } catch {
+          resposta = 'falhou'
+        }
+        return resposta === 'ok' ? undefined : { tom: 'erro', texto: TEXTO_DA_ABA.removidoSemAviso }
+      }, { tipo: 'status' })
+      return
+    }
+    void escrever(() => repo.alterarPapel(linha.email, mudanca.papel), { tipo: 'linha', email: linha.email })
   }
 
   return (

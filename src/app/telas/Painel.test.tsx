@@ -4,9 +4,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { Papel } from '../../domains/acesso/papeis'
 import { App } from '../App'
 import type { Dependencias } from '../dependencias'
-import { criarFalsos, criarFalsosDePreparacao, preparacaoVazia, usuarioGoogle } from '../servicosFalsos'
+import type { ServicosDeAoVivo } from '../servicos'
+import { aoVivoVazio, criarCanalFalso, criarFalsos, criarFalsosDePreparacao, preparacaoVazia, usuarioGoogle } from '../servicosFalsos'
+import { REABRIR_CANAIS_MS } from '../useDispositivo'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 const ABAS_DA_EQUIPE = ['Episódios', 'Biblioteca', 'Cenas', 'Gestos', 'Ao vivo']
 const ABAS_DO_ADMIN = ['Episódios', 'Biblioteca', 'Cenas', 'Gestos', 'Membros', 'Ao vivo']
@@ -20,6 +25,15 @@ async function abrirPainel(papel: Papel, extra: Partial<Dependencias> = {}) {
   const tela = render(<App caminho="/painel" dependencias={f.dependencias(extra)} />)
   await screen.findByRole('tablist')
   return { f, ...tela }
+}
+
+/** Esvazia as promessas pendentes e anda `ms` no relógio falso (dentro do `act`). */
+async function esperar(ms = 0) {
+  await act(async () => {
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+    if (ms > 0) await vi.advanceTimersByTimeAsync(ms)
+    for (let i = 0; i < 40; i++) await Promise.resolve()
+  })
 }
 
 const rotulos = () => screen.getAllByRole('tab').map((t) => t.textContent)
@@ -36,8 +50,8 @@ describe('painel com abas (D8)', () => {
     expect(rotulos()).toEqual(ABAS_DO_ADMIN)
   })
 
-  test('aba-provisoria', async () => {
-    // desde a Tarefa 7 da E2, só "Ao vivo" continua provisória (etapa E3)
+  test('ao-vivo-no-painel', async () => {
+    // desde a Tarefa 8 da E3, nenhuma aba é provisória: "Ao vivo" mostra os dispositivos
     await abrirPainel('equipe')
     const episodios = screen.getByRole('tab', { name: 'Episódios' })
     expect(episodios.getAttribute('aria-selected')).toBe('true')
@@ -47,11 +61,139 @@ describe('painel com abas (D8)', () => {
     fireEvent.click(aoVivo)
     expect(aoVivo.getAttribute('aria-selected')).toBe('true')
     expect(episodios.getAttribute('aria-selected')).toBe('false')
-    expect(within(screen.getByRole('tabpanel')).getByText('Em construção — etapa E3')).toBeTruthy()
+    const painel = screen.getByRole('tabpanel')
+    expect(within(painel).getByRole('heading', { name: 'Dispositivos' })).toBeTruthy()
+    expect(await within(painel).findByRole('button', { name: 'Parear câmera' })).toBeTruthy()
+    expect(painel.textContent).not.toContain('Em construção')
 
     for (const rotulo of ['Episódios', 'Biblioteca', 'Cenas', 'Gestos']) {
       fireEvent.click(screen.getByRole('tab', { name: rotulo }))
       expect(screen.getByRole('tabpanel').textContent, rotulo).not.toContain('Em construção')
+    }
+  })
+
+  test('painel-reabre-estudio', async () => {
+    // o painel abre o `estudio` uma vez (presença de membro), mantém aberto ao trocar de aba e, com `fechado`
+    // ou `negado`, chama `reavaliar()` e reabre em 5 s, como o `useAoVivo` (D15, N3, I-A)
+    const canal = criarCanalFalso()
+    const aoVivo: ServicosDeAoVivo = { repo: aoVivoVazio().repo, canais: canal.canais }
+    const obterAoVivo = vi.fn(() => aoVivo)
+    const { f } = await abrirPainel('equipe', { obterAoVivo }) // `findByRole` precisa do relógio de verdade
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await esperar()
+      const criados = () => canal.realtime.criados.filter((c) => c.topico === 'estudio').length
+      expect(obterAoVivo).toHaveBeenCalledTimes(1)
+      expect(criados()).toBe(1)
+      expect(canal.presencas('estudio')).toEqual([{ tipo: 'membro', papel: 'equipe' }])
+      // trocar de aba não abre outro canal nem fecha o atual
+      fireEvent.click(screen.getByRole('tab', { name: 'Ao vivo' }))
+      await esperar()
+      fireEvent.click(screen.getByRole('tab', { name: 'Biblioteca' }))
+      await esperar()
+      expect(criados()).toBe(1)
+      expect(canal.abertos()).toEqual(['estudio'])
+
+      for (const [i, estado] of (['fechado', 'negado'] as const).entries()) {
+        const avaliacoes = f.chamadas.usuarioAtual
+        act(() => canal.definirEstado('estudio', estado))
+        await esperar()
+        expect(f.chamadas.usuarioAtual, estado).toBe(avaliacoes + 1) // um reavaliar() só
+        await esperar(REABRIR_CANAIS_MS - 1)
+        expect(criados(), estado).toBe(i + 1)
+        await esperar(1)
+        expect(criados(), estado).toBe(i + 2)
+        expect(canal.abertos()).toEqual(['estudio'])
+        expect(f.chamadas.usuarioAtual, estado).toBe(avaliacoes + 1)
+      }
+      expect(obterAoVivo).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('painel-avisa-revogacao-de-membro', async () => {
+    // a remoção na aba Membros publica `revogacao` no `estudio` do painel com o id do perfil removido (nunca o do
+    // admin) e, depois de uma reabertura do canal, pela alça nova (D5; VER-042, rodada 1)
+    const ADM = 'a1b2c3d4-0000-4000-8000-0000000000ad'
+    const ANA = 'a1b2c3d4-0000-4000-8000-0000000000a1'
+    const BIA = 'a1b2c3d4-0000-4000-8000-0000000000b1'
+    const canal = criarCanalFalso()
+    const aoVivo: ServicosDeAoVivo = { repo: aoVivoVazio().repo, canais: canal.canais }
+    const f = criarFalsos({
+      usuario: usuarioGoogle('adm@revocast.test', ADM),
+      papel: 'admin',
+      permitidos: [
+        { email: 'adm@revocast.test', papel: 'admin', criadoPor: null },
+        { email: 'ana@revocast.test', papel: 'equipe', criadoPor: ADM },
+        { email: 'bia@revocast.test', papel: 'apresentadora', criadoPor: ADM },
+      ],
+      perfis: [
+        { id: ADM, email: 'adm@revocast.test', nome: 'Adm' },
+        { id: ANA, email: 'ana@revocast.test', nome: 'Ana' },
+        { id: BIA, email: 'bia@revocast.test', nome: 'Bia' },
+      ],
+    })
+    render(<App caminho="/painel" dependencias={f.dependencias({ obterAoVivo: () => aoVivo })} />)
+    await screen.findByRole('tablist')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await esperar()
+    fireEvent.click(screen.getByRole('tab', { name: 'Membros' }))
+    await esperar()
+    const revogacoes = () => canal.enviados('estudio').filter((e) => e.event === 'revogacao').map((e) => (e.payload as { usuario: string }).usuario)
+    const remover = async (email: string) => {
+      const linha = screen.getByText(email).closest('tr') as HTMLElement
+      fireEvent.click(within(linha).getByRole('button', { name: 'Remover' }))
+      fireEvent.click(within(linha).getByRole('button', { name: 'Confirmar remoção' }))
+      await esperar()
+    }
+
+    await remover('ana@revocast.test')
+    expect(f.chamadas.remover).toEqual(['ana@revocast.test'])
+    expect(revogacoes()).toEqual([ANA])
+    expect(screen.getByText('Lista atualizada.')).toBeTruthy()
+
+    // o servidor fecha o canal; 5 s depois o painel reabre com outra alça, e o aviso sai por ela
+    const criados = () => canal.realtime.criados.filter((c) => c.topico === 'estudio').length
+    act(() => canal.definirEstado('estudio', 'fechado'))
+    await esperar(REABRIR_CANAIS_MS)
+    expect(criados()).toBe(2)
+    await remover('bia@revocast.test')
+    expect(f.chamadas.remover).toEqual(['ana@revocast.test', 'bia@revocast.test'])
+    expect(revogacoes()).toEqual([ANA, BIA])
+    expect(revogacoes()).not.toContain(ADM)
+    expect(screen.getByText('Lista atualizada.')).toBeTruthy()
+    expect(screen.queryByText('Removido da lista. O aviso pelo canal não saiu; o corte do canal vem em até 10 minutos.')).toBeNull()
+  })
+
+  test('painel-oferece-copiar-so-com-area-de-transferencia', async () => {
+    // o painel passa `navigator.clipboard.writeText` à aba Ao vivo quando o navegador o oferece; sem ele, nenhum botão
+    const CODIGO = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
+    const repo = {
+      ...aoVivoVazio().repo,
+      criarCodigo: async () => ({ dispositivoId: 'd0000000-0000-4000-8000-000000000002', codigo: CODIGO, expiraEm: new Date(Date.now() + 120_000).toISOString() }),
+    }
+    const aoVivo: ServicosDeAoVivo = { repo, canais: criarCanalFalso().canais }
+    const abrirLinkDoPalco = async () => {
+      await abrirPainel('equipe', { obterAoVivo: () => aoVivo })
+      fireEvent.click(screen.getByRole('tab', { name: 'Ao vivo' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Link do palco (OBS)' }))
+      expect(((await screen.findByLabelText('Link do palco (OBS)')) as HTMLInputElement).value).toBe(`https://app.revocast.test/obs/palco#${CODIGO}`)
+    }
+    expect('clipboard' in navigator).toBe(false) // jsdom não tem área de transferência
+    await abrirLinkDoPalco()
+    expect(screen.queryByRole('button', { name: 'Copiar link' })).toBeNull()
+    cleanup()
+
+    const writeText = vi.fn(async (_t: string) => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    try {
+      await abrirLinkDoPalco()
+      fireEvent.click(screen.getByRole('button', { name: 'Copiar link' }))
+      expect(await screen.findByText('Link copiado.')).toBeTruthy()
+      expect(writeText).toHaveBeenCalledWith(`https://app.revocast.test/obs/palco#${CODIGO}`)
+    } finally {
+      delete (navigator as { clipboard?: unknown }).clipboard
     }
   })
 
