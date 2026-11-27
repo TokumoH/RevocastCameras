@@ -12,15 +12,16 @@ import type { Dependencias } from '../dependencias'
 import { GuardaDeMembro } from '../GuardaDeMembro'
 import { AbaBiblioteca } from './AbaBiblioteca'
 import { AbaCenas } from './AbaCenas'
+import { AbaEpisodios } from './AbaEpisodios'
 import { AbaGestos } from './AbaGestos'
 import { AbaMembros } from './AbaMembros'
 
-/** Abas do DES-001 §9, nesta ordem; a etapa em que cada provisória fica pronta (DES-001 §14). */
+/** Abas do DES-001 §9, nesta ordem; a etapa em que cada provisória fica pronta (DES-001 §14); `null` nas reais. */
 const ABAS_DO_PAINEL: readonly (Aba & { etapa: string | null })[] = [
-  { id: 'episodios', rotulo: 'Episódios', etapa: 'E2' },
-  { id: 'biblioteca', rotulo: 'Biblioteca', etapa: 'E2' },
-  { id: 'cenas', rotulo: 'Cenas', etapa: 'E2' },
-  { id: 'gestos', rotulo: 'Gestos', etapa: 'E2' },
+  { id: 'episodios', rotulo: 'Episódios', etapa: null },
+  { id: 'biblioteca', rotulo: 'Biblioteca', etapa: null },
+  { id: 'cenas', rotulo: 'Cenas', etapa: null },
+  { id: 'gestos', rotulo: 'Gestos', etapa: null },
   { id: 'membros', rotulo: 'Membros', etapa: null },
   { id: 'ao_vivo', rotulo: 'Ao vivo', etapa: 'E3' },
 ]
@@ -62,7 +63,9 @@ function ConteudoDoPainel({
         <Logo />
         <h1>{titulo}</h1>
         <Abas abas={abas} ativa={ativa.id} aoEscolher={setEscolhida}>
-          {ativa.id === 'membros' ? (
+          {ativa.id === 'episodios' ? (
+            <AbaEpisodios servicos={preparacao} usuario={usuario} reavaliar={reavaliar} />
+          ) : ativa.id === 'membros' ? (
             <AbaMembros repo={servicos.repo} usuario={usuario} reavaliar={reavaliar} />
           ) : ativa.id === 'biblioteca' ? (
             <AbaBiblioteca servicos={preparacao} usuario={usuario} reavaliar={reavaliar} />
@@ -79,7 +82,7 @@ function ConteudoDoPainel({
   )
 }
 
-/** `/painel` (equipe e admin): guardado desde a Tarefa 4 da E1; abas por estado desde a Tarefa 5 (D8); Biblioteca real desde a Tarefa 5 da E2; Cenas e Gestos desde a Tarefa 6. */
+/** `/painel` (equipe e admin): guardado desde a Tarefa 4 da E1; abas por estado desde a Tarefa 5 (D8); Biblioteca real desde a Tarefa 5 da E2; Cenas e Gestos desde a Tarefa 6; Episódios desde a Tarefa 7 (só Ao vivo continua provisória, E3). */
 export function Painel({ titulo, dependencias }: { titulo: string; dependencias: Dependencias }) {
   return (
     <GuardaDeMembro area="painel" titulo={titulo} dependencias={dependencias}>

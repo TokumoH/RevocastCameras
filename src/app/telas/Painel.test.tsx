@@ -37,10 +37,11 @@ describe('painel com abas (D8)', () => {
   })
 
   test('aba-provisoria', async () => {
+    // desde a Tarefa 7 da E2, só "Ao vivo" continua provisória (etapa E3)
     await abrirPainel('equipe')
     const episodios = screen.getByRole('tab', { name: 'Episódios' })
     expect(episodios.getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByRole('tabpanel').textContent).toContain('Em construção — etapa E2')
+    expect(screen.getByRole('tabpanel').textContent).not.toContain('Em construção')
 
     const aoVivo = screen.getByRole('tab', { name: 'Ao vivo' })
     fireEvent.click(aoVivo)
@@ -48,8 +49,23 @@ describe('painel com abas (D8)', () => {
     expect(episodios.getAttribute('aria-selected')).toBe('false')
     expect(within(screen.getByRole('tabpanel')).getByText('Em construção — etapa E3')).toBeTruthy()
 
-    fireEvent.click(episodios)
-    expect(within(screen.getByRole('tabpanel')).getByText('Em construção — etapa E2')).toBeTruthy()
+    for (const rotulo of ['Episódios', 'Biblioteca', 'Cenas', 'Gestos']) {
+      fireEvent.click(screen.getByRole('tab', { name: rotulo }))
+      expect(screen.getByRole('tabpanel').textContent, rotulo).not.toContain('Em construção')
+    }
+  })
+
+  test('episodios-no-painel', async () => {
+    const preparacao = criarFalsosDePreparacao({ episodios: [{ id: 'ep-1', titulo: 'Episódio de teste', data: '2026-11-20', estado: 'rascunho' }] })
+    const obterPreparacao = vi.fn(() => preparacao.servicos)
+    await abrirPainel('equipe', { obterPreparacao })
+    // a aba inicial "Episódios" mostra a lista, sem "Em construção"
+    const painel = screen.getByRole('tabpanel')
+    expect(await within(painel).findByText('Episódio de teste')).toBeTruthy()
+    expect(within(painel).getByRole('button', { name: 'Criar episódio' })).toBeTruthy()
+    expect(within(painel).getByText('Iniciar e encerrar o ao vivo chegam na etapa E3.')).toBeTruthy()
+    expect(painel.textContent).not.toContain('Em construção')
+    expect(obterPreparacao).toHaveBeenCalledTimes(1)
   })
 
   test('biblioteca-no-painel', async () => {
@@ -139,7 +155,7 @@ describe('painel com abas (D8)', () => {
     await waitFor(() => expect(screen.queryByRole('tab', { name: 'Membros' })).toBeNull())
     expect(rotulos()).toEqual(ABAS_DA_EQUIPE)
     expect(screen.getByRole('tab', { name: 'Episódios' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByRole('tabpanel').textContent).toContain('Em construção — etapa E2')
+    expect(within(screen.getByRole('tabpanel')).getByRole('heading', { name: 'Episódios' })).toBeTruthy()
     expect(screen.queryByRole('table')).toBeNull()
   })
 

@@ -127,6 +127,7 @@ img { max-width: 100%; height: auto; }
 .campo label { font-weight: 700; }
 .campo input,
 .campo select,
+.campo textarea,
 .tabela select {
   min-width: 0;
   padding: 6px 10px;
@@ -299,3 +300,49 @@ img.previa { width: auto; height: auto; max-height: 240px; object-fit: contain; 
 .gestos__campos { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: end; min-width: 0; }
 .gestos__campos .campo { flex-basis: 180px; }
 .gestos__campos select { width: 100%; }
+
+/* Aba Episódios (E2, Tarefa 7): nota da E3, episódio aberto, cartões de aviso (texto literal com as quebras de linha) e formulário de aviso */
+.episodios { position: relative; display: grid; gap: 14px; min-width: 0; } /* relative: segura as regiões de aviso vazias (.so-leitor) */
+.episodios h2 { font-size: 28px; }
+.episodios h3 { font-size: 24px; }
+.episodios h4 { margin: 0; font: 400 20px/1.2 var(--font-display); }
+.episodios__nota {
+  justify-self: start;
+  padding: 4px 12px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  background: var(--sand-soft);
+  border: var(--border);
+  border-radius: 12px;
+}
+.episodio { display: grid; gap: 14px; min-width: 0; }
+.episodio > button { justify-self: start; } /* "Excluir episódio" no tamanho do texto, não na largura da coluna */
+.episodio__cabeca { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; min-width: 0; }
+.episodio__cabeca h3 { min-width: 0; overflow-wrap: anywhere; }
+.campo--data { flex: 0 1 190px; }
+.avisos { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.aviso-cartao {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 14px;
+  background: var(--card);
+  border: var(--border);
+  border-radius: 12px;
+}
+.aviso-cartao--editando { background: var(--cyan-soft); }
+.aviso-cartao__cabeca { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; min-width: 0; }
+.aviso-cartao__ordem { font-family: var(--font-display); }
+.aviso-cartao__titulo { min-width: 0; font: 400 20px/1.2 var(--font-display); overflow-wrap: anywhere; }
+.aviso-cartao__duracao { padding: 0 10px; font-size: 15px; font-weight: 700; background: var(--sand-soft); border: var(--border); border-radius: 999px; }
+.aviso-cartao__texto { min-width: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.aviso-cartao__link { min-width: 0; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+.aviso-cartao__url { font-weight: 700; }
+.aviso-cartao__fraco { color: var(--gray); font-size: 15px; font-style: italic; }
+.aviso-cartao__imagem { display: grid; gap: 6px; justify-items: start; min-width: 0; font-size: 15px; line-height: 1.4; }
+.aviso-cartao__nome { font-weight: 700; overflow-wrap: anywhere; }
+.aviso-formulario { display: grid; gap: 10px; min-width: 0; padding: 12px 14px; background: var(--sand-soft); border: var(--border); border-radius: 12px; }
+.aviso-formulario__linha { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; min-width: 0; }
+.aviso-formulario .campo--curto { flex: 0 1 170px; }
+.campo textarea { resize: vertical; } /* o resto vem da regra de `.campo input` */

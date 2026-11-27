@@ -98,8 +98,11 @@ function proximaOrdem(sons: readonly Som[]): number {
   return sons.reduce((maior, s) => Math.max(maior, s.ordem + 1), 0)
 }
 
-/** A prévia só usa URL `https:` (ou `http:`, no Supabase local); qualquer outra é tratada como falha. */
-function urlDePreviaAceita(url: string): boolean {
+/**
+ * A prévia só usa URL `https:` (ou `http:`, no Supabase local); qualquer outra é tratada como falha.
+ * Exportada para a aba Episódios (miniatura da imagem do aviso, Tarefa 7), que segue a mesma regra.
+ */
+export function urlDePreviaAceita(url: string): boolean {
   try {
     const { protocol } = new URL(url)
     return protocol === 'https:' || protocol === 'http:'
