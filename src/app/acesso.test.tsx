@@ -289,7 +289,7 @@ describe('entrada e guarda', () => {
   test('controle-guardado', async () => {
     const f = criarFalsos({ usuario: ana, papel: 'apresentadora' })
     abrir('/controle', f)
-    expect(await screen.findByText('Em construção — etapa E3')).toBeTruthy()
+    expect(await screen.findByText('Nenhum episódio no ar nem em teste.')).toBeTruthy()
     expect(screen.getByText('ana@revocast.test')).toBeTruthy()
     expect(screen.getByText('Apresentadora')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Sair' })).toBeTruthy()

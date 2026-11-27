@@ -48,6 +48,12 @@ export type Comando = { id: string } & (
   | { acao: 'proxima_cena' | 'proximo_aviso' | 'ocultar_aviso' | 'clipe' | 'marcador' }
 )
 
+/** Tira uma chave de cada membro de uma união (o `Omit` comum só vê as chaves comuns e perderia `cenaId`, `somId` e `avisoId`). */
+type SemChave<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
+
+/** O que a tela pede (`/controle`, aba Ao vivo): o `Comando` sem o `id`, que quem envia gera (`crypto.randomUUID()`). */
+export type PedidoDeComando = SemChave<Comando, 'id'>
+
 export type ResultadoDoComando = 'ok' | 'pendente' | 'recusado' | 'falhou'
 
 /**

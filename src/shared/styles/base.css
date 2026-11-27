@@ -408,3 +408,18 @@ html.palco { color-scheme: light; }
 .config-do-palco .campo span { font-weight: 700; }
 .config-do-palco__aviso { padding: 8px 12px; font-weight: 800; background: var(--pink-soft); border: var(--border); border-radius: 12px; }
 .config-do-palco__dica { font-size: 15px; color: var(--gray); }
+
+/* /controle (E3, Tarefa 7): mobile-first, conteúdo no topo; botões de pelo menos 44 px que não dependem de `hover`
+   (o toque é sinalizado pelo `:active` e o foco pelo `:focus-visible`; desabilitado = opacidade e cursor) */
+.tela.controle { place-items: start center; }
+.comandos { display: grid; gap: 14px; width: 100%; min-width: 0; }
+.comandos h2 { font-size: 24px; }
+.comandos__estado { display: grid; gap: 6px; min-width: 0; padding: 10px 14px; background: var(--sand-soft); border: var(--border); border-radius: 12px; overflow-wrap: anywhere; }
+.comandos__cabeca { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; min-width: 0; }
+.comandos__titulo { min-width: 0; font: 400 20px/1.2 var(--font-display); overflow-wrap: anywhere; }
+.selo-no-ar { padding: 2px 12px; font: 400 18px/1.3 var(--font-display); background: var(--cyan); color: var(--on-accent); border: var(--border); border-radius: 999px; }
+.selo-no-ar--ao-vivo { background: var(--pink); }
+.comandos__grupo { display: grid; gap: 8px; min-width: 0; }
+.comandos__lista { display: flex; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.comandos__lista--coluna { display: grid; grid-template-columns: minmax(0, 1fr); }
+.botao-grande { min-width: 44px; min-height: 44px; max-width: 100%; overflow-wrap: anywhere; touch-action: manipulation; }

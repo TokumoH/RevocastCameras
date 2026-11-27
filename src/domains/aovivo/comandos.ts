@@ -19,11 +19,15 @@ export type MotivoDaRecusa = 'cena_inexistente' | 'som_inexistente' | 'aviso_ine
 /** Tamanho máximo do nome do marcador (capítulo da gravação). */
 export const TAMANHO_DO_MARCADOR = 100
 
-/** Contexto da resolução: as listas que o palco carregou, o estado no ar e o título do episódio. */
-export interface ContextoDoComando {
+/** As listas do episódio ativo (cenas, sons e avisos): o palco as carrega para resolver; as telas de membro, para mostrar (o estado no ar só traz ids, D9). */
+export interface ListasDoAoVivo {
   cenas: readonly Cena[]
   sons: readonly Som[]
   avisos: readonly Aviso[]
+}
+
+/** Contexto da resolução: as listas que o palco carregou, o estado no ar e o título do episódio. */
+export interface ContextoDoComando extends ListasDoAoVivo {
   estado: Pick<EstadoNoAr, 'cenaObs' | 'avisoId'>
   episodioTitulo: string
   /** Relógio do marcador (hora local do computador do OBS); padrão: agora. */

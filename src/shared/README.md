@@ -45,7 +45,7 @@ Nada em `shared/` conhece telas; as telas é que dependem dele (referências ind
 | [`README.md`](README.md) | Este arquivo |
 | [`infra/`](infra/) | `lerConfiguracao`, o cliente Supabase por tipo de sessão e os adaptadores `criarAutenticacaoSupabase`/`criarRepositorioDeAcessoSupabase` |
 | [`styles/`](styles/) | Tokens (claro e escuro) e base visual |
-| [`ui/`](ui/) | `Cartao`, `Logo`, `TelaProvisoria` e `logo.png` |
+| [`ui/`](ui/) | `Cartao`, `Logo`, `Mensagem`, `Abas`, `BarraDeProgresso`, `PainelDeComandos` e `logo.png` |
 
 ## Lógica
 
