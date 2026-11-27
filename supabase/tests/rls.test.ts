@@ -34,7 +34,9 @@ import {
   semearDados,
   sessaoAnonima,
   TEMPO_LIMITE_HOOK_MS,
+  type ExtensaoDoCanal,
 } from './banco'
+import { COLUNAS_DE_MEU_DISPOSITIVO, FORMA_DO_CODIGO } from '../../src/domains/acesso/dispositivos'
 
 let db: PGlite
 
@@ -72,38 +74,69 @@ function erro(r: unknown[] | Error): Error {
 
 const violaRls = (tabela: string) => `new row violates row-level security policy for table "${tabela}"`
 const negado = (tabela: string) => `permission denied for table ${tabela}`
+/** SQLSTATE de um erro do PGlite. */
+const codigoDoErro = (e: Error) => (e as Error & { code?: string }).code
 
 /**
  * Privilégios de tabela que a migração dá a authenticated (Correção 13): só as operações que alguma política
- * permite (DES-001 §8). anon e service_role não recebem nenhum; codigos_pareamento, nada. Desde 2026-10-30 o Supabase não dá
- * mais select/insert/update/delete automáticos em tabelas novas (simulacao-supabase.sql), então sem esses
- * GRANT nenhum acesso funciona; e onde o privilégio falta, o Postgres recusa antes da RLS ("permission denied").
+ * permite (DES-001 §8). anon e service_role não recebem nenhum; codigos_pareamento e tentativas_pareamento, nada. Desde
+ * 2026-10-30 o Supabase não dá mais select/insert/update/delete automáticos em tabelas novas (simulacao-supabase.sql),
+ * então sem esses GRANT nenhum acesso funciona; e onde o privilégio falta, o Postgres recusa antes da RLS ("permission
+ * denied"). E3 (PLA-004, D7): episodios perde o insert e o update de tabela (ficam os de coluna, abaixo) e estudio_estado
+ * perde o update (a escrita é por função).
  */
 const PRIVILEGIOS_AUTHENTICATED: Record<string, string[]> = {
   avisos: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'],
   cenas: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'],
   codigos_pareamento: [],
   dispositivos: ['SELECT'],
-  episodios: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'],
-  estudio_estado: ['SELECT', 'UPDATE'],
+  episodios: ['DELETE', 'SELECT'],
+  estudio_estado: ['SELECT'],
   mapa_gestos: ['SELECT', 'UPDATE'],
   membros: ['SELECT'],
   membros_permitidos: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'],
   midias: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'],
   registro_acoes: ['INSERT', 'SELECT'],
   sons: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'],
+  tentativas_pareamento: [],
 }
-/** A sessão (null = anon) tem o privilégio de tabela? */
-const temPrivilegio = (sessao: Claims | null, tabela: string, operacao: string) =>
-  sessao !== null && PRIVILEGIOS_AUTHENTICATED[tabela].includes(operacao.toUpperCase())
+/**
+ * Privilégios de coluna que a migração dá a authenticated (PLA-004, D7): em episodios, o insert e o update só das colunas
+ * que o adaptador da E2 manda; estado e gestos_ligados mudam só pelas funções iniciar_ao_vivo, encerrar_ao_vivo (e, na
+ * E5, definir_gestos_ligados). Colunas em ordem alfabética, como o catálogo as agrupa em acl-de-tabelas-e-sequencias.
+ */
+const PRIVILEGIOS_POR_COLUNA: Record<string, Record<string, string[]>> = {
+  episodios: { INSERT: ['criado_por', 'data', 'titulo'], UPDATE: ['data', 'titulo'] },
+}
+/**
+ * A sessão (null = anon) tem o privilégio? De tabela (a operação está em PRIVILEGIOS_AUTHENTICATED) ou, quando o comando
+ * cita colunas, de coluna (todas elas em PRIVILEGIOS_POR_COLUNA da operação). Sem colunas, só o de tabela conta.
+ */
+const temPrivilegio = (sessao: Claims | null, tabela: string, operacao: string, colunas: readonly string[] = []) => {
+  if (sessao === null) return false
+  const op = operacao.toUpperCase()
+  if (PRIVILEGIOS_AUTHENTICATED[tabela].includes(op)) return true
+  const daColuna = PRIVILEGIOS_POR_COLUNA[tabela]?.[op] ?? []
+  return colunas.length > 0 && colunas.every((c) => daColuna.includes(c))
+}
+/** Colunas de um update (as do set) ou de um insert (a lista entre parênteses); vazio nos demais comandos. */
+function colunasDoComando(sql: string): string[] {
+  const insert = /^insert into public\.\w+\s*\(([^)]*)\)/i.exec(sql)
+  if (insert) return insert[1].split(',').map((c) => c.trim())
+  const set = /\bset\s+(.+?)(?:\s+where\b|\s+returning\b|$)/is.exec(sql)
+  if (set) return [...set[1].matchAll(/(?:^|,)\s*(\w+)\s*=/g)].map((m) => m[1])
+  return []
+}
 
 /**
  * Onde a sessão não tem o privilégio, confere o "permission denied" e depois dá, como superusuário, os
- * privilégios que faltam ao papel do Postgres da sessão, roda `comRls` (a RLS tem de negar sozinha: defesa em
- * profundidade) e os revoga de novo. Com o privilégio, só roda `comRls`.
+ * privilégios de tabela que faltam ao papel do Postgres da sessão, roda `comRls` (a RLS tem de negar sozinha: defesa em
+ * profundidade) e os revoga de novo. No Postgres, revogar o privilégio de tabela também revoga o das colunas: por isso,
+ * depois do revoke, PRIVILEGIOS_POR_COLUNA é reaplicado (senão o comando seguinte, de outra sessão, cairia no "permission
+ * denied" no lugar da RLS). Com o privilégio, só roda `comRls`.
  */
 async function semPrivilegioERls(sessao: Claims | null, tabela: string, operacao: string, sql: string, params: unknown[], rotulo: string, comRls: () => Promise<void>): Promise<void> {
-  if (temPrivilegio(sessao, tabela, operacao)) return comRls()
+  if (temPrivilegio(sessao, tabela, operacao, colunasDoComando(sql))) return comRls()
   expect(erro(await comoSessao(db, sessao, sql, params)).message, rotulo).toBe(negado(tabela))
   const papelPg = sessao === null ? 'anon' : 'authenticated'
   const faltam = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'].filter((p) => !temPrivilegio(sessao, tabela, p)).join(', ')
@@ -112,6 +145,9 @@ async function semPrivilegioERls(sessao: Claims | null, tabela: string, operacao
     await comRls()
   } finally {
     await db.query(`revoke ${faltam} on public.${tabela} from ${papelPg}`)
+    for (const [op, colunas] of Object.entries(PRIVILEGIOS_POR_COLUNA[tabela] ?? {})) {
+      await db.query(`grant ${op} (${colunas.join(', ')}) on public.${tabela} to authenticated`)
+    }
   }
 }
 
@@ -524,7 +560,12 @@ describe('preparação, lista e registro (Correção 1)', () => {
     expect([await contar('midias'), await contar('sons'), await contar('episodios'), await contar('avisos')]).toEqual([1, 1, 2, 2])
     expect(linhas(await comoSessao(db, adm, `update public.sons set volume = 0.5 where midia_id = $1 returning volume`, [midia]))).toEqual([{ volume: 0.5 }])
     expect(linhas(await comoSessao(db, adm, `update public.mapa_gestos set acao = 'clipe' where gesto = 'Thumb_Up' returning acao`))).toEqual([{ acao: 'clipe' }])
-    expect(linhas(await comoSessao(db, adm, 'update public.estudio_estado set episodio_teste_id = $1 where id = 1 returning episodio_teste_id', [ID_EPISODIO]))).toEqual([{ episodio_teste_id: ID_EPISODIO }])
+    // E3 (PLA-004, D7): o modo teste só muda pela função; o update direto em estudio_estado perdeu o privilégio.
+    linhas(await comoSessao(db, adm, 'select public.definir_modo_teste($1)', [ID_EPISODIO]))
+    expect((await db.query('select episodio_teste_id from public.estudio_estado')).rows).toEqual([{ episodio_teste_id: ID_EPISODIO }])
+    expect(erro(await comoSessao(db, adm, 'update public.estudio_estado set episodio_teste_id = null where id = 1 returning episodio_teste_id')).message).toBe(
+      negado('estudio_estado'),
+    )
     expect(linhas(await comoSessao(db, adm, 'delete from public.avisos where id = $1 returning id', [ID_AVISO]))).toEqual([{ id: ID_AVISO }])
   })
 
@@ -599,10 +640,14 @@ describe('preparação, lista e registro (Correção 1)', () => {
     expect(linhas(await comoSessao(db, bia, apagaAviso, [ID_AVISO]))).toEqual([])
     expect(linhas(await comoSessao(db, bia, apagaEpisodio, [ID_EPISODIO]))).toEqual([])
     expect(linhas(await comoSessao(db, bia, apagaCena, [ID_CENA]))).toEqual([])
-    expect(linhas(await comoSessao(db, bia, alteraEstudio, [ID_EPISODIO]))).toEqual([])
+    // E3 (PLA-004, D7): sem o update de estudio_estado, a recusa vem do privilégio (antes da RLS), e a função também recusa.
+    expect(erro(await comoSessao(db, bia, alteraEstudio, [ID_EPISODIO])).message).toBe(negado('estudio_estado'))
+    expect(codigoDoErro(erro(await comoSessao(db, bia, 'select public.definir_modo_teste($1)', [ID_EPISODIO])))).toBe('42501')
     expect([await contar('avisos'), await contar('episodios'), await contar('cenas')]).toEqual([1, 1, 1])
-    // Controles: a equipe faz os mesmos comandos.
-    expect(linhas(await comoSessao(db, ana, alteraEstudio, [ID_EPISODIO]))).toEqual([{ episodio_teste_id: ID_EPISODIO }])
+    expect((await db.query('select episodio_teste_id from public.estudio_estado')).rows).toEqual([{ episodio_teste_id: null }])
+    // Controles: a equipe faz os mesmos comandos (o modo teste, pela função).
+    linhas(await comoSessao(db, ana, 'select public.definir_modo_teste($1)', [ID_EPISODIO]))
+    expect((await db.query('select episodio_teste_id from public.estudio_estado')).rows).toEqual([{ episodio_teste_id: ID_EPISODIO }])
     expect(linhas(await comoSessao(db, ana, apagaAviso, [ID_AVISO]))).toEqual([{ id: ID_AVISO }])
     expect(linhas(await comoSessao(db, ana, apagaEpisodio, [ID_EPISODIO]))).toEqual([{ id: ID_EPISODIO }])
     expect(linhas(await comoSessao(db, ana, apagaCena, [ID_CENA]))).toEqual([{ id: ID_CENA }])
@@ -671,20 +716,28 @@ describe('preparação, lista e registro (Correção 1)', () => {
       .map(([tabela, privs]) => `${tabela} authenticated ${privs.join(',')}`)
       .sort()
     expect(r.rows.map((l) => l.l)).toEqual(esperado)
-    // Nenhum privilégio de coluna (um GRANT por coluna escaparia da lista acima).
-    const colunas = await db.query(
-      `select c.relname, a.attname from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
-       where n.nspname = 'public' and a.attacl is not null`,
+    // Privilégios de coluna: exatamente os de PRIVILEGIOS_POR_COLUNA (PLA-004, D7), só para authenticated e sem grant
+    // option (um GRANT por coluna a mais, a outro papel ou com grant option escaparia da lista acima e cai aqui).
+    const colunas = await db.query<{ l: string }>(
+      `select c.relname || ' ' || case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end || ' '
+            || a.privilege_type || case when a.is_grantable then '*' else '' end || ' ' || string_agg(att.attname, ',' order by att.attname) as l
+       from pg_attribute att join pg_class c on c.oid = att.attrelid join pg_namespace n on n.oid = c.relnamespace
+         cross join lateral aclexplode(att.attacl) a
+       where n.nspname = 'public' and att.attacl is not null and a.grantee <> c.relowner
+       group by c.relname, a.grantee, a.privilege_type, a.is_grantable order by 1`,
     )
-    expect(colunas.rows).toEqual([])
+    const esperadoPorColuna = Object.entries(PRIVILEGIOS_POR_COLUNA)
+      .flatMap(([tabela, ops]) => Object.entries(ops).map(([op, cols]) => `${tabela} authenticated ${op} ${cols.join(',')}`))
+      .sort()
+    expect(colunas.rows.map((l) => l.l)).toEqual(esperadoPorColuna)
     // A migração não cria sequências (chaves uuid e estudio_estado.id fixo): o revoke de sequências vale para as futuras.
     const seqs = await db.query(`select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'S'`)
     expect(seqs.rows).toEqual([])
-    // Controle: as 12 tabelas existem e cada uma tem ACL (o resultado acima não veio de relacl nulo).
+    // Controle: as 13 tabelas existem e cada uma tem ACL (o resultado acima não veio de relacl nulo).
     const acls = await db.query<{ n: number }>(
       `select count(*)::int as n from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r' and c.relacl is not null`,
     )
-    expect(acls.rows[0].n).toBe(12)
+    expect(acls.rows[0].n).toBe(13)
   })
 
   test('mesmo-catalogo-com-tabelas-expostas', async () => {
@@ -723,7 +776,7 @@ describe('preparação, lista e registro (Correção 1)', () => {
 
   test('privilegios-de-tabela', async () => {
     const tabelas = ['membros_permitidos', 'membros', 'midias', 'sons', 'cenas', 'episodios', 'avisos', 'mapa_gestos',
-      'estudio_estado', 'dispositivos', 'codigos_pareamento', 'registro_acoes']
+      'estudio_estado', 'dispositivos', 'codigos_pareamento', 'registro_acoes', 'tentativas_pareamento']
     const tem = async (papelPg: string, tabela: string, priv: string) =>
       (await db.query<{ t: boolean }>('select has_table_privilege($1, $2, $3) as t', [papelPg, `public.${tabela}`, priv])).rows[0].t
     // service_role: nenhum privilégio em nenhuma tabela, inclusive codigos_pareamento (BYPASSRLS não supre a falta de GRANT).
@@ -737,8 +790,10 @@ describe('preparação, lista e registro (Correção 1)', () => {
         // O padrão de 2026-10-30 ainda daria truncate, references, trigger e maintain; a migração os revoga.
         for (const priv of ['TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) expect(await tem(papelPg, tabela, priv), `${papelPg} ${tabela} ${priv}`).toBe(false)
       }
-      for (const priv of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
-        expect(await tem(papelPg, 'codigos_pareamento', priv), `${papelPg} codigos_pareamento ${priv}`).toBe(false)
+      for (const tabela of ['codigos_pareamento', 'tentativas_pareamento']) {
+        for (const priv of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+          expect(await tem(papelPg, tabela, priv), `${papelPg} ${tabela} ${priv}`).toBe(false)
+        }
       }
     }
     // Controle: o GRANT explícito da migração existe (authenticated lê e escreve cenas; anon, não).
@@ -792,12 +847,15 @@ describe('preparação, lista e registro (Correção 1)', () => {
          where n.nspname = 'public'`,
     )
     expect(donos.rows).toEqual([{ dono: DONO_MIGRACAO }])
-    // Controle: há as 12 tabelas e as 3 funções em public (a lista acima não veio de um schema vazio).
+    // Controle: há as 13 tabelas (12 da E0 e tentativas_pareamento, da E3) e as 12 funções em public (a lista acima não
+    // veio de um schema vazio): as 3 da E0 (papel_atual, dispositivo_atual, criar_perfil_membro) e as 9 da E3
+    // (criar_codigo_pareamento, parear_dispositivo, meu_dispositivo, revogar_dispositivo, episodio_ativo, iniciar_ao_vivo,
+    // encerrar_ao_vivo, definir_modo_teste, pode_usar_canal).
     const n = await db.query<{ n: number }>(
       `select (select count(*) from pg_class c join pg_namespace s on s.oid = c.relnamespace where s.nspname = 'public' and c.relkind = 'r')
             + (select count(*) from pg_proc p join pg_namespace s on s.oid = p.pronamespace where s.nspname = 'public') as n`,
     )
-    expect(Number(n.rows[0].n)).toBe(12 + 3)
+    expect(Number(n.rows[0].n)).toBe(13 + 12)
   })
 
   test('anon-nao-le-nem-escreve', async () => {
@@ -910,6 +968,22 @@ describe('preparação, lista e registro (Correção 1)', () => {
     // Controle: a mesma alteração pela equipe muda o retrato.
     linhas(await comoSessao(db, ana, `update public.cenas set nome_exibicao = 'x'`))
     expect((await retrato()).cenas).not.toBe(antes.cenas)
+  })
+
+  test('tem-privilegio-por-coluna', () => {
+    // O auxiliar dos testes acima entende privilégio de coluna (PLA-004, D7): todas as colunas citadas precisam do grant.
+    expect(temPrivilegio(ana, 'episodios', 'update', ['titulo'])).toBe(true)
+    expect(temPrivilegio(ana, 'episodios', 'update', ['titulo', 'gestos_ligados'])).toBe(false)
+    expect(temPrivilegio(ana, 'episodios', 'insert', ['titulo', 'estado'])).toBe(false)
+    expect(temPrivilegio(ana, 'episodios', 'insert', ['titulo', 'data', 'criado_por'])).toBe(true)
+    expect(temPrivilegio(ana, 'episodios', 'update')).toBe(false) // sem colunas, só o de tabela conta
+    expect(temPrivilegio(ana, 'episodios', 'delete')).toBe(true)
+    expect(temPrivilegio(ana, 'estudio_estado', 'update', ['episodio_teste_id'])).toBe(false)
+    expect(temPrivilegio(null, 'episodios', 'update', ['titulo'])).toBe(false) // anon nunca
+    // E a leitura das colunas do comando, que semEfeito e insercaoRecusada usam.
+    expect(colunasDoComando(`update public.episodios set titulo = 'x', gestos_ligados = true where id = $1 returning id`)).toEqual(['titulo', 'gestos_ligados'])
+    expect(colunasDoComando(`insert into public.episodios (titulo, estado) values ('x', 'ao_vivo')`)).toEqual(['titulo', 'estado'])
+    expect(colunasDoComando('delete from public.episodios')).toEqual([])
   })
 
   test('ninguem-trunca', async () => {
@@ -1296,5 +1370,661 @@ describe('Simulação do Realtime (E3, Tarefa 2)', () => {
 
   test('comoCanal: o servidor não confere leitura de persistence (só broadcast e presence)', async () => {
     await expect(comoCanal(db, ana, 'x', 'persistence', 'receber')).rejects.toThrow('persistence')
+  })
+})
+
+// E3 (PLA-004, Tarefa 3): pareamento (D2), dispositivos e revogação (D4, D5), canais (D6) e estado do episódio só por
+// função (D7), sobre a migração ao_vivo_e_pareamento. Mesmo banco e mesmas transações do arquivo. Toda sessão anônima
+// nova de pareamento é cadastrada no próprio teste (cadastrarUsuario anônimo), como o login anônimo do app faria. Os
+// canais passam por comoCanal (realtime.authorize, como o servidor do Realtime), com as duas políticas de
+// realtime.messages chamando public.pode_usar_canal.
+describe('E3 — pareamento, ao vivo e canais', () => {
+  const UID_SOLTA = '00000000-0000-4000-8000-00000000b009'
+  const UID_SESSAO_REVOGADA = '00000000-0000-4000-8000-00000000b00a'
+  const ID_REVOGADO = '00000000-0000-4000-8000-00000000d004'
+  const ID_OUTRO = '00000000-0000-4000-8000-00000000c104'
+  const ID_AO_VIVO = '00000000-0000-4000-8000-00000000c105'
+  const ID_ENCERRADO = '00000000-0000-4000-8000-00000000c106'
+  const solta = sessaoAnonima(UID_SOLTA)
+  const revogado = sessaoAnonima(UID_SESSAO_REVOGADA)
+  /** As 9 sessões da E2 e a de um obs_palco revogado (sessão própria, para caber numa linha das tabelas). */
+  const SESSOES: [string, Claims | null][] = [
+    ['anon', null], ['ana', ana], ['bia', bia], ['adm', adm], ['estranho', estranho],
+    ['camera', camera], ['palco', palco], ['obs_camera', obsCamera], ['solta', solta], ['revogado', revogado],
+  ]
+  const sessao = (nome: string) => SESSOES.find(([n]) => n === nome)![1]
+
+  /** Cadastra o estranho, a sessão anônima sem dispositivo e o obs_palco revogado com a sua sessão. */
+  async function cadastrarSessoesExtras(): Promise<void> {
+    await cadastrarEstranho()
+    await cadastrarUsuario(db, { uid: UID_SOLTA, email: null, anonimo: true, provedor: null, confirmado: false })
+    await cadastrarUsuario(db, { uid: UID_SESSAO_REVOGADA, email: null, anonimo: true, provedor: null, confirmado: false })
+    await db.query(
+      `insert into public.dispositivos (id, tipo, rotulo, usuario_anonimo_id, pareado_em, revogado_em) values ($1, 'obs_palco', 'PC revogado', $2, now(), now())`,
+      [ID_REVOGADO, UID_SESSAO_REVOGADA],
+    )
+  }
+
+  let contadorDeAnonimas = 0
+  /** Sessão anônima nova (o login anônimo que a rota de dispositivo faz antes de parear). */
+  async function novaAnonima(): Promise<Claims> {
+    contadorDeAnonimas += 1
+    const uid = `00000000-0000-4000-8000-0000${contadorDeAnonimas.toString(16).padStart(8, '0')}`
+    await cadastrarUsuario(db, { uid, email: null, anonimo: true, provedor: null, confirmado: false })
+    return sessaoAnonima(uid)
+  }
+
+  type CodigoCriado = { dispositivo: string; codigo: string; expira: string | Date }
+  const CRIA = 'select * from public.criar_codigo_pareamento($1, $2, $3, $4)'
+  /** Código criado pela sessão (por padrão, a ana) para um dispositivo novo ou existente. */
+  async function criarCodigo(
+    tipo: string, rotulo: string | null, dispositivo: string | null = null, cameraId: string | null = null, quem: Claims = ana,
+  ): Promise<CodigoCriado> {
+    const [l] = linhas(await comoSessao<CodigoCriado>(db, quem, CRIA, [tipo, rotulo, dispositivo, cameraId]))
+    return l
+  }
+  type Pareamento = { resultado: string; dispositivo: string | null; nome: string | null }
+  const PAREIA = 'select * from public.parear_dispositivo($1, $2)'
+  async function parear(quem: Claims | null, codigo: string | null, tipo: string | null): Promise<Pareamento> {
+    const r = linhas(await comoSessao<Pareamento>(db, quem, PAREIA, [codigo, tipo]))
+    expect(r).toHaveLength(1)
+    return r[0]
+  }
+  /** Dispositivo da sessão por dispositivo_atual(). */
+  async function dispositivoDe(quem: Claims): Promise<string[]> {
+    return linhas(await comoSessao<{ id: string }>(db, quem, 'select id from public.dispositivo_atual()')).map((l) => l.id)
+  }
+  async function usadoEm(dispositivo: string): Promise<(string | Date | null)[]> {
+    return (await db.query<{ usado_em: string | Date | null }>('select usado_em from public.codigos_pareamento where dispositivo_id = $1', [dispositivo])).rows.map((l) => l.usado_em)
+  }
+  async function tentativasDe(uid: string): Promise<number> {
+    return (await db.query<{ n: number }>('select count(*)::int as n from public.tentativas_pareamento where usuario_id = $1', [uid])).rows[0].n
+  }
+  /** Mídia semeada como superusuário (o que o palco pareado passa a ler). */
+  async function semearMidia(): Promise<string> {
+    return (await db.query<{ id: string }>(
+      `insert into public.midias (tipo, nome, caminho, mime, tamanho_bytes) values ('som', 'aplauso', 'sons/aplauso.mp3', 'audio/mpeg', 1000) returning id`,
+    )).rows[0].id
+  }
+  const definirTeste = (id: string | null) => db.query('update public.estudio_estado set episodio_teste_id = $1', [id])
+  /** Texto de 43 caracteres na forma do código que nenhum código gerado tem (para tentativas erradas). */
+  const codigoErrado = (n: number) => `errado${'x'.repeat(35)}${n.toString().padStart(2, '0')}`
+  const SHA256_HEX = async (texto: string) =>
+    [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(texto)))].map((b) => b.toString(16).padStart(2, '0')).join('')
+
+  // ----- pareamento (D2) -----
+
+  test('e3-codigo-so-equipe', async () => {
+    await cadastrarSessoesExtras()
+    for (const [nome, s] of SESSOES) {
+      const r = await comoSessao<CodigoCriado>(db, s, CRIA, ['obs_palco', 'PC', null, null])
+      if (nome === 'ana' || nome === 'adm') {
+        const l = linhas(r)
+        expect([nome, l.length, FORMA_DO_CODIGO.test(l[0].codigo)]).toEqual([nome, 1, true])
+      } else if (nome === 'anon') {
+        expect(erro(r).message).toBe('permission denied for function criar_codigo_pareamento')
+      } else {
+        expect([nome, codigoDoErro(erro(r))]).toEqual([nome, '42501'])
+      }
+    }
+    // Só as duas chamadas aceitas criaram dispositivo (as recusadas não deixam rastro).
+    expect((await db.query<{ n: number }>(`select count(*)::int as n from public.dispositivos where rotulo = 'PC'`)).rows[0].n).toBe(2)
+  })
+
+  test('e3-codigo-so-hash', async () => {
+    const { dispositivo, codigo } = await criarCodigo('obs_palco', 'PC do hash')
+    const conta = async (sql: string, params: unknown[]) => (await db.query<{ n: number }>(sql, params)).rows[0].n
+    expect(await conta('select count(*)::int as n from public.codigos_pareamento where codigo_hash = $1', [codigo])).toBe(0)
+    expect(await conta(`select count(*)::int as n from public.codigos_pareamento where codigo_hash = encode(sha256(convert_to($1, 'UTF8')), 'hex')`, [codigo])).toBe(1)
+    // O hash conferido também por fora do Postgres (Web Crypto), para não depender só da mesma expressão da função.
+    expect(await conta('select count(*)::int as n from public.codigos_pareamento where dispositivo_id = $1 and codigo_hash = $2', [dispositivo, await SHA256_HEX(codigo)])).toBe(1)
+    // Nenhuma coluna de nenhuma linha guarda o código (nem dentro de outro texto).
+    expect(await conta('select count(*)::int as n from public.codigos_pareamento c where position($1 in c::text) > 0', [codigo])).toBe(0)
+    expect(await conta('select count(*)::int as n from public.dispositivos d where position($1 in d::text) > 0', [codigo])).toBe(0)
+  })
+
+  test('e3-codigo-aleatorio', async () => {
+    const { dispositivo } = await criarCodigo('obs_palco', 'PC aleatório')
+    const codigos: string[] = []
+    for (let i = 0; i < 50; i += 1) codigos.push((await criarCodigo('obs_palco', null, dispositivo)).codigo)
+    expect(new Set(codigos).size).toBe(50)
+    expect(codigos.every((c) => c.length === 43 && FORMA_DO_CODIGO.test(c))).toBe(true)
+    // Um código novo do mesmo dispositivo apaga o pendente anterior: sobra só o último.
+    expect(await usadoEm(dispositivo)).toEqual([null])
+  })
+
+  test('e3-codigo-obs-camera-exige-camera', async () => {
+    expect(codigoDoErro(erro(await comoSessao(db, ana, CRIA, ['obs_camera', 'PC câmera', null, null])))).toBe('22023')
+    expect(codigoDoErro(erro(await comoSessao(db, ana, CRIA, ['obs_camera', 'PC câmera', null, ID_PALCO])))).toBe('22023')
+    const { dispositivo } = await criarCodigo('obs_camera', 'PC câmera', null, ID_CAMERA)
+    expect((await db.query('select tipo, camera_id, criado_por from public.dispositivos where id = $1', [dispositivo])).rows).toEqual([
+      { tipo: 'obs_camera', camera_id: ID_CAMERA, criado_por: UID_ANA },
+    ])
+    // Nos outros tipos a câmera indicada é ignorada (dispositivos_camera_so_obs_camera).
+    const palcoNovo = await criarCodigo('obs_palco', 'PC palco', null, ID_CAMERA)
+    expect((await db.query('select camera_id from public.dispositivos where id = $1', [palcoNovo.dispositivo])).rows).toEqual([{ camera_id: null }])
+  })
+
+  test('e3-codigo-parametros-invalidos', async () => {
+    // Rótulo (1 a 60 caracteres depois de tirar os espaços das pontas), tipo e dispositivo existente do mesmo tipo.
+    const antes = await contar('dispositivos')
+    const casos: [string, unknown[]][] = [
+      ['rótulo vazio', ['obs_palco', '', null, null]],
+      ['rótulo só de espaços', ['obs_palco', '   ', null, null]],
+      ['rótulo nulo', ['obs_palco', null, null, null]],
+      ['rótulo de 61', ['obs_palco', 'x'.repeat(61), null, null]],
+      ['tipo nulo', [null, 'PC', null, null]],
+      ['dispositivo de outro tipo', ['camera', null, ID_PALCO, null]],
+      ['dispositivo inexistente', ['obs_palco', null, ID_OUTRO, null]],
+    ]
+    for (const [caso, params] of casos) expect([caso, codigoDoErro(erro(await comoSessao(db, ana, CRIA, params)))]).toEqual([caso, '22023'])
+    expect(await contar('dispositivos')).toBe(antes)
+    expect(await contar('codigos_pareamento')).toBe(0)
+    // Controles: 60 caracteres (com espaços nas pontas, tirados) e o dispositivo existente do mesmo tipo.
+    const longo = await criarCodigo('obs_palco', `  ${'y'.repeat(60)}  `)
+    expect((await db.query('select rotulo from public.dispositivos where id = $1', [longo.dispositivo])).rows).toEqual([{ rotulo: 'y'.repeat(60) }])
+    expect((await criarCodigo('obs_palco', null, ID_PALCO)).dispositivo).toBe(ID_PALCO)
+  })
+
+  test('e3-codigo-novo-invalida-pendente', async () => {
+    const primeiro = await criarCodigo('obs_palco', 'PC trocado')
+    const segundo = await criarCodigo('obs_palco', null, primeiro.dispositivo)
+    expect(segundo.dispositivo).toBe(primeiro.dispositivo)
+    const s = await novaAnonima()
+    expect((await parear(s, primeiro.codigo, 'obs_palco')).resultado).toBe('invalido')
+    expect(await parear(s, segundo.codigo, 'obs_palco')).toEqual({ resultado: 'pareado', dispositivo: primeiro.dispositivo, nome: 'PC trocado' })
+  })
+
+  test('e3-parear-so-anonima', async () => {
+    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC membro')
+    for (const s of [ana, bia, adm]) expect(codigoDoErro(erro(await comoSessao(db, s, PAREIA, [codigo, 'obs_palco'])))).toBe('42501')
+    expect(erro(await comoSessao(db, null, PAREIA, [codigo, 'obs_palco'])).message).toBe('permission denied for function parear_dispositivo')
+    // Sem a claim is_anonymous, a sessão não conta como anônima (falha fechada).
+    const s = await novaAnonima()
+    const { is_anonymous: _a, ...semClaim } = s
+    expect(codigoDoErro(erro(await comoSessao(db, semClaim as Claims, PAREIA, [codigo, 'obs_palco'])))).toBe('42501')
+    expect(await usadoEm(dispositivo)).toEqual([null])
+    expect((await parear(s, codigo, 'obs_palco')).resultado).toBe('pareado') // controle
+  })
+
+  test('e3-parear-ok', async () => {
+    const midia = await semearMidia()
+    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC novo')
+    const s = await novaAnonima()
+    expect(await ids(s, 'midias')).toEqual([]) // controle: antes de parear, nada
+    expect(await parear(s, codigo, 'obs_palco')).toEqual({ resultado: 'pareado', dispositivo, nome: 'PC novo' })
+    expect(await dispositivoDe(s)).toEqual([dispositivo])
+    const [usado] = await usadoEm(dispositivo)
+    expect(usado).not.toBeNull()
+    const d = await db.query<{ usuario_anonimo_id: string; pareado: boolean; revogado_em: null }>(
+      'select usuario_anonimo_id, pareado_em is not null as pareado, revogado_em from public.dispositivos where id = $1', [dispositivo])
+    expect(d.rows).toEqual([{ usuario_anonimo_id: s.sub, pareado: true, revogado_em: null }])
+    expect(await ids(s, 'midias')).toEqual([midia])
+    expect(await tentativasDe(s.sub)).toBe(0)
+  })
+
+  test('e3-codigo-uso-unico', async () => {
+    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC único')
+    const s1 = await novaAnonima()
+    const s2 = await novaAnonima()
+    expect((await parear(s1, codigo, 'obs_palco')).resultado).toBe('pareado')
+    expect(await parear(s2, codigo, 'obs_palco')).toEqual({ resultado: 'invalido', dispositivo: null, nome: null })
+    expect(await dispositivoDe(s2)).toEqual([])
+    expect(await dispositivoDe(s1)).toEqual([dispositivo]) // o dono continua o mesmo
+    expect(await tentativasDe(s2.sub)).toBe(1)
+  })
+
+  test('e3-codigo-uso-unico-trava-a-linha', async () => {
+    // O PGlite tem uma conexão só e não reproduz duas chamadas simultâneas. A garantia vem do texto da função: o select do
+    // código termina em FOR UPDATE OF c, e em READ COMMITTED a segunda chamada espera o bloqueio e o Postgres reavalia
+    // usado_em is null na versão nova da linha (já usada), devolvendo invalido. Este teste prende a trava no texto.
+    const r = await db.query<{ d: string }>(
+      `select pg_get_functiondef('public.parear_dispositivo(text, public.tipo_dispositivo)'::regprocedure) as d`)
+    const normalizado = r.rows[0].d.replace(/\s+/g, ' ').toLowerCase()
+    expect(normalizado).toMatch(/and c\.usado_em is null and c\.expira_em > now\(\) for update of c;/)
+  })
+
+  test('e3-codigo-expirado', async () => {
+    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC expirado')
+    await db.query(`update public.codigos_pareamento set expira_em = now() - interval '1 second' where dispositivo_id = $1`, [dispositivo])
+    const s = await novaAnonima()
+    expect((await parear(s, codigo, 'obs_palco')).resultado).toBe('invalido')
+    expect(await usadoEm(dispositivo)).toEqual([null])
+    expect(await dispositivoDe(s)).toEqual([])
+    // Controle: o mesmo código, de volta à validade, pareia.
+    await db.query(`update public.codigos_pareamento set expira_em = now() + interval '1 minute' where dispositivo_id = $1`, [dispositivo])
+    expect((await parear(s, codigo, 'obs_palco')).resultado).toBe('pareado')
+  })
+
+  test('e3-codigo-vale-2-minutos', async () => {
+    const { dispositivo, expira } = await criarCodigo('obs_palco', 'PC validade')
+    const r = await db.query<{ ok: boolean; expira_em: Date }>(
+      `select expira_em = now() + interval '2 minutes' as ok, expira_em from public.codigos_pareamento where dispositivo_id = $1`,
+      [dispositivo],
+    )
+    expect(r.rows.map((l) => l.ok)).toEqual([true])
+    expect(new Date(expira).getTime()).toBe(r.rows[0].expira_em.getTime()) // a função devolve a validade gravada
+  })
+
+  test('e3-parear-tipo-errado', async () => {
+    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC do palco')
+    const s = await novaAnonima()
+    for (const tipo of ['camera', 'obs_camera', null]) {
+      expect([tipo, await parear(s, codigo, tipo)]).toEqual([tipo, { resultado: 'tipo_errado', dispositivo: null, nome: null }])
+    }
+    expect(await usadoEm(dispositivo)).toEqual([null])
+    expect(await tentativasDe(s.sub)).toBe(0)
+    expect(await dispositivoDe(s)).toEqual([])
+    expect((await parear(s, codigo, 'obs_palco')).resultado).toBe('pareado')
+  })
+
+  test('e3-codigo-nulo-ou-fora-da-forma', async () => {
+    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC forma')
+    const s = await novaAnonima()
+    for (const errado of [null, '', codigo.slice(0, 42), `${codigo}x`, ` ${codigo}`]) {
+      expect([errado, (await parear(s, errado, 'obs_palco')).resultado]).toEqual([errado, 'invalido'])
+    }
+    expect(await tentativasDe(s.sub)).toBe(5)
+    expect(await usadoEm(dispositivo)).toEqual([null])
+  })
+
+  test('e3-limite-de-tentativas', async () => {
+    const s = await novaAnonima()
+    for (let i = 0; i < 5; i += 1) expect((await parear(s, codigoErrado(i), 'obs_palco')).resultado).toBe('invalido')
+    expect(await tentativasDe(s.sub)).toBe(5)
+    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC limite')
+    expect(await parear(s, codigo, 'obs_palco')).toEqual({ resultado: 'limite', dispositivo: null, nome: null })
+    expect(await usadoEm(dispositivo)).toEqual([null]) // o válido continua sem uso
+    expect(await tentativasDe(s.sub)).toBe(5) // a resposta limite não grava tentativa
+    expect(await dispositivoDe(s)).toEqual([])
+    const outra = await novaAnonima()
+    expect((await parear(outra, codigo, 'obs_palco')).resultado).toBe('pareado')
+    // Limite inferior da janela: com as 5 falhas de 9 min atrás, a sessão continua em limite (a janela é de 10 min, não menos).
+    await db.query(`update public.tentativas_pareamento set criado_em = criado_em - interval '9 minutes' where usuario_id = $1`, [s.sub])
+    const outroCodigo = await criarCodigo('obs_palco', 'PC ainda no limite')
+    expect((await parear(s, outroCodigo.codigo, 'obs_palco')).resultado).toBe('limite')
+    expect(await usadoEm(outroCodigo.dispositivo)).toEqual([null])
+    // Depois de 10 min sem falha (11 min no total), a primeira sessão volta a tentar.
+    await db.query(`update public.tentativas_pareamento set criado_em = criado_em - interval '2 minutes' where usuario_id = $1`, [s.sub])
+    const novo = await criarCodigo('obs_palco', 'PC depois do limite')
+    expect((await parear(s, novo.codigo, 'obs_palco')).resultado).toBe('pareado')
+  })
+
+  test('e3-tentativas-antigas-limpas', async () => {
+    // Tentativas com mais de 1 dia somem na chamada seguinte de parear_dispositivo (de qualquer sessão).
+    const s = await novaAnonima()
+    expect((await parear(s, codigoErrado(1), 'obs_palco')).resultado).toBe('invalido')
+    await db.query(`update public.tentativas_pareamento set criado_em = criado_em - interval '25 hours' where usuario_id = $1`, [s.sub])
+    const outra = await novaAnonima()
+    expect((await parear(outra, codigoErrado(2), 'obs_palco')).resultado).toBe('invalido')
+    expect([await tentativasDe(s.sub), await tentativasDe(outra.sub)]).toEqual([0, 1])
+  })
+
+  test('e3-codigos-vencidos-limpos', async () => {
+    // Códigos vencidos há mais de 1 dia somem na chamada seguinte de criar_codigo_pareamento (de qualquer dispositivo);
+    // o vencido há menos de 1 dia fica (o usado, para a auditoria do pareamento recente).
+    const velho = await criarCodigo('obs_palco', 'PC velho')
+    const recente = await criarCodigo('obs_palco', 'PC recente')
+    const s = await novaAnonima()
+    expect((await parear(s, recente.codigo, 'obs_palco')).resultado).toBe('pareado')
+    await db.query(`update public.codigos_pareamento set expira_em = now() - interval '25 hours' where dispositivo_id = $1`, [velho.dispositivo])
+    await db.query(`update public.codigos_pareamento set expira_em = now() - interval '23 hours' where dispositivo_id = $1`, [recente.dispositivo])
+    await criarCodigo('obs_palco', 'PC que dispara a limpeza')
+    expect(await usadoEm(velho.dispositivo)).toEqual([])
+    expect(await usadoEm(recente.dispositivo)).toHaveLength(1)
+    expect((await usadoEm(recente.dispositivo))[0]).not.toBeNull()
+  })
+
+  test('e3-parear-de-novo-troca-sessao', async () => {
+    await semearMidia()
+    expect(await ids(palco, 'midias')).toHaveLength(1) // controle: o palco semeado lê
+    const { codigo } = await criarCodigo('obs_palco', null, ID_PALCO)
+    const s = await novaAnonima()
+    expect(await parear(s, codigo, 'obs_palco')).toEqual({ resultado: 'pareado', dispositivo: ID_PALCO, nome: 'PC do estúdio (palco)' })
+    expect(await dispositivoDe(palco)).toEqual([])
+    expect(await ids(palco, 'midias')).toEqual([])
+    expect(await dispositivoDe(s)).toEqual([ID_PALCO])
+    const d = await db.query('select usuario_anonimo_id, revogado_em from public.dispositivos where id = $1', [ID_PALCO])
+    expect(d.rows).toEqual([{ usuario_anonimo_id: s.sub, revogado_em: null }])
+  })
+
+  test('e3-sessao-em-um-dispositivo-so', async () => {
+    const um = await criarCodigo('obs_palco', 'PC um')
+    const dois = await criarCodigo('camera', 'Celular dois')
+    const s = await novaAnonima()
+    expect((await parear(s, um.codigo, 'obs_palco')).resultado).toBe('pareado')
+    expect((await parear(s, dois.codigo, 'camera')).resultado).toBe('pareado')
+    const r = await db.query('select id, usuario_anonimo_id from public.dispositivos where id = any($1::uuid[]) order by rotulo desc', [[um.dispositivo, dois.dispositivo]])
+    expect(r.rows).toEqual([{ id: um.dispositivo, usuario_anonimo_id: null }, { id: dois.dispositivo, usuario_anonimo_id: s.sub }])
+    expect(await dispositivoDe(s)).toEqual([dois.dispositivo])
+  })
+
+  test('e3-sem-acesso-direto', async () => {
+    await cadastrarSessoesExtras()
+    await criarCodigo('obs_palco', 'PC tabela')
+    const comandos = (t: string) => [
+      `select * from public.${t}`,
+      t === 'codigos_pareamento'
+        ? `insert into public.codigos_pareamento (dispositivo_id, codigo_hash) values ('${ID_PALCO}', 'h')`
+        : `insert into public.tentativas_pareamento (usuario_id) values ('${UID_SESSAO_PALCO}')`,
+      `update public.${t} set id = id`,
+      `delete from public.${t}`,
+    ]
+    for (const t of ['codigos_pareamento', 'tentativas_pareamento']) {
+      for (const [nome, s] of SESSOES) {
+        for (const sql of comandos(t)) expect([nome, sql, erro(await comoSessao(db, s, sql)).message]).toEqual([nome, sql, negado(t)])
+      }
+    }
+    expect(await contar('codigos_pareamento')).toBe(1)
+  })
+
+  // ----- dispositivos e revogação (D4, D5) -----
+
+  test('e3-revogar', async () => {
+    await semearMidia()
+    const pendente = await criarCodigo('obs_palco', null, ID_PALCO)
+    const REVOGA = 'select public.revogar_dispositivo($1) as usuario'
+    expect(codigoDoErro(erro(await comoSessao(db, bia, REVOGA, [ID_PALCO])))).toBe('42501')
+    expect(codigoDoErro(erro(await comoSessao(db, palco, REVOGA, [ID_PALCO])))).toBe('42501')
+    expect(erro(await comoSessao(db, null, REVOGA, [ID_PALCO])).message).toBe('permission denied for function revogar_dispositivo')
+    expect(await dispositivoDe(palco)).toEqual([ID_PALCO]) // as recusas não revogaram
+    expect(await ids(palco, 'midias')).toHaveLength(1)
+    linhas(await comoSessao(db, palco, INSERE_ACAO, [ID_EPISODIO, ID_PALCO])) // controle do insert
+    expect(linhas(await comoSessao(db, ana, REVOGA, [ID_PALCO]))).toEqual([{ usuario: UID_SESSAO_PALCO }])
+    expect(await dispositivoDe(palco)).toEqual([])
+    expect(await ids(palco, 'midias')).toEqual([])
+    expect(erro(await comoSessao(db, palco, INSERE_ACAO, [ID_EPISODIO, ID_PALCO])).message).toBe(violaRls('registro_acoes'))
+    expect(await usadoEm(pendente.dispositivo)).toEqual([]) // os pendentes do palco foram apagados
+    // A sessão revogada continua na linha (aviso e auditoria, D5).
+    const d = await db.query<{ usuario_anonimo_id: string; revogado: boolean }>(
+      'select usuario_anonimo_id, revogado_em is not null as revogado from public.dispositivos where id = $1', [ID_PALCO])
+    expect(d.rows).toEqual([{ usuario_anonimo_id: UID_SESSAO_PALCO, revogado: true }])
+    expect(codigoDoErro(erro(await comoSessao(db, ana, REVOGA, [ID_PALCO])))).toBe('55000')
+    expect(codigoDoErro(erro(await comoSessao(db, adm, REVOGA, [ID_OUTRO])))).toBe('22023')
+    expect(linhas(await comoSessao(db, adm, REVOGA, [ID_CAMERA]))).toEqual([{ usuario: UID_SESSAO_CAMERA }]) // o admin também revoga
+    // Os outros dispositivos não foram tocados.
+    expect(await dispositivoDe(obsCamera)).toEqual([ID_OBS_CAMERA])
+  })
+
+  test('e3-revogado-nao-repareia-com-codigo-antigo', async () => {
+    const antigo = await criarCodigo('obs_palco', null, ID_PALCO)
+    linhas(await comoSessao(db, ana, 'select public.revogar_dispositivo($1)', [ID_PALCO]))
+    const s = await novaAnonima()
+    expect((await parear(s, antigo.codigo, 'obs_palco')).resultado).toBe('invalido')
+    expect(await dispositivoDe(s)).toEqual([])
+    // Controle: um código novo, criado depois da revogação, pareia de novo e limpa revogado_em (trocar o aparelho).
+    const novo = await criarCodigo('obs_palco', null, ID_PALCO)
+    expect((await parear(s, novo.codigo, 'obs_palco')).resultado).toBe('pareado')
+    expect((await db.query('select usuario_anonimo_id, revogado_em from public.dispositivos where id = $1', [ID_PALCO])).rows).toEqual([
+      { usuario_anonimo_id: s.sub, revogado_em: null },
+    ])
+  })
+
+  test('e3-meu-dispositivo', async () => {
+    await cadastrarSessoesExtras()
+    const esperado: Record<string, { id: string; tipo: string; rotulo: string; camera_id: string | null }[]> = {
+      camera: [{ id: ID_CAMERA, tipo: 'camera', rotulo: 'Celular de gravação', camera_id: null }],
+      palco: [{ id: ID_PALCO, tipo: 'obs_palco', rotulo: 'PC do estúdio (palco)', camera_id: null }],
+      obs_camera: [{ id: ID_OBS_CAMERA, tipo: 'obs_camera', rotulo: 'PC do estúdio (câmera)', camera_id: ID_CAMERA }],
+    }
+    for (const [nome, s] of SESSOES) {
+      const r = await comoSessao(db, s, 'select * from public.meu_dispositivo()')
+      if (nome === 'anon') expect(erro(r).message).toBe('permission denied for function meu_dispositivo')
+      else expect([nome, linhas(r)]).toEqual([nome, esperado[nome] ?? []])
+    }
+    // A função não abre a tabela: o palco continua sem ler dispositivos (revisão do plano, I2).
+    expect(await ids(palco, 'dispositivos')).toEqual([])
+    // Sessão com o mesmo sub do palco, mas não anônima: nada.
+    expect(linhas(await comoSessao(db, { ...palco, is_anonymous: false }, 'select * from public.meu_dispositivo()'))).toEqual([])
+  })
+
+  test('e3-meu-dispositivo-colunas', async () => {
+    const r = await db.query<{ t: string }>(`select pg_get_function_result('public.meu_dispositivo()'::regprocedure) as t`)
+    expect(r.rows[0].t).toBe('TABLE(id uuid, tipo tipo_dispositivo, rotulo text, camera_id uuid)')
+    // A mesma lista que o adaptador da Tarefa 4 lê (COLUNAS_DE_MEU_DISPOSITIVO, Tarefa 1): um nome trocado de um lado cai aqui.
+    const colunas = [...r.rows[0].t.matchAll(/(?:\(|, )(\w+) /g)].map((m) => m[1])
+    expect(colunas).toEqual([...COLUNAS_DE_MEU_DISPOSITIVO])
+  })
+
+  // ----- episódio ativo e estado (D7) -----
+
+  type CasoAtivo = { caso: string; quem: string; preparo: () => Promise<unknown>; esperado: (Record<string, string>)[] }
+  const ATIVO: CasoAtivo[] = [
+    { caso: 'sem nada', quem: 'ana', preparo: async () => undefined, esperado: [] },
+    { caso: 'modo teste com rascunho', quem: 'ana', preparo: () => definirTeste(ID_EPISODIO), esperado: [{ id: ID_EPISODIO, modo: 'teste' }] },
+    {
+      caso: 'ao vivo e teste em outro', quem: 'ana',
+      preparo: async () => {
+        await db.query(`insert into public.episodios (id, titulo, estado) values ($1, 'Ao vivo', 'ao_vivo')`, [ID_AO_VIVO])
+        await definirTeste(ID_EPISODIO)
+      },
+      esperado: [{ id: ID_AO_VIVO, modo: 'ao_vivo' }],
+    },
+    {
+      caso: 'teste num encerrado', quem: 'ana',
+      preparo: async () => {
+        await db.query(`insert into public.episodios (id, titulo, estado) values ($1, 'Encerrado', 'encerrado')`, [ID_ENCERRADO])
+        await definirTeste(ID_ENCERRADO)
+      },
+      esperado: [],
+    },
+    ...['estranho', 'solta', 'revogado'].map((quem) => ({ caso: `${quem} com modo teste`, quem, preparo: () => definirTeste(ID_EPISODIO), esperado: [] })),
+    ...['bia', 'adm', 'camera', 'palco', 'obs_camera'].map((quem) => ({
+      caso: `${quem} com modo teste`, quem, preparo: () => definirTeste(ID_EPISODIO), esperado: [{ id: ID_EPISODIO, modo: 'teste' }],
+    })),
+  ]
+  test.each(ATIVO.map((c) => [c.caso, c] as const))('e3-episodio-ativo: %s', async (_caso, { quem, preparo, esperado }) => {
+    await cadastrarSessoesExtras()
+    await preparo()
+    expect(linhas(await comoSessao(db, sessao(quem), 'select * from public.episodio_ativo()'))).toEqual(esperado)
+  })
+
+  test('e3-episodio-ativo: anon não executa', async () => {
+    expect(erro(await comoSessao(db, null, 'select * from public.episodio_ativo()')).message).toBe('permission denied for function episodio_ativo')
+  })
+
+  const estadoDe = async (id: string) =>
+    (await db.query<{ estado: string; gestos_ligados: boolean }>('select estado, gestos_ligados from public.episodios where id = $1', [id])).rows[0]
+  const estudio = async () =>
+    (await db.query<{ episodio_teste_id: string | null; atualizado_por: string | null }>('select episodio_teste_id, atualizado_por from public.estudio_estado')).rows[0]
+
+  test('e3-iniciar-e-encerrar', async () => {
+    const INICIA = 'select public.iniciar_ao_vivo($1)'
+    const ENCERRA = 'select public.encerrar_ao_vivo($1)'
+    await db.query(`insert into public.episodios (id, titulo) values ($1, 'Outro')`, [ID_OUTRO])
+    await definirTeste(ID_OUTRO)
+    linhas(await comoSessao(db, ana, INICIA, [ID_EPISODIO]))
+    expect(await estadoDe(ID_EPISODIO)).toEqual({ estado: 'ao_vivo', gestos_ligados: false })
+    expect(await estudio()).toEqual({ episodio_teste_id: null, atualizado_por: UID_ANA })
+    expect(codigoDoErro(erro(await comoSessao(db, ana, INICIA, [ID_OUTRO])))).toBe('23505')
+    expect(await estadoDe(ID_OUTRO)).toEqual({ estado: 'rascunho', gestos_ligados: false })
+    expect(codigoDoErro(erro(await comoSessao(db, ana, ENCERRA, [ID_OUTRO])))).toBe('55000') // rascunho não encerra
+    expect(codigoDoErro(erro(await comoSessao(db, bia, ENCERRA, [ID_EPISODIO])))).toBe('42501')
+    await db.query('update public.episodios set gestos_ligados = true where id = $1', [ID_EPISODIO])
+    linhas(await comoSessao(db, adm, ENCERRA, [ID_EPISODIO]))
+    expect(await estadoDe(ID_EPISODIO)).toEqual({ estado: 'encerrado', gestos_ligados: false })
+    expect((await estudio()).atualizado_por).toBe(UID_ADM)
+    expect(codigoDoErro(erro(await comoSessao(db, ana, INICIA, [ID_EPISODIO])))).toBe('55000')
+    expect(codigoDoErro(erro(await comoSessao(db, ana, ENCERRA, [ID_EPISODIO])))).toBe('55000')
+    expect(codigoDoErro(erro(await comoSessao(db, bia, INICIA, [ID_OUTRO])))).toBe('42501')
+    for (const s of [palco, camera]) expect(codigoDoErro(erro(await comoSessao(db, s, INICIA, [ID_OUTRO])))).toBe('42501')
+    expect(erro(await comoSessao(db, null, INICIA, [ID_OUTRO])).message).toBe('permission denied for function iniciar_ao_vivo')
+    expect(codigoDoErro(erro(await comoSessao(db, ana, INICIA, [ID_AO_VIVO])))).toBe('22023') // inexistente
+    expect(codigoDoErro(erro(await comoSessao(db, ana, ENCERRA, [ID_AO_VIVO])))).toBe('22023')
+    expect(await estadoDe(ID_OUTRO)).toEqual({ estado: 'rascunho', gestos_ligados: false })
+    linhas(await comoSessao(db, ana, INICIA, [ID_OUTRO])) // controle: sem outro ao vivo, inicia
+    expect((await estadoDe(ID_OUTRO)).estado).toBe('ao_vivo')
+  })
+
+  test('e3-modo-teste', async () => {
+    const DEFINE = 'select public.definir_modo_teste($1)'
+    linhas(await comoSessao(db, ana, DEFINE, [ID_EPISODIO]))
+    expect(await estudio()).toEqual({ episodio_teste_id: ID_EPISODIO, atualizado_por: UID_ANA })
+    await db.exec('savepoint com_ao_vivo')
+    await db.query(`insert into public.episodios (id, titulo, estado) values ($1, 'Ao vivo', 'ao_vivo')`, [ID_AO_VIVO])
+    for (const alvo of [ID_EPISODIO, null]) expect([alvo, codigoDoErro(erro(await comoSessao(db, ana, DEFINE, [alvo])))]).toEqual([alvo, '55000'])
+    await db.exec('rollback to savepoint com_ao_vivo')
+    await db.exec('release savepoint com_ao_vivo')
+    await db.query(`insert into public.episodios (id, titulo, estado) values ($1, 'Encerrado', 'encerrado')`, [ID_ENCERRADO])
+    expect(codigoDoErro(erro(await comoSessao(db, ana, DEFINE, [ID_ENCERRADO])))).toBe('55000') // só rascunho
+    expect(codigoDoErro(erro(await comoSessao(db, ana, DEFINE, [ID_OUTRO])))).toBe('22023') // inexistente
+    expect(codigoDoErro(erro(await comoSessao(db, bia, DEFINE, [null])))).toBe('42501')
+    expect(await estudio()).toEqual({ episodio_teste_id: ID_EPISODIO, atualizado_por: UID_ANA })
+    linhas(await comoSessao(db, adm, DEFINE, [null]))
+    expect(await estudio()).toEqual({ episodio_teste_id: null, atualizado_por: UID_ADM })
+  })
+
+  test('e3-atualizado-em-nas-funcoes-de-estado', async () => {
+    // As 3 funções de estado gravam atualizado_em = now(): um valor antigo forçado antes de cada chamada tem de avançar.
+    const VELHO = '2000-01-01T00:00:00Z'
+    const carimboNovo = async () =>
+      (await db.query<{ ok: boolean }>('select atualizado_em = now() as ok from public.estudio_estado')).rows[0].ok
+    const chamadas: [string, string, unknown[]][] = [
+      ['definir_modo_teste', 'select public.definir_modo_teste($1)', [ID_EPISODIO]],
+      ['iniciar_ao_vivo', 'select public.iniciar_ao_vivo($1)', [ID_EPISODIO]],
+      ['encerrar_ao_vivo', 'select public.encerrar_ao_vivo($1)', [ID_EPISODIO]],
+    ]
+    for (const [nome, sql, params] of chamadas) {
+      await db.query('update public.estudio_estado set atualizado_em = $1', [VELHO])
+      expect([nome, await carimboNovo()]).toEqual([nome, false]) // controle
+      linhas(await comoSessao(db, ana, sql, params))
+      expect([nome, await carimboNovo()]).toEqual([nome, true])
+    }
+  })
+
+  test('e3-estado-so-por-funcao', async () => {
+    const r = (sql: string, params: unknown[] = []) => comoSessao(db, ana, sql, params)
+    expect(erro(await r(`update public.episodios set estado = 'ao_vivo' where id = $1`, [ID_EPISODIO])).message).toBe(negado('episodios'))
+    expect(erro(await r(`update public.episodios set gestos_ligados = true where id = $1`, [ID_EPISODIO])).message).toBe(negado('episodios'))
+    expect(linhas(await r(`update public.episodios set titulo = 'Novo', data = '2026-12-01' where id = $1 returning titulo`, [ID_EPISODIO]))).toEqual([{ titulo: 'Novo' }])
+    expect(erro(await r(`insert into public.episodios (titulo, estado) values ('x', 'ao_vivo')`)).message).toBe(negado('episodios'))
+    expect(erro(await r(`insert into public.episodios (titulo, gestos_ligados) values ('x', true)`)).message).toBe(negado('episodios'))
+    linhas(await r(`insert into public.episodios (titulo, data, criado_por) values ('y', '2026-12-02', $1)`, [UID_ANA]))
+    expect(await estadoDe(ID_EPISODIO)).toEqual({ estado: 'rascunho', gestos_ligados: false })
+    expect((await db.query(`select estado from public.episodios where titulo = 'y'`)).rows).toEqual([{ estado: 'rascunho' }])
+    expect((await db.query(`select count(*)::int as n from public.episodios where titulo = 'x'`)).rows).toEqual([{ n: 0 }])
+  })
+
+  test('e3-exclui-so-rascunho', async () => {
+    await db.query(`insert into public.episodios (id, titulo, estado) values ($1, 'Encerrado', 'encerrado'), ($2, 'Ao vivo', 'ao_vivo')`, [ID_ENCERRADO, ID_AO_VIVO])
+    const APAGA = 'delete from public.episodios where id = $1 returning id'
+    expect(linhas(await comoSessao(db, ana, APAGA, [ID_ENCERRADO]))).toEqual([])
+    expect(linhas(await comoSessao(db, adm, APAGA, [ID_AO_VIVO]))).toEqual([])
+    expect(linhas(await comoSessao(db, ana, APAGA, [ID_EPISODIO]))).toEqual([{ id: ID_EPISODIO }])
+    expect((await db.query('select id from public.episodios order by id')).rows).toEqual([{ id: ID_AO_VIVO }, { id: ID_ENCERRADO }])
+  })
+
+  test('e3-estudio-estado-so-leitura', async () => {
+    for (const s of [ana, adm]) {
+      expect(erro(await comoSessao(db, s, 'update public.estudio_estado set episodio_teste_id = null')).message).toBe(negado('estudio_estado'))
+    }
+    expect(linhas(await comoSessao(db, bia, 'select id from public.estudio_estado'))).toEqual([{ id: 1 }]) // controle: todo membro lê
+  })
+
+  test('e3-funcoes-so-authenticated', async () => {
+    // As 9 funções da E3: SECURITY DEFINER, search_path vazio e EXECUTE só para authenticated (o rpc:grants-check confere o
+    // mesmo nas migrações; aqui, no banco dos testes).
+    const r = await db.query<{ f: string; definer: boolean; config: string[]; anon: boolean; service: boolean; auth: boolean; publico: boolean }>(
+      `select p.oid::regprocedure::text as f, p.prosecdef as definer, p.proconfig as config,
+              has_function_privilege('anon', p.oid, 'EXECUTE') as anon, has_function_privilege('service_role', p.oid, 'EXECUTE') as service,
+              has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth,
+              exists (select 1 from aclexplode(p.proacl) a where a.grantee = 0) as publico
+       from pg_proc p where p.pronamespace = 'public'::regnamespace
+         and p.proname in ('criar_codigo_pareamento', 'parear_dispositivo', 'meu_dispositivo', 'revogar_dispositivo', 'episodio_ativo',
+                           'iniciar_ao_vivo', 'encerrar_ao_vivo', 'definir_modo_teste', 'pode_usar_canal')
+       order by 1`,
+    )
+    expect(r.rows.map((l) => l.f)).toEqual([
+      'criar_codigo_pareamento(tipo_dispositivo,text,uuid,uuid)', 'definir_modo_teste(uuid)', 'encerrar_ao_vivo(uuid)', 'episodio_ativo()',
+      'iniciar_ao_vivo(uuid)', 'meu_dispositivo()', 'parear_dispositivo(text,tipo_dispositivo)', 'pode_usar_canal(text,text,boolean)',
+      'revogar_dispositivo(uuid)',
+    ])
+    for (const l of r.rows) {
+      expect([l.f, l.definer, l.config, l.anon, l.service, l.auth, l.publico]).toEqual([l.f, true, ['search_path=""'], false, false, true, false])
+    }
+  })
+
+  // ----- canais (D6) -----
+
+  type Combinacao = 'rb' | 'rp' | 'eb' | 'ep' | 'es'
+  const COMBINACOES: [Combinacao, ExtensaoDoCanal, 'receber' | 'enviar'][] = [
+    ['rb', 'broadcast', 'receber'], ['rp', 'presence', 'receber'],
+    ['eb', 'broadcast', 'enviar'], ['ep', 'presence', 'enviar'], ['es', 'persistence', 'enviar'],
+  ]
+  const TOPICOS = (ativo: string, outro: string): [string, string][] => [
+    ['estudio', 'estudio'], ['controle', `episodio:${ativo}:controle`], ['outro', `episodio:${outro}:controle`],
+    ['video', `episodio:${ativo}:video`], ['x', 'x'],
+  ]
+  /** O que cada sessão pode, por tópico (rb/rp receber broadcast/presence; eb/ep/es enviar broadcast/presence/persistence). */
+  async function permissoesNoCanal(quem: Claims | null): Promise<Record<string, string>> {
+    const r: Record<string, string> = {}
+    for (const [nome, topico] of TOPICOS(ID_EPISODIO, ID_OUTRO)) {
+      const pode: string[] = []
+      for (const [sigla, ext, op] of COMBINACOES) if (await comoCanal(db, quem, topico, ext, op)) pode.push(sigla)
+      r[nome] = pode.join(' ')
+    }
+    return r
+  }
+  const NADA = { estudio: '', controle: '', outro: '', video: '', x: '' }
+  /** A matriz da D6: uma linha por sessão; persistence nunca; outro episódio, :video e qualquer outro tópico, nunca. */
+  const MATRIZ_DO_CANAL: [string, Record<string, string>][] = [
+    ['anon', NADA],
+    ['ana', { ...NADA, estudio: 'rb rp eb ep', controle: 'rb rp eb ep' }],
+    ['bia', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp eb ep' }],
+    ['adm', { ...NADA, estudio: 'rb rp eb ep', controle: 'rb rp eb ep' }],
+    ['estranho', NADA],
+    ['camera', { ...NADA, estudio: 'rb rp ep' }],
+    ['palco', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp eb' }],
+    ['obs_camera', { ...NADA, estudio: 'rb rp ep' }],
+    ['solta', NADA],
+    ['revogado', NADA],
+  ]
+  test.each(MATRIZ_DO_CANAL)('e3-canal-matriz: %s', async (nome, esperado) => {
+    await cadastrarSessoesExtras()
+    await db.query(`insert into public.episodios (id, titulo) values ($1, 'Outro')`, [ID_OUTRO])
+    await definirTeste(ID_EPISODIO)
+    expect(await permissoesNoCanal(sessao(nome))).toEqual(esperado)
+  })
+
+  test('e3-canal-segue-o-episodio-ativo', async () => {
+    const CONTROLE = `episodio:${ID_EPISODIO}:controle`
+    linhas(await comoSessao(db, ana, 'select public.definir_modo_teste($1)', [ID_EPISODIO]))
+    expect(await comoCanal(db, ana, CONTROLE, 'broadcast', 'receber')).toBe(true)
+    expect(await comoCanal(db, palco, CONTROLE, 'broadcast', 'enviar')).toBe(true)
+    linhas(await comoSessao(db, ana, 'select public.definir_modo_teste($1)', [null]))
+    for (const [ext, op] of [['broadcast', 'receber'], ['presence', 'receber'], ['broadcast', 'enviar'], ['presence', 'enviar']] as const) {
+      expect([ext, op, await comoCanal(db, ana, CONTROLE, ext, op), await comoCanal(db, palco, CONTROLE, ext, 'receber')]).toEqual([ext, op, false, false])
+    }
+    // Ao vivo: o tópico passa a ser o do episódio ao vivo.
+    linhas(await comoSessao(db, ana, 'select public.iniciar_ao_vivo($1)', [ID_EPISODIO]))
+    expect(await comoCanal(db, bia, CONTROLE, 'broadcast', 'enviar')).toBe(true)
+    linhas(await comoSessao(db, ana, 'select public.encerrar_ao_vivo($1)', [ID_EPISODIO]))
+    expect(await comoCanal(db, bia, CONTROLE, 'broadcast', 'enviar')).toBe(false)
+    expect(await comoCanal(db, bia, 'estudio', 'broadcast', 'receber')).toBe(true) // estudio não depende do episódio
+  })
+
+  test('e3-revogado-sem-canal', async () => {
+    await definirTeste(ID_EPISODIO)
+    const CONTROLE = `episodio:${ID_EPISODIO}:controle`
+    expect(await comoCanal(db, palco, 'estudio', 'broadcast', 'receber')).toBe(true) // controle
+    expect(await comoCanal(db, palco, CONTROLE, 'broadcast', 'enviar')).toBe(true) // controle
+    linhas(await comoSessao(db, ana, 'select public.revogar_dispositivo($1)', [ID_PALCO]))
+    for (const topico of ['estudio', CONTROLE]) {
+      for (const [, ext, op] of COMBINACOES) expect([topico, ext, op, await comoCanal(db, palco, topico, ext, op)]).toEqual([topico, ext, op, false])
+    }
+  })
+
+  test('e3-politicas-do-canal', async () => {
+    // search_path vazio só nesta consulta (set_config local, desfeito no rollback): o texto sai qualificado, como o
+    // data-api:check o lê (POLITICAS_DO_CANAL).
+    await db.query(`select set_config('search_path', '', true)`)
+    const r = await db.query(
+      `select policyname, permissive, roles::text[] as roles, cmd, qual, with_check from pg_policies
+       where schemaname = 'realtime' and tablename = 'messages' order by policyname collate "C"`,
+    )
+    expect(r.rows).toEqual([
+      { policyname: 'canal_envia', permissive: 'PERMISSIVE', roles: ['authenticated'], cmd: 'INSERT', qual: null, with_check: 'public.pode_usar_canal(realtime.topic(), extension, true)' },
+      { policyname: 'canal_recebe', permissive: 'PERMISSIVE', roles: ['authenticated'], cmd: 'SELECT', qual: 'public.pode_usar_canal(realtime.topic(), extension, false)', with_check: null },
+    ])
   })
 })

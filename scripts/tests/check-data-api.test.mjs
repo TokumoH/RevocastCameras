@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
-import { POLITICAS_DO_CANAL, regrasDeTabela, verificarDataApi } from '../check-data-api.mjs'
+import { POLITICAS_DO_CANAL, regrasDeTabela, SOMENTE_FUNCOES, verificarDataApi } from '../check-data-api.mjs'
 
 // O SQL de cada teste é aplicado de verdade num PGlite com a simulação do Supabase (scripts/_catalogo.mjs);
 // as regras leem o catálogo resultante. Todo caso usa SQL aceito pelo Postgres, salvo os de erro de SQL.
@@ -81,6 +81,12 @@ describe('regras do DES-001 (seções 8 e 13)', () => {
       'public.codigos_pareamento: anon com SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN em tabela só-funções',
       'public.codigos_pareamento: authenticated com SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN em tabela só-funções',
     ])
+  })
+
+  test('SOMENTE_FUNCOES: as duas tabelas só-funções (DES-001 §8 e PLA-004 D2)', () => {
+    // codigos_pareamento (E0) e tentativas_pareamento (E3, migração ao_vivo_e_pareamento): sem política e sem privilégio,
+    // acessadas só pelas funções criar_codigo_pareamento, parear_dispositivo e revogar_dispositivo.
+    expect(SOMENTE_FUNCOES).toEqual(['codigos_pareamento', 'tentativas_pareamento'])
   })
 
   test('só-funções com política', async () => {

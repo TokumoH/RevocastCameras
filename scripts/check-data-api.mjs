@@ -19,8 +19,8 @@ import { analisarMigracoes, campoProtegido, executadoDiretamente, executar, PRIV
 // A mesma leitura do corpo do rpc:grants-check, sem cópia (D13): apaga textos e comentários antes de procurar a chamada.
 import { CHAMA_FUNCAO_DE_PAPEL, codigoDoCorpo } from "./check-rpc-grants.mjs";
 
-/** Tabelas (de public) que só se acessam por função: sem política e sem privilégio de anon e authenticated. */
-export const SOMENTE_FUNCOES = ["codigos_pareamento"];
+/** Tabelas (de public) que só se acessam por função: sem política e sem privilégio de anon e authenticated (tentativas_pareamento desde a E3, PLA-004 D2). */
+export const SOMENTE_FUNCOES = ["codigos_pareamento", "tentativas_pareamento"];
 
 /** Buckets do app (PLA-003, D13): os únicos aceitos em storage.buckets e no início das políticas de storage.objects. */
 export const BUCKETS_DO_APP = ["midias"];

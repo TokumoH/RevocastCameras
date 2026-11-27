@@ -111,6 +111,17 @@ const PROPRIA_LINHA_INTOCADA: Partial<Record<string, Partial<Record<Papel, strin
   membros_permitidos: { adm: EMAIL_ADM },
 }
 
+/**
+ * Recorte do delete permitido (PLA-004, D7; migração ao_vivo_e_pareamento): a política episodios_equipe_apaga passou a
+ * exigir estado = 'rascunho'. No delete sem where de equipe/admin, somem todas as linhas em rascunho (inclusive as próprias
+ * e as de outros autores) e ficam, idênticas, exatamente as ao_vivo e encerrado. A célula continua pegando uma política que
+ * prenda a equipe às "próprias linhas" (os rascunhos de outros autores teriam de sumir) e passa a pegar uma que volte a
+ * apagar episódio ao vivo ou encerrado.
+ */
+const DELETE_SO_EM: Partial<Record<string, { coluna: string; valor: string }>> = {
+  episodios: { coluna: 'estado', valor: 'rascunho' },
+}
+
 const PAPEIS = {
   adm: membroGoogle(EMAIL_ADM, UID_ADM),
   equipe: membroGoogle(EMAIL_ANA, UID_ANA),
@@ -141,10 +152,15 @@ const MATRIZ: Record<string, Record<Operacao, Regra>> = {
   midias: { select: { permitidos: [...MEMBROS, 'palco'] }, insert: { permitidos: EQUIPE }, update: { permitidos: EQUIPE }, delete: { permitidos: EQUIPE } },
   sons: { select: { permitidos: [...MEMBROS, 'palco'] }, insert: { permitidos: EQUIPE }, update: { permitidos: EQUIPE }, delete: { permitidos: EQUIPE } },
   cenas: { select: { permitidos: [...MEMBROS, 'palco'] }, insert: { permitidos: EQUIPE }, update: { permitidos: EQUIPE }, delete: { permitidos: EQUIPE } },
+  // D7 (PLA-004): insert e update de episodios só por coluna (insert de titulo, data, criado_por; update de titulo, data); o
+  // insert e o update da matriz usam só essas colunas, então continuam aceitos para equipe/admin. O delete permitido só
+  // alcança rascunho (DELETE_SO_EM). estado e gestos_ligados mudam só pelas funções (rls.test.ts, e3-estado-so-por-funcao).
   episodios: { select: { permitidos: [...MEMBROS, 'palco'] }, insert: { permitidos: EQUIPE }, update: { permitidos: EQUIPE }, delete: { permitidos: EQUIPE } },
   avisos: { select: { permitidos: [...MEMBROS, 'palco'] }, insert: { permitidos: EQUIPE }, update: { permitidos: EQUIPE }, delete: { permitidos: EQUIPE } },
   mapa_gestos: { select: { permitidos: [...MEMBROS, 'palco'] }, insert: { permitidos: [] }, update: { permitidos: EQUIPE }, delete: { permitidos: [] } },
-  estudio_estado: { select: { permitidos: MEMBROS }, insert: { permitidos: [] }, update: { permitidos: EQUIPE }, delete: { permitidos: [] } },
+  // D7 (PLA-004): estudio_estado fica só leitura; o modo teste muda pela função definir_modo_teste (e por iniciar_ao_vivo e
+  // encerrar_ao_vivo), sem update para ninguém (privilégio revogado e política de update apagada).
+  estudio_estado: { select: { permitidos: MEMBROS }, insert: { permitidos: [] }, update: { permitidos: [] }, delete: { permitidos: [] } },
   dispositivos: { select: { permitidos: [...EQUIPE, 'camera', 'obs_camera'] }, insert: { permitidos: [] }, update: { permitidos: [] }, delete: { permitidos: [] } },
   registro_acoes: { select: { permitidos: MEMBROS }, insert: { permitidos: ['palco'] }, update: { permitidos: [] }, delete: { permitidos: [] } },
 }
@@ -416,7 +432,16 @@ describe('matriz de permissões (DES-001 §8)', () => {
         // Permitido alcança toda linha: no update, nenhuma linha sobra igual; no delete, a tabela esvazia.
         const conta = async (sql: string) => (await db.query<{ n: number }>(sql)).rows[0].n
         const intocada = PROPRIA_LINHA_INTOCADA[tabela]?.[papel]
-        if (intocada) {
+        const recorte = operacao === 'delete' ? DELETE_SO_EM[tabela] : undefined
+        if (recorte) {
+          // D7: sobram, idênticas, exatamente as linhas fora do recorte (no caso de episodios, as ao_vivo e encerrado).
+          const fora = await conta(`select count(*)::int as n from antes_celula a where (a.t::public.${tabela}).${recorte.coluna}::text <> '${recorte.valor}'`)
+          const dentro = await conta(`select count(*)::int as n from antes_celula a where (a.t::public.${tabela}).${recorte.coluna}::text = '${recorte.valor}'`)
+          expect([fora > 0, dentro > 0]).toEqual([true, true])
+          expect(await conta(`select count(*)::int as n from public.${tabela} x where x.${recorte.coluna}::text = '${recorte.valor}'`)).toBe(0)
+          expect(await conta(`select count(*)::int as n from public.${tabela} x where x::text in (select t from antes_celula)`)).toBe(fora)
+          expect(await conta(`select count(*)::int as n from public.${tabela}`)).toBe(fora)
+        } else if (intocada) {
           // Exceção (D1): a linha intocada fica idêntica e é a única que sobra igual (update) ou que sobra (delete).
           const filtro = operacao === 'update' ? 'where x::text in (select t from antes_celula)' : ''
           const sobra = await db.query<{ email: string; igual: boolean }>(

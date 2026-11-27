@@ -272,6 +272,8 @@ describe('catálogo: chaves estrangeiras e unicidades (DES-001 §7)', () => {
       'registro_acoes (membro_id) -> membros (id) on delete no action',
       'registro_acoes (som_id) -> sons (id) on delete set null',
       'sons (midia_id, tipo_midia) -> midias (id, tipo) on delete cascade',
+      // E3 (PLA-004, D2): apagar o usuário anônimo apaga as tentativas de pareamento dele.
+      'tentativas_pareamento (usuario_id) -> auth.users (id) on delete cascade',
     ])
   })
 
