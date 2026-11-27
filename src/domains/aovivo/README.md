@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | em construção |
 | Commits | commit que introduz este arquivo — `git log --diff-filter=A --format=%h -- src/domains/aovivo/README.md` |
-| Arquivos | `README.md`, `mensagens.ts`, `mensagens.test.ts`, `comandos.ts`, `comandos.test.ts`, `portas.ts` |
+| Arquivos | `README.md`, `mensagens.ts`, `mensagens.test.ts`, `comandos.ts`, `comandos.test.ts`, `portas.ts`, `palco.ts`, `palco.test.ts` |
 
 ## Propósito
 
@@ -19,15 +19,16 @@ Domínio **Ao vivo** do [DES-001](../../../docs/desenho/2026-11-16-revocast-came
 
 ## Origem
 
-Criado na Tarefa 1 da etapa E3 ([PLA-004](../../../docs/planos/2026-11-27-e3-ao-vivo-por-toque.md)), registro VER-035. Decisões aplicadas: D1 (o pareamento fica em `acesso/`; `aovivo/` guarda mensagens, comandos, estado no ar, registro e, na Tarefa 5, o serviço do palco, que só conhece portas, inclusive `ExecutorDeAcoes`), D5 (descarte de remetente revogado por 15 min), D6 (canais privados, mensagem validada antes de qualquer efeito), D9 (comandos, estado no ar e registro), D14 (presença sem e-mail e sem nome) e D15 (estados do canal e resposta do `ack`).
+Criado na Tarefa 1 da etapa E3 ([PLA-004](../../../docs/planos/2026-11-27-e3-ao-vivo-por-toque.md)), registro VER-035. Decisões aplicadas: D1 (o pareamento fica em `acesso/`; `aovivo/` guarda mensagens, comandos, estado no ar, registro e, na Tarefa 5, o serviço do palco, que só conhece portas, inclusive `ExecutorDeAcoes`), D5 (descarte de remetente revogado por 15 min), D6 (canais privados, mensagem validada antes de qualquer efeito), D9 (comandos, estado no ar e registro), D14 (presença sem e-mail e sem nome) e D15 (estados do canal e resposta do `ack`). O serviço do palco (`palco.ts`) entra na Tarefa 5, registro [VER-039](../../../docs/verificacoes/2026-11-27-039-e3-integracao-obs-e-palco.md).
 
 ## Organização
 
 - `mensagens.ts`: tipos das mensagens (`MensagemDoEstudio`, `PresencaNoEstudio`, `SituacaoDoObs`, `Comando`, `EstadoNoAr`), as listas fechadas (`MOTIVOS_DO_RESULTADO`, `EVENTOS_DO_CONTROLE`, `UUID`), os leitores (`lerMensagemDoEstudio`, `lerComando`, `lerEstadoNoAr`, `lerPresenca`, `lerRemetente`) e `Revogados`.
 - `comandos.ts`: `AcaoNoObs`, `MotivoDaRecusa`, `resolverComando`, `LinhaDoRegistro` e `linhaDoRegistro`.
-- `portas.ts`: `ErroDoAoVivo` (mensagem só com o motivo), `EstadoDoCanal`, `RespostaDoEnvio`, `CanalDoEstudio`, `CanalDoControle`, `FabricaDeCanais`, `RepositorioDoAoVivo`, `RepositorioDoPalco` e `ExecutorDeAcoes`. Sem teste próprio: só tipos e a classe de erro, exercitados pelos testes dos adaptadores (Tarefa 4) e do palco (Tarefa 5).
-- Dependência entre domínios **só de tipos**: `aovivo` importa `Dispositivo` e `TipoDeDispositivo` de `acesso/dispositivos.ts` e `Cena`, `Som`, `Aviso`, `Episodio` e `AcaoDoGesto` de `preparacao/`; ninguém importa `aovivo`, e `aovivo` não conhece OBS, canal concreto nem banco.
-- Testes com objetos escritos no próprio arquivo, sem `vi.mock`; o relógio de `Revogados` e do marcador entra por parâmetro.
+- `palco.ts`: `ESTADO_A_CADA_MS`, `COMANDOS_LEMBRADOS`, `DependenciasDoPalco` e `criarPalco` (o serviço do palco, D9), que só conhece portas: `CanalDoControle`, `RepositorioDoPalco`, `ExecutorDeAcoes` e `Revogados`.
+- `portas.ts`: `ErroDoAoVivo` (mensagem só com o motivo), `EstadoDoCanal`, `RespostaDoEnvio`, `CanalDoEstudio`, `CanalDoControle`, `FabricaDeCanais`, `RepositorioDoAoVivo`, `RepositorioDoPalco` e `ExecutorDeAcoes`. Sem teste próprio: só tipos e a classe de erro, exercitados pelos testes dos adaptadores (Tarefa 4), do palco e do executor do OBS (Tarefa 5).
+- Dependência entre domínios **só de tipos**: `aovivo` importa `Dispositivo` e `TipoDeDispositivo` de `acesso/dispositivos.ts` e `Cena`, `Som`, `Aviso`, `Episodio` e `AcaoDoGesto` de `preparacao/`; só `obs/` (Integração OBS) importa tipos de `aovivo` (`AcaoNoObs`, `SituacaoDoObs`, resultados e `ExecutorDeAcoes`), e `aovivo` não conhece OBS, canal concreto nem banco.
+- Testes com objetos escritos no próprio arquivo, sem `vi.mock`; o relógio de `Revogados`, do marcador e do palco (`agora`, `agendarRepeticao`) entra por parâmetro.
 
 ## Por que esta organização
 
@@ -53,6 +54,8 @@ Cada perigo do "Foco da revisão" do PLA-004 que é do domínio tem um lugar e u
 | [`mensagens.test.ts`](mensagens.test.ts) | 92 testes: constantes; `mensagens-validadas` (cada leitor aceita a forma certa e recusa tipo errado, uuid em maiúsculas ou fora da forma, campo faltando, campo extra, ação desconhecida, `cenaObs` com 201 caracteres, número não finito, `motivo` fora da lista, `__proto__` como chave, chave herdada); `revogados-expiram` (3, inclusive revogar um segundo remetente sem soltar o primeiro) |
 | [`comandos.ts`](comandos.ts) | `AcaoNoObs`, `MotivoDaRecusa`, `TAMANHO_DO_MARCADOR`, `ContextoDoComando`, `resolverComando`, `LinhaDoRegistro`, `linhaDoRegistro` |
 | [`comandos.test.ts`](comandos.test.ts) | 13 testes: ações resolvidas, `MotivoDaRecusa` ⊂ `MOTIVOS_DO_RESULTADO`, `comando-alvo-inexistente`, `proxima-cena` (2), `proximo-aviso`, `ocultar-sem-aviso`, `marcador-com-nome`, `registro` (5) |
+| [`palco.ts`](palco.ts) | `ESTADO_A_CADA_MS` (30 s), `COMANDOS_LEMBRADOS` (200), `DependenciasDoPalco`, `criarPalco` |
+| [`palco.test.ts`](palco.test.ts) | 21 testes: constante, `comando-valido-executa`, `comando-invalido-descartado`, `comando-duplicado`, `remetente-revogado`, `som-inexistente`, `estado-apos-comando`, `clipe-pendente-depois-ok`, `estado-a-cada-30s`, `estado-ao-entrar-alguem`, `registro-com-teste`, `registro-falha-nao-para`, `aviso-expira`, `ignora-o-proprio-comando`, `parar-solta-tudo`, `estado-so-muda-com-ok`, `parar-com-acao-pendente`, `executor-que-lanca`, `publicacao-rejeitada-tratada`, `estado-publicado-passa-no-leitor`, `estado-e-copia` |
 | [`portas.ts`](portas.ts) | `MotivoDoAoVivo`, `ErroDoAoVivo`, `EstadoDoCanal`, `RespostaDoEnvio`, `CanalDoEstudio`, `CanalDoControle`, `FabricaDeCanais`, `RepositorioDoAoVivo`, `RepositorioDoPalco`, `ExecutorDeAcoes` |
 
 ## Lógica
@@ -68,10 +71,12 @@ flowchart LR
     R -- "{ ok: false, motivo }" --> E
     R -- "{ ok: true, acao: AcaoNoObs }" --> O["ExecutorDeAcoes<br/>(Integração OBS: cena, clipe, marcador;<br/>a página: som e aviso)"]
     O -- "resultado + motivo da lista" --> E["EstadoNoAr atualizado"]
-    O -- "ok/pendente" --> G["linhaDoRegistro → registro_acoes<br/>(falha não desfaz a ação)"]
+    O -- "ok" --> G["linhaDoRegistro → registro_acoes<br/>(falha não desfaz a ação)"]
     E -- "publicarEstado: broadcast 'estado'<br/>(e a cada 30 s e quando alguém entra)" --> C
     C -- payload --> V["/controle: lerEstadoNoAr<br/>(inválido → ignorado)"]
 ```
+
+O lado do palco (validar de novo, ignorar o próprio eco, revogados e repetidos, resolver, executar, publicar e registrar) é o `criarPalco` de `palco.ts`; o clipe publica `pendente` antes da espera de 5 s e o resultado depois.
 
 Ordem de cada leitor de `mensagens.ts`:
 
@@ -100,7 +105,8 @@ resolverComando({ id, acao: 'proxima_cena' }, { cenas: [A(0), B(1), C(2)], estad
 
 ## Verificação
 
-- `npx vitest run src/domains/aovivo`: 2 arquivos, 105 testes (mais 3 de `../arquitetura.test.ts`, que cobre esta pasta sem configuração).
+- `npx vitest run src/domains/aovivo`: 3 arquivos, 126 testes (mais 3 de `../arquitetura.test.ts`, que cobre esta pasta sem configuração); `palco.test.ts` (21) desde a Tarefa 5.
+- Sabotagens do serviço do palco (deduplicação, executar antes de resolver, registrar recusas, não republicar na entrada e outras) na tabela do VER-039.
 - Sabotagens nos leitores, na resolução e no registro, uma de cada vez, cada uma derrubando o teste citado (tabela no VER-035), inclusive importar `@supabase/supabase-js` em `portas.ts` (derruba `arquitetura.test.ts`).
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`. Não há subdiretórios.
 
@@ -112,4 +118,5 @@ resolverComando({ id, acao: 'proxima_cena' }, { cenas: [A(0), B(1), C(2)], estad
 - **Lista de motivos:** `MOTIVOS_DO_RESULTADO` já traz os motivos que a Tarefa 5 prevê para o executor (`cena_inexistente_no_obs`, `sem_permissao`, `replay_desligado`, `sem_websocket`, `sem_gravacao`, `obs_ausente`); um motivo novo do executor precisa entrar na lista, senão o estado com ele é descartado pelo `/controle` (o tipo `MotivoDoResultado` em `ExecutorDeAcoes` faz o compilador acusar).
 - **`marcador` usa a hora local** do computador do OBS (o capítulo é da gravação daquele computador); sem `agora`, `resolverComando` lê o relógio (`new Date()`).
 - **`proximo_aviso` com a lista vazia** responde `fim_dos_avisos` (não há `sem_avisos` na lista do plano).
-- Não verificado nesta tarefa: os adaptadores reais (Tarefa 4), o palco e o executor (Tarefa 5), as telas (Tarefas 6 a 9) e os canais reais (Tarefa 10).
+- **Palco:** começa com `cenaObs` nulo (a primeira `proxima_cena` vai à primeira cena) e só atualiza a cena pelos comandos que ele mesmo executou; uma troca feita à mão no OBS não aparece no estado. Registra só `ok` (recusa, falha e o clipe repetido ignorado não entram em `registro_acoes`). O `/controle` só vê `pendente` no clipe (a única ação que espera de propósito). Só resultado `ok` muda o estado (cena, aviso). O estado publicado passa por `lerEstadoNoAr`: uma cena do OBS com mais de 200 caracteres (o banco não limita `nome_obs`; a trava no banco fica como pendência de migração) vai como `null`, e um estado que o leitor recusaria não é publicado. Dois toques rápidos em "próxima" resolvem contra o mesmo estado e dão um passo só (aceito; serializar faria o clipe de 5 s atrasar as cenas). Um clipe pedido antes de `parar()` só é cancelado se a rota chamar também `executor.parar()` (Tarefa 6).
+- Não verificado: as telas (Tarefas 6 a 9) e os canais reais e o OBS real (Tarefa 10); os adaptadores (Tarefa 4) e o palco (Tarefa 5) foram testados com falsos.
