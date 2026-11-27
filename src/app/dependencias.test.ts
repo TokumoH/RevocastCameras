@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { SEM_RETORNO } from '../domains/acesso/retornoDoLogin'
 import { caminhoDaArea, dependenciasDoNavegador, urlDeRetorno } from './dependencias'
-import { obterServicosDeMembro, obterServicosDePreparacao } from './servicos'
+import { obterServicosDeAoVivo, obterServicosDeDispositivo, obterServicosDeMembro, obterServicosDePreparacao } from './servicos'
 
 function visibilidade(estado: DocumentVisibilityState) {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => estado })
@@ -30,6 +30,18 @@ describe('dependencias', () => {
     expect(dep.fragmento).toBe('#x=1')
     expect(dep.obterServicos).toBe(obterServicosDeMembro)
     expect(dep.obterPreparacao).toBe(obterServicosDePreparacao)
+    expect(dep.obterAoVivo).toBe(obterServicosDeAoVivo)
+    expect(dep.obterDispositivo).toBe(obterServicosDeDispositivo)
+  })
+
+  test('limpar-fragmento-tira-so-o-fragmento', () => {
+    window.history.replaceState({ marca: 2 }, '', '/obs/palco?fica=1#Codigo_de_teste-0123456789abcdefghijKLMNOPQ')
+    dependenciasDoNavegador().limparFragmento()
+    expect(window.location.pathname).toBe('/obs/palco')
+    expect(window.location.search).toBe('?fica=1')
+    expect(window.location.hash).toBe('')
+    expect(window.location.href).not.toContain('#')
+    expect(window.history.state).toEqual({ marca: 2 })
   })
 
   test('limpar-tira-so-os-parametros-de-retorno', () => {

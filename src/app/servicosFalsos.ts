@@ -1,17 +1,26 @@
 /**
- * Serviços e dependências falsos para os testes de tela (só para testes: não importa `vitest` nem Supabase).
+ * Serviços e dependências falsos para os testes de tela (só para testes: não importa `vitest` nem o
+ * supabase-js em tempo de execução).
  * Implementam as portas do domínio Acesso (e, desde a E2, as da Preparação: vazias em `preparacaoVazia` e,
- * desde a Tarefa 5 da E2, com estado em `criarFalsosDePreparacao`, mais `arquivoDeTeste`)
+ * desde a Tarefa 5 da E2, com estado em `criarFalsosDePreparacao`, mais `arquivoDeTeste`; desde a E3, as do
+ * ao vivo e do dispositivo: `aoVivoVazio`, `criarCanalFalso` e `criarFalsosDeDispositivo`)
  * e imitam o que o supabase-js faz e muda a tela: `sair()` põe a sessão em `null` e emite a mudança de
  * sessão (o `SIGNED_OUT`) **antes** de resolver, como o `signOut` real, que só resolve depois do
  * `POST /auth/v1/logout`.
  */
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { TipoDeDispositivo } from '../domains/acesso/dispositivos'
 import type { MembroPermitido, PerfilDeMembro } from '../domains/acesso/listaDeAcesso'
 import type { Papel } from '../domains/acesso/papeis'
 import { ErroDeAcesso } from '../domains/acesso/portas'
 import type { RepositorioDeAcesso, ServicoDeAutenticacao, ServicosDeMembro } from '../domains/acesso/portas'
 import type { RetornoDoLogin } from '../domains/acesso/retornoDoLogin'
 import type { UsuarioDaSessao } from '../domains/acesso/sessao'
+import { ErroDeDispositivo } from '../domains/acesso/portasDeDispositivo'
+import type { ServicoDeDispositivo } from '../domains/acesso/portasDeDispositivo'
+import type { LinhaDoRegistro } from '../domains/aovivo/comandos'
+import { ErroDoAoVivo } from '../domains/aovivo/portas'
+import type { EstadoDoCanal, FabricaDeCanais, RepositorioDoAoVivo, RepositorioDoPalco, RespostaDoEnvio } from '../domains/aovivo/portas'
 import type { Cena } from '../domains/preparacao/cenas'
 import type { Aviso, Episodio } from '../domains/preparacao/episodios'
 import { GESTOS } from '../domains/preparacao/gestos'
@@ -19,7 +28,10 @@ import type { LinhaDoMapa } from '../domains/preparacao/gestos'
 import type { Midia, Som } from '../domains/preparacao/midia'
 import { ErroDePreparacao } from '../domains/preparacao/portas'
 import type { NovaMidia, OpcoesDoEnvio, ServicosDePreparacao } from '../domains/preparacao/portas'
+import { criarFabricaDeCanais } from '../shared/infra/canalSupabase'
+import { criarRealtimeFalso } from '../shared/infra/realtimeFalso'
 import type { Dependencias } from './dependencias'
+import type { ServicosDeAoVivo, ServicosDoDispositivo } from './servicos'
 
 /**
  * Serviços da Preparação sem nada: listas vazias; escritas, envio, remoção e prévia resolvem sem efeito
@@ -81,6 +93,9 @@ export function criarFalsos(
     entrar: [] as string[],
     sair: 0,
     obterServicos: 0,
+    obterAoVivo: 0,
+    obterDispositivo: [] as TipoDeDispositivo[],
+    limparFragmento: 0,
     navegar: [] as string[],
     limpar: [] as RetornoDoLogin[],
     incluir: [] as unknown[][],
@@ -159,6 +174,9 @@ export function criarFalsos(
   }
 
   const servicos: ServicosDeMembro = { auth, repo }
+  // Um ao vivo e um dispositivo por tipo para todas as dependências deste conjunto de falsos (como na página).
+  let aoVivo: ServicosDeAoVivo | null = null
+  const dispositivos = new Map<TipoDeDispositivo, ServicosDoDispositivo>()
 
   return {
     servicos,
@@ -170,6 +188,23 @@ export function criarFalsos(
           return servicos
         },
         obterPreparacao: () => preparacaoVazia(),
+        obterAoVivo: () => {
+          chamadas.obterAoVivo++
+          aoVivo ??= aoVivoVazio()
+          return aoVivo
+        },
+        obterDispositivo: (tipo) => {
+          chamadas.obterDispositivo.push(tipo)
+          let d = dispositivos.get(tipo)
+          if (d === undefined) {
+            d = criarFalsosDeDispositivo().servicos
+            dispositivos.set(tipo, d)
+          }
+          return d
+        },
+        limparFragmento: () => {
+          chamadas.limparFragmento++
+        },
         navegar: (caminho) => {
           chamadas.navegar.push(caminho)
         },
@@ -524,4 +559,215 @@ export function arquivoDeTeste(tipo: 'png' | 'mp3' | 'html' | 'svg', nome: strin
   bytes.set(CABECALHO_DE_TESTE[tipo].slice(0, tamanho))
   const extensao = /\.([^./\\]+)$/.exec(nome)?.[1]?.toLowerCase() ?? ''
   return new File([bytes], nome, { type: TIPO_PELO_NOME[extensao] ?? '' })
+}
+
+/** Status do `realtime-js` que leva cada estado do canal (o adaptador real traduz de volta). */
+const STATUS_DO_ESTADO: Readonly<Record<Exclude<EstadoDoCanal, 'conectando'>, ['SUBSCRIBED' | 'CHANNEL_ERROR' | 'TIMED_OUT' | 'CLOSED', Error?]>> = {
+  conectado: ['SUBSCRIBED'],
+  reconectando: ['TIMED_OUT'],
+  fechado: ['CLOSED'],
+  negado: ['CHANNEL_ERROR', new Error('Unauthorized: You do not have permissions to read from this Channel topic')],
+}
+
+const RESPOSTA_DO_SEND: Readonly<Record<RespostaDoEnvio, 'ok' | 'timed out' | 'error'>> = { ok: 'ok', sem_resposta: 'timed out', falhou: 'error' }
+
+/**
+ * Canais falsos para os testes de tela (E3): o **adaptador real** (`criarFabricaDeCanais`) sobre o
+ * cliente Realtime falso de `realtimeFalso.ts`, para que as telas recebam exatamente o que o adaptador
+ * entrega (mensagem inválida descartada pelos leitores do domínio, eco local, um canal por tópico com
+ * contagem de referências, estado atual para quem chega depois). Por padrão o canal passa sozinho de
+ * `conectando` a `conectado` (num microtask); `definirEstado` o derruba para `reconectando`, `fechado`
+ * ou `negado` e o traz de volta; `responderEnvio('sem_resposta')` faz o `ack` não responder. Os
+ * ouvintes são agendados por `queueMicrotask` (fora do callback, como o `setTimeout` do app, e sem
+ * depender dos relógios falsos). `entregar` manda pelo canal o que vier, válido ou não.
+ */
+export function criarCanalFalso(opcoes: { conectarSozinho?: boolean } = {}) {
+  const realtime = criarRealtimeFalso({ conectarSozinho: opcoes.conectarSozinho ?? true })
+  const fabricas = new Map<string, FabricaDeCanais>()
+  return {
+    realtime,
+    /** A mesma fábrica para o mesmo usuário, como `obterServicosDeAoVivo` e `obterServicosDeDispositivo`. */
+    canais(usuarioId: string): FabricaDeCanais {
+      let fabrica = fabricas.get(usuarioId)
+      if (fabrica === undefined) {
+        fabrica = criarFabricaDeCanais(realtime.cliente as unknown as SupabaseClient, usuarioId, (f) => queueMicrotask(f))
+        fabricas.set(usuarioId, fabrica)
+      }
+      return fabrica
+    },
+    /** Tópicos com canal na lista do cliente agora (`estudio`, `episodio:<id>:controle`). */
+    abertos(): string[] {
+      return realtime.canais().map((c) => c.topico)
+    },
+    definirEstado(topico: string, estado: Exclude<EstadoDoCanal, 'conectando'>): void {
+      const [status, erro] = STATUS_DO_ESTADO[estado]
+      realtime.emitirStatus(realtime.canal(topico), status, erro)
+    },
+    responderEnvio(r: RespostaDoEnvio): void {
+      realtime.responderSend(RESPOSTA_DO_SEND[r])
+    },
+    /** Mensagem chegando de outro cliente pelo `broadcast` do tópico (passa pelos leitores do adaptador). */
+    entregar(topico: string, evento: string, payload: unknown): void {
+      realtime.emitirBroadcast(realtime.canal(topico), evento, payload)
+    },
+    /** Presença do tópico mudou (`sync`) para `estado` (chave → registros). */
+    sincronizarPresenca(topico: string, estado: Record<string, unknown[]>): void {
+      realtime.emitirPresenca(realtime.canal(topico), 'sync', estado)
+    },
+    entrarAlguem(topico: string): void {
+      realtime.emitirPresenca(realtime.canal(topico), 'join')
+    },
+    /** O que este cliente enviou no tópico (`event` e `payload`, com o `remetente`). */
+    enviados(topico: string): { event: string; payload: unknown }[] {
+      return realtime.criados.filter((c) => c.topico === topico).flatMap((c) => c.enviados.map(({ event, payload }) => ({ event, payload })))
+    },
+    /** Presenças marcadas (`track`) no tópico, na ordem. */
+    presencas(topico: string): unknown[] {
+      return realtime.criados.filter((c) => c.topico === topico).flatMap((c) => c.presencas)
+    },
+  }
+}
+
+export type CanalFalso = ReturnType<typeof criarCanalFalso>
+
+/**
+ * Ao vivo sem nada, para as telas de membro que não o usam: nenhum episódio ativo, nenhum dispositivo;
+ * iniciar, encerrar e modo teste resolvem sem efeito; criar código recusa (`outro`: um falso vazio não
+ * inventa código); canais pelo canal falso.
+ */
+export function aoVivoVazio(): ServicosDeAoVivo {
+  const nada = async () => {}
+  const repo: RepositorioDoAoVivo = {
+    episodioAtivo: async () => null,
+    iniciar: nada,
+    encerrar: nada,
+    definirModoTeste: nada,
+    listarDispositivos: async () => [],
+    criarCodigo: async () => {
+      throw new ErroDoAoVivo('outro')
+    },
+    revogar: async () => ({ usuario: null }),
+  }
+  return { repo, canais: criarCanalFalso().canais }
+}
+
+type RespostaDoPareamento = Awaited<ReturnType<ServicoDeDispositivo['parear']>>
+type DispositivoAtual = NonNullable<Awaited<ReturnType<ServicoDeDispositivo['dispositivoAtual']>>>
+type CargaDoPalco = Awaited<ReturnType<RepositorioDoPalco['carregar']>>
+type MetodoDoDispositivo = 'sessaoAtual' | 'entrarAnonimo' | 'parear' | 'dispositivoAtual' | 'sair'
+
+/**
+ * Sessão de dispositivo falsa (E3, D4), com o que muda a tela: `entrarAnonimo` cria uma sessão anônima
+ * nova (um `usuarioId` novo a cada vez); `parear` responde o que foi programado (padrão: `pareado`) e,
+ * pareado, liga o dispositivo à sessão; `dispositivoAtual` só devolve o dispositivo com sessão anônima;
+ * `sair` apaga a sessão. `ordem` anota cada chamada (para conferir, por exemplo, que o fragmento foi
+ * limpo antes de qualquer rede). Uma falha programada (`falharProxima`) vale uma chamada.
+ */
+export function criarFalsosDeDispositivo(
+  inicial: {
+    sessao?: { usuarioId: string; anonima: boolean } | null
+    dispositivo?: DispositivoAtual | null
+    pareamento?: RespostaDoPareamento
+    episodioAtivo?: { id: string; modo: 'ao_vivo' | 'teste' } | null
+    carga?: CargaDoPalco
+  } = {},
+) {
+  let sessao = inicial.sessao ?? null
+  let dispositivo = inicial.dispositivo ?? null
+  let pareamento: RespostaDoPareamento = inicial.pareamento ?? { resultado: 'pareado', dispositivo: { id: '0b6f3c1e-2a4d-4f8b-9c7e-1d2e3f4a5b6c', rotulo: 'Dispositivo de teste' } }
+  let episodioAtivo = inicial.episodioAtivo ?? null
+  let carga: CargaDoPalco | null = inicial.carga ?? null
+  let proximoUsuario = 1
+  const falhas = new Map<MetodoDoDispositivo, ErroDeDispositivo>()
+  const canal = criarCanalFalso()
+  const chamadas = {
+    ordem: [] as string[],
+    parear: [] as { codigo: string; tipo: TipoDeDispositivo }[],
+    sair: 0,
+    registros: [] as LinhaDoRegistro[],
+    urls: [] as string[],
+  }
+
+  function anotar(metodo: MetodoDoDispositivo): void {
+    chamadas.ordem.push(metodo)
+    const erro = falhas.get(metodo)
+    if (erro) {
+      falhas.delete(metodo)
+      throw erro
+    }
+  }
+
+  const servico: ServicoDeDispositivo = {
+    async sessaoAtual() {
+      anotar('sessaoAtual')
+      return sessao === null ? null : { ...sessao }
+    },
+    async entrarAnonimo() {
+      anotar('entrarAnonimo')
+      const usuarioId = `5a1c9e2b-7d3f-4b6a-8c1d-${String(proximoUsuario++).padStart(12, '0')}`
+      sessao = { usuarioId, anonima: true }
+      dispositivo = null
+      return { usuarioId }
+    },
+    async parear(codigo, tipo) {
+      anotar('parear')
+      chamadas.parear.push({ codigo, tipo })
+      if (pareamento.resultado === 'pareado' && pareamento.dispositivo !== null) {
+        dispositivo = { id: pareamento.dispositivo.id, tipo, rotulo: pareamento.dispositivo.rotulo, cameraId: null }
+      }
+      return { resultado: pareamento.resultado, dispositivo: pareamento.dispositivo === null ? null : { ...pareamento.dispositivo } }
+    },
+    async dispositivoAtual() {
+      anotar('dispositivoAtual')
+      return sessao?.anonima === true && dispositivo !== null ? { ...dispositivo } : null
+    },
+    async sair() {
+      chamadas.sair++
+      chamadas.ordem.push('sair')
+      sessao = null
+      dispositivo = null
+    },
+  }
+
+  const palco: RepositorioDoPalco = {
+    async episodioAtivo() {
+      return episodioAtivo === null ? null : { ...episodioAtivo }
+    },
+    async carregar(episodioId) {
+      if (carga === null || carga.episodio.id !== episodioId) throw new ErroDoAoVivo('invalido')
+      return JSON.parse(JSON.stringify(carga)) as CargaDoPalco
+    },
+    async urlDoArquivo(caminho) {
+      chamadas.urls.push(caminho)
+      return `https://armazenamento.revocast.test/assinada/${caminho}?token=teste`
+    },
+    async registrar(l) {
+      chamadas.registros.push({ ...l })
+    },
+  }
+
+  return {
+    servicos: { servico, palco, canais: canal.canais } satisfies ServicosDoDispositivo,
+    canal,
+    chamadas,
+    definirSessao(s: { usuarioId: string; anonima: boolean } | null): void {
+      sessao = s
+    },
+    definirDispositivo(d: DispositivoAtual | null): void {
+      dispositivo = d
+    },
+    responderPareamento(r: RespostaDoPareamento): void {
+      pareamento = r
+    },
+    definirEpisodioAtivo(e: { id: string; modo: 'ao_vivo' | 'teste' } | null): void {
+      episodioAtivo = e
+    },
+    definirCarga(c: CargaDoPalco | null): void {
+      carga = c
+    },
+    /** A próxima chamada de `metodo` lança `erro` (vale uma vez; `sair` nunca lança, como a porta promete). */
+    falharProxima(metodo: Exclude<MetodoDoDispositivo, 'sair'>, erro: ErroDeDispositivo): void {
+      falhas.set(metodo, erro)
+    },
+  }
 }

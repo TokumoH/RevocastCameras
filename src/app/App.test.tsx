@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { App } from './App'
 import { resolverRota } from './rotas'
 import { criarFalsos, usuarioGoogle } from './servicosFalsos'
+import type { TipoDeDispositivo } from '../domains/acesso/dispositivos'
 
 /** Cliente Supabase mínimo: sem sessão e com a assinatura de eventos que o adaptador cancela. */
 const createClient = vi.hoisted(() =>
@@ -59,24 +60,48 @@ describe('App', () => {
     if (nome === 'entrar') await waitFor(() => expect(f.chamadas.navegar).toEqual(['/painel']))
   })
 
+  /**
+   * Rota de dispositivo pelo caminho padrão (sem dependências injetadas, módulos novos a cada caso): a
+   * tela é desenhada e, como a rota fará a partir da Tarefa 6 (`useDispositivo`), as dependências do
+   * navegador pedem os serviços do tipo dela (`obterDispositivo(tipo)`, duas vezes). Devolve a
+   * `storageKey` de cada `createClient`.
+   */
+  async function abrirRotaDeDispositivo(caminho: string, tipo: TipoDeDispositivo, frase: string): Promise<string[]> {
+    createClient.mockClear()
+    vi.resetModules()
+    const { App: AppNovo } = await import('./App')
+    const { dependenciasDoNavegador } = await import('./dependencias')
+    render(<AppNovo caminho={caminho} />)
+    expect(await screen.findByText(frase)).toBeTruthy()
+    const dep = dependenciasDoNavegador()
+    dep.obterDispositivo(tipo)
+    dep.obterDispositivo(tipo)
+    cleanup()
+    return createClient.mock.calls.map((c) => (c[2] as { auth: { storageKey: string } }).auth.storageKey)
+  }
+
+  const ROTAS_DE_DISPOSITIVO: [string, TipoDeDispositivo, string][] = [
+    ['/camera', 'camera', 'Em construção — etapa E4'],
+    ['/obs/palco', 'obs_palco', 'Em construção — etapa E3'],
+    ['/obs/camera', 'obs_camera', 'Em construção — etapa E4'],
+  ]
+
   test('caminho-padrao-nao-cria-cliente-em-dispositivo', async () => {
     vi.stubEnv('VITE_SUPABASE_URL', 'https://abc.supabase.co')
     vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_x')
-    const casos: [string, string][] = [
-      ['/camera', 'Em construção — etapa E4'],
-      ['/obs/palco', 'Em construção — etapa E3'],
-      ['/obs/camera', 'Em construção — etapa E4'],
-      ['/xyz', 'Esse endereço não existe.'],
-    ]
-    for (const [caminho, frase] of casos) {
-      createClient.mockClear()
-      vi.resetModules()
-      const { App: AppNovo } = await import('./App')
-      render(<AppNovo caminho={caminho} />)
-      expect(await screen.findByText(frase)).toBeTruthy()
-      expect(createClient, caminho).toHaveBeenCalledTimes(0)
-      cleanup()
+    for (const [caminho, tipo, frase] of ROTAS_DE_DISPOSITIVO) {
+      const chaves = await abrirRotaDeDispositivo(caminho, tipo, frase)
+      expect(chaves, caminho).not.toContain('revocast-auth-membro')
     }
+
+    // página desconhecida: nenhum cliente
+    createClient.mockClear()
+    vi.resetModules()
+    const { App: Desconhecida } = await import('./App')
+    render(<Desconhecida caminho="/xyz" />)
+    expect(await screen.findByText('Esse endereço não existe.')).toBeTruthy()
+    expect(createClient).toHaveBeenCalledTimes(0)
+    cleanup()
 
     // controle positivo: a rota de membro, pelo mesmo caminho padrão, cria o cliente uma vez
     createClient.mockClear()
@@ -86,5 +111,24 @@ describe('App', () => {
     expect(await screen.findByRole('button', { name: 'Entrar com Google' })).toBeTruthy()
     expect(createClient).toHaveBeenCalledTimes(1)
     expect(createClient.mock.calls[0][2]).toMatchObject({ auth: { storageKey: 'revocast-auth-membro' } })
+  })
+
+  test('dispositivo-cria-so-o-proprio-cliente', async () => {
+    vi.stubEnv('VITE_SUPABASE_URL', 'https://abc.supabase.co')
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_x')
+    for (const [caminho, tipo, frase] of ROTAS_DE_DISPOSITIVO) {
+      const chaves = await abrirRotaDeDispositivo(caminho, tipo, frase)
+      expect(chaves, caminho).toEqual([`revocast-auth-${tipo}`])
+      expect(createClient.mock.calls[0][2], caminho).toMatchObject({ auth: { detectSessionInUrl: false } })
+    }
+
+    // em /painel, só o de membro
+    createClient.mockClear()
+    vi.resetModules()
+    const { App: AppNovo } = await import('./App')
+    render(<AppNovo caminho="/painel" />)
+    expect(await screen.findByRole('button', { name: 'Entrar com Google' })).toBeTruthy()
+    const chaves = createClient.mock.calls.map((c) => (c[2] as { auth: { storageKey: string } }).auth.storageKey)
+    expect(chaves).toEqual(['revocast-auth-membro'])
   })
 })
