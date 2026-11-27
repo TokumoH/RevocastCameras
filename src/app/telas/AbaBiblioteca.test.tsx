@@ -474,14 +474,18 @@ describe('aba Biblioteca', () => {
       expect(evento.defaultPrevented).toBe(true)
       act(() => envio.concluir())
       await waitFor(() => expect(screen.queryByText(AVISO_DA_FILA)).toBeNull())
-      expect(remover.mock.calls.filter(([tipo, fn]) => tipo === 'beforeunload' && fn === ouvinte)).toHaveLength(1)
+      // O fim do envio é renderizado fora de `act`: o React tira o aviso no commit, mas a limpeza do `useEffect`
+      // (o `removeEventListener`) roda depois, numa tarefa do Scheduler. Sob carga, o teste chegava aqui antes
+      // dela (VER-045); por isso espera a condição do ouvinte, e não só o texto.
+      await waitFor(() => expect(remover.mock.calls.filter(([tipo, fn]) => tipo === 'beforeunload' && fn === ouvinte)).toHaveLength(1))
       // só uma falha na fila: nada pendente, sem aviso e sem ouvinte
       escolher([arquivoDeTeste('svg', 'desenho.svg')])
       await within(await linhaDaFila('desenho.svg')).findByText(TIPO)
       expect(screen.queryByText(AVISO_DA_FILA)).toBeNull()
       const ativos = () =>
         adicionar.mock.calls.filter(([tipo]) => tipo === 'beforeunload').length - remover.mock.calls.filter(([tipo]) => tipo === 'beforeunload').length
-      expect(ativos()).toBe(0)
+      // a recusa também é renderizada fora de `act`: a mesma espera pela limpeza do efeito
+      await waitFor(() => expect(ativos()).toBe(0))
       // um envio pendente na desmontagem: o ouvinte sai junto
       escolher([arquivoDeTeste('png', 'outra.png')])
       await waitFor(() => expect(f.chamadas.enviar).toHaveLength(2))
