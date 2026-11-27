@@ -24,7 +24,7 @@ Criado na Tarefa 1 da etapa E0 ([PLA-001](../../../docs/planos/2026-11-17-e0-fun
 ## Organização
 
 - `tokens.css`: variáveis CSS (inclui `--on-accent`, texto sobre rosa e ciano); `@media (prefers-color-scheme: dark)` redefine as que mudam.
-- `base.css`: reset, corpo, tipografia e as classes `.cartao`, `.botao` e `.tela`; desde a Tarefa 4 da E1, `.botao--contorno`, `.mensagem`, `.mensagem--erro` e `.cabecalho-membro` (com `__email` e `__papel`); desde a Tarefa 5, `.tela--larga`, `.abas` (com `__lista` e `__painel`), `.aba`, `.aba--ativa`, `.membros` (com `__incluir`; `position: relative` para segurar as regiões de aviso vazias, que usam `.so-leitor`), `.campo`, `.tabela-rolavel`, `.tabela` (com `__email`, `__fraco`, `__acoes` e `__aviso`), `.botao--pequeno`, `.botao:disabled`, `.etiqueta` e `.so-leitor`.
+- `base.css`: reset, corpo, tipografia e as classes `.cartao`, `.botao` e `.tela`; desde a Tarefa 4 da E1, `.botao--contorno`, `.mensagem`, `.mensagem--erro` e `.cabecalho-membro` (com `__email` e `__papel`); desde a Tarefa 5, `.tela--larga`, `.abas` (com `__lista` e `__painel`), `.aba`, `.aba--ativa`, `.membros` (com `__incluir`; `position: relative` para segurar as regiões de aviso vazias, que usam `.so-leitor`), `.campo`, `.tabela-rolavel`, `.tabela` (com `__email`, `__fraco`, `__acoes` e `__aviso`), `.botao--pequeno`, `.botao:disabled`, `.etiqueta` e `.so-leitor`; desde a Tarefa 5 da E2, `.biblioteca`, `.uso` (com `__alerta`), `.envio` (com `--arrastando`, `__rotulo` e `__dica`), `.fila` (com `__nome`, `__erro` e `__aviso`), `.barra-de-progresso`, `.lista-de-midias` (com `__cabeca`, `__nome`, `__campos`, `__volume` e `__confirmacao`), `.campo--curto` e `.previa`.
 
 ## Por que esta organização
 
@@ -43,7 +43,7 @@ Paleta num arquivo só: mudar a identidade é mudar `tokens.css`. O modo escuro 
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
 | [`tokens.css`](tokens.css) | Cores `#1b1b22`, `#fffaf4`, `#d83868`, `#27bfe8`, `#d8b888`, borda 3 px, sombra dura, fontes Lilita One, Nunito e Caveat; versão escura |
-| [`base.css`](base.css) | Reset, tipografia, fundo pontilhado, `.cartao`, `.botao`, `.tela`, `.botao--contorno`, `.mensagem`, `.mensagem--erro`, `.cabecalho-membro`; abas, formulário e tabela da Tarefa 5 da E1 (`.tela--larga`, `.abas`, `.aba`, `.campo`, `.tabela-rolavel`, `.tabela`, `.botao--pequeno`, `.etiqueta`, `.so-leitor`) |
+| [`base.css`](base.css) | Reset, tipografia, fundo pontilhado, `.cartao`, `.botao`, `.tela`, `.botao--contorno`, `.mensagem`, `.mensagem--erro`, `.cabecalho-membro`; abas, formulário e tabela da Tarefa 5 da E1 (`.tela--larga`, `.abas`, `.aba`, `.campo`, `.tabela-rolavel`, `.tabela`, `.botao--pequeno`, `.etiqueta`, `.so-leitor`); aba Biblioteca da Tarefa 5 da E2 (`.biblioteca`, `.uso`, `.envio`, `.fila`, `.barra-de-progresso`, `.lista-de-midias`, `.previa`) |
 
 ## Lógica
 
@@ -57,6 +57,7 @@ Para ver o modo escuro: abrir o app com o sistema em tema escuro (ou emular `pre
 
 - As classes da Tarefa 4 da E1 usam só variáveis de `tokens.css`; conferidas no Chromium (Playwright) em claro e escuro, a 390 px de largura (registro VER-018).
 - As classes da Tarefa 5 da E1 também usam só variáveis de `tokens.css`; conferidas no Chromium em claro e escuro, a 320, 390 e 1280 px: a página não rola na horizontal (a tabela rola dentro de `.tabela-rolavel`), o cartão não estoura e os painéis `hidden` das abas não ocupam espaço (registro VER-019).
+- As classes da Tarefa 5 da E2 usam só variáveis de `tokens.css` (além de `transparent`); conferidas no Chromium em claro e escuro, a 320, 390 e 1280 px: a página não rola na horizontal, nenhum elemento da aba passa da borda do cartão e a miniatura não é ampliada além do tamanho natural (registro [VER-028](../../../docs/verificacoes/2026-11-26-028-e2-aba-biblioteca.md)).
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`.
 - Não há subdiretórios.
 

@@ -3,12 +3,14 @@ import { podeGerenciarMembros } from '../../domains/acesso/papeis'
 import type { Papel } from '../../domains/acesso/papeis'
 import type { ServicosDeMembro } from '../../domains/acesso/portas'
 import type { UsuarioDaSessao } from '../../domains/acesso/sessao'
+import type { ServicosDePreparacao } from '../../domains/preparacao/portas'
 import { Abas } from '../../shared/ui/Abas'
 import type { Aba } from '../../shared/ui/Abas'
 import { Cartao } from '../../shared/ui/Cartao'
 import { Logo } from '../../shared/ui/Logo'
 import type { Dependencias } from '../dependencias'
 import { GuardaDeMembro } from '../GuardaDeMembro'
+import { AbaBiblioteca } from './AbaBiblioteca'
 import { AbaMembros } from './AbaMembros'
 
 /** Abas do DES-001 §9, nesta ordem; a etapa em que cada provisória fica pronta (DES-001 §14). */
@@ -34,14 +36,18 @@ function ConteudoDoPainel({
   papel,
   servicos,
   reavaliar,
+  obterPreparacao,
 }: {
   titulo: string
   usuario: UsuarioDaSessao
   papel: Papel
   servicos: ServicosDeMembro
   reavaliar: () => void
+  obterPreparacao: () => ServicosDePreparacao
 }) {
   const [escolhida, setEscolhida] = useState(ABA_INICIAL)
+  // Serviços da Preparação obtidos uma vez, já dentro da guarda (o mesmo cliente de membro; E2, Tarefa 4).
+  const [preparacao] = useState(obterPreparacao)
   const abas = abasDoPapel(papel)
   // Se o papel mudar e a aba escolhida sumir (admin rebaixado em Membros), a escolha volta para a inicial
   // (ajuste de estado durante o render, padrão do React): se o papel voltar, Membros não reabre sozinha.
@@ -56,6 +62,8 @@ function ConteudoDoPainel({
         <Abas abas={abas} ativa={ativa.id} aoEscolher={setEscolhida}>
           {ativa.id === 'membros' ? (
             <AbaMembros repo={servicos.repo} usuario={usuario} reavaliar={reavaliar} />
+          ) : ativa.id === 'biblioteca' ? (
+            <AbaBiblioteca servicos={preparacao} usuario={usuario} reavaliar={reavaliar} />
           ) : (
             <p>Em construção — etapa {ativa.etapa}</p>
           )}
@@ -65,11 +73,11 @@ function ConteudoDoPainel({
   )
 }
 
-/** `/painel` (equipe e admin): guardado desde a Tarefa 4 da E1; abas por estado desde a Tarefa 5 (D8). */
+/** `/painel` (equipe e admin): guardado desde a Tarefa 4 da E1; abas por estado desde a Tarefa 5 (D8); Biblioteca real desde a Tarefa 5 da E2. */
 export function Painel({ titulo, dependencias }: { titulo: string; dependencias: Dependencias }) {
   return (
     <GuardaDeMembro area="painel" titulo={titulo} dependencias={dependencias}>
-      {(membro) => <ConteudoDoPainel titulo={titulo} {...membro} />}
+      {(membro) => <ConteudoDoPainel titulo={titulo} {...membro} obterPreparacao={dependencias.obterPreparacao} />}
     </GuardaDeMembro>
   )
 }

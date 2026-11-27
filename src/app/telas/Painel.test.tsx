@@ -1,22 +1,23 @@
 // @vitest-environment jsdom
-import { afterEach, describe, test, expect } from 'vitest'
+import { afterEach, describe, test, expect, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Papel } from '../../domains/acesso/papeis'
 import { App } from '../App'
-import { criarFalsos, usuarioGoogle } from '../servicosFalsos'
+import type { Dependencias } from '../dependencias'
+import { criarFalsos, preparacaoVazia, usuarioGoogle } from '../servicosFalsos'
 
 afterEach(cleanup)
 
 const ABAS_DA_EQUIPE = ['Episódios', 'Biblioteca', 'Cenas', 'Gestos', 'Ao vivo']
 const ABAS_DO_ADMIN = ['Episódios', 'Biblioteca', 'Cenas', 'Gestos', 'Membros', 'Ao vivo']
 
-async function abrirPainel(papel: Papel) {
+async function abrirPainel(papel: Papel, extra: Partial<Dependencias> = {}) {
   const f = criarFalsos({
     usuario: usuarioGoogle('adm@revocast.test'),
     papel,
     permitidos: [{ email: 'adm@revocast.test', papel: 'admin', criadoPor: null }],
   })
-  const tela = render(<App caminho="/painel" dependencias={f.dependencias()} />)
+  const tela = render(<App caminho="/painel" dependencias={f.dependencias(extra)} />)
   await screen.findByRole('tablist')
   return { f, ...tela }
 }
@@ -47,8 +48,23 @@ describe('painel com abas (D8)', () => {
     expect(episodios.getAttribute('aria-selected')).toBe('false')
     expect(within(screen.getByRole('tabpanel')).getByText('Em construção — etapa E3')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Biblioteca' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Cenas' }))
     expect(within(screen.getByRole('tabpanel')).getByText('Em construção — etapa E2')).toBeTruthy()
+  })
+
+  test('biblioteca-no-painel', async () => {
+    const obterPreparacao = vi.fn(preparacaoVazia)
+    await abrirPainel('equipe', { obterPreparacao })
+    fireEvent.click(screen.getByRole('tab', { name: 'Biblioteca' }))
+    const painel = screen.getByRole('tabpanel')
+    expect(await within(painel).findByLabelText('Enviar sons e imagens')).toBeTruthy()
+    expect(await within(painel).findByText('0,0 MB de 1 GB')).toBeTruthy()
+    expect(painel.textContent).not.toContain('Em construção')
+    // os serviços da Preparação são obtidos uma vez, mesmo trocando de aba
+    fireEvent.click(screen.getByRole('tab', { name: 'Episódios' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Biblioteca' }))
+    await within(screen.getByRole('tabpanel')).findByText('0,0 MB de 1 GB')
+    expect(obterPreparacao).toHaveBeenCalledTimes(1)
   })
 
   test('abas-acessiveis', async () => {
