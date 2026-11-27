@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Revogados } from '../../domains/aovivo/mensagens'
 import { criarPalco } from '../../domains/aovivo/palco'
-import type { CanalDoControle, RepositorioDoPalco } from '../../domains/aovivo/portas'
+import type { CanalDoControle, CanalDoEstado, EstadoDoCanal, RepositorioDoPalco } from '../../domains/aovivo/portas'
 import { criarExecutorObs } from '../../domains/obs/executor'
 import type { ExecutorObs } from '../../domains/obs/executor'
 import { NIVEL_DE_CONTROLE } from '../../domains/obs/portas'
@@ -178,8 +178,9 @@ const VISTA_INICIAL: Vista = { carga: null, modo: null, urls: {}, avisoId: null,
  * - `estudio` por `acompanharEstudio` (presença com a `SituacaoDoObs`, `episodio_ativo_mudou`,
  *   `revogacao`, canal fechado ou negado → reavaliação);
  * - `episodioAtivo()` ao conectar (a primeira vez e a cada volta) e no aviso; com episódio: `carregar`,
- *   URLs assinadas (renovadas a cada 45 min), o `:controle`, um executor e o serviço do palco; a troca
- *   de episódio para os dois (`palco.parar()` e `executor.parar()`, VER-039 N5) e fecha o tópico antigo;
+ *   URLs assinadas (renovadas a cada 45 min), o `:controle` (comandos), o `:estado` (onde o palco publica o
+ *   estado, VER-047), um executor e o serviço do palco; a troca de episódio para os dois (`palco.parar()` e
+ *   `executor.parar()`, VER-039 N5) e fecha os dois tópicos antigos;
  * - a situação do OBS é relida de tempos em tempos e nos eventos de saída (presença e estado republicados
  *   quando muda); o websocket caído é percebido por `aoFechar` e reconectado no mesmo objeto;
  * - selo (tecla `s`, 5 s) e configuração do websocket (tecla `c`, 2 min) só com a saída parada e o status
@@ -302,6 +303,8 @@ export function PalcoNoAr({
       episodio: { id: string; modo: 'ao_vivo' | 'teste' }
       dados: Carga
       canal: CanalDoControle
+      /** `:estado` (VER-047): onde o palco publica o estado no ar. */
+      canalDoEstado: CanalDoEstado
       executor: ExecutorObs
       palco: ReturnType<typeof criarPalco>
       soltar: (() => void)[]
@@ -365,11 +368,14 @@ export function PalcoNoAr({
     }
 
     function iniciarSessao(episodio: Sessao['episodio'], dados: Carga): void {
-      const canal = servicos.canais(dispositivo.usuarioId).controle(episodio.id)
+      const canais = servicos.canais(dispositivo.usuarioId)
+      const canal = canais.controle(episodio.id)
+      const canalDoEstado = canais.estado(episodio.id) // VER-047: o estado no ar num tópico próprio
       const executor = criarExecutor()
       let criada: Sessao | null = null // a releitura só é pedida depois de a sessão existir
       const palco = criarPalco({
         canal,
+        canalDoEstado,
         repo: servicos.palco,
         executor,
         revogados,
@@ -379,15 +385,19 @@ export function PalcoNoAr({
         agendarRepeticao: repetir,
         recarregarDados: () => (criada === null ? Promise.resolve(null) : recarregarDados(criada)),
       })
-      const s: Sessao = { episodio, dados, canal, executor, palco, soltar: [] }
+      const s: Sessao = { episodio, dados, canal, canalDoEstado, executor, palco, soltar: [] }
       criada = s
       sessao = s
+      // `:controle` e `:estado`: a volta de qualquer um a `conectado` republica; a perda de qualquer um fecha tudo
+      // (`canalPerdido`, como o `estudio`) e a reabertura é a do `acompanharEstudio`
+      const aoMudarCanal = (e: EstadoDoCanal) => {
+        if (!vivo || sessao !== s) return
+        if (e === 'conectado') palco.republicar()
+        else if (e === 'fechado' || e === 'negado') estudio.canalPerdido()
+      }
       s.soltar.push(
-        canal.aoMudarEstado((e) => {
-          if (!vivo || sessao !== s) return
-          if (e === 'conectado') palco.republicar()
-          else if (e === 'fechado' || e === 'negado') estudio.canalPerdido()
-        }),
+        canal.aoMudarEstado(aoMudarCanal),
+        canalDoEstado.aoMudarEstado(aoMudarCanal),
         repetir(() => void renovarUrls(s), RENOVAR_URLS_MS),
       )
       urlsAtuais = {}
@@ -404,6 +414,7 @@ export function PalcoNoAr({
       s.executor.parar()
       for (const f of s.soltar) f()
       void s.canal.fechar().catch(() => {})
+      void s.canalDoEstado.fechar().catch(() => {})
       for (const el of audios.current.values()) {
         try {
           el.pause()
@@ -587,7 +598,7 @@ export function PalcoNoAr({
       aoEpisodioMudar: () => void consultarEpisodio(),
       aoRevogarOutro: (usuario) => revogados.revogar(usuario),
       aoFecharCanais: () => {
-        consulta++ // uma consulta em curso não reabre o `:controle`
+        consulta++ // uma consulta em curso não reabre o `:controle` nem o `:estado`
         cancelarNovaConsulta?.()
         cancelarNovaConsulta = null
         pararSessao()

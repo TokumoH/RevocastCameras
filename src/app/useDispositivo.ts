@@ -113,7 +113,7 @@ export interface OpcoesDoEstudio {
   aoEpisodioMudar?(): void
   /** `revogacao` de outro usuário (o palco descarta o remetente por 15 min, D5). */
   aoRevogarOutro?(usuario: string): void
-  /** Os canais caíram, o dispositivo foi revogado ou a rota saiu: o palco fecha o `:controle` e para. */
+  /** Os canais caíram, o dispositivo foi revogado ou a rota saiu: o palco fecha o `:controle` e o `:estado` e para. */
   aoFecharCanais?(): void
 }
 
@@ -122,7 +122,7 @@ export interface OpcoesDoEstudio {
  * - marca a presença ao abrir (o adaptador a remarca a cada volta a `conectado`);
  * - `revogacao` do próprio `usuarioId` → fecha os canais, `sair()` e `marcarRevogado()`; de outro
  *   usuário → `aoRevogarOutro`;
- * - canal `fechado` ou `negado` (o mesmo vale para o `:controle` do palco, por `canalPerdido`) → fecha
+ * - canal `fechado` ou `negado` (o mesmo vale para o `:controle` e o `:estado` do palco, por `canalPerdido`) → fecha
  *   os canais e refaz `resolverDispositivo` sem código: sem dispositivo → tela de revogado (o `sair()`
  *   já foi feito pela avaliação, se havia sessão); com dispositivo → reabre em 5 s; `falha` (rede) →
  *   tenta de novo em 5 s, sem dizer "revogado".

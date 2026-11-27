@@ -5,7 +5,7 @@ import type { ListasDoAoVivo } from '../domains/aovivo/comandos'
 import { Revogados } from '../domains/aovivo/mensagens'
 import type { Comando, EstadoNoAr, PedidoDeComando } from '../domains/aovivo/mensagens'
 import { ErroDoAoVivo } from '../domains/aovivo/portas'
-import type { CanalDoControle, CanalDoEstudio, EstadoDoCanal, FabricaDeCanais, RepositorioDoAoVivo, RespostaDoEnvio } from '../domains/aovivo/portas'
+import type { CanalDoControle, CanalDoEstado, CanalDoEstudio, EstadoDoCanal, FabricaDeCanais, RepositorioDoAoVivo, RespostaDoEnvio } from '../domains/aovivo/portas'
 import { ErroDePreparacao } from '../domains/preparacao/portas'
 import type { ServicosDePreparacao } from '../domains/preparacao/portas'
 import type { Dependencias } from './dependencias'
@@ -35,7 +35,7 @@ export interface AoVivo {
   episodio: EpisodioDoAoVivo | null
   /** O último estado publicado pelo palco **deste** episódio (validado no adaptador; outro episódio é ignorado). */
   estadoNoAr: EstadoNoAr | null
-  /** Pior estado entre `estudio` e o `:controle` do episódio (sem episódio, só o de `estudio`). */
+  /** Pior estado entre `estudio`, o `:controle` e o `:estado` do episódio (sem episódio, só o de `estudio`; VER-047). */
   canal: EstadoDoCanal
   /** Um `obs_palco` na presença de `estudio` (D14). */
   palcoPresente: boolean
@@ -87,10 +87,12 @@ interface Carga {
  *   mantém a pessoa e a leitura continua negada, a tela não reavalia sem fim); um sucesso zera as contagens;
  * - `estudio` de fora (opcional): quem já tem o `estudio` (o painel, Tarefas 8 e 9) o passa, e o hook não
  *   abre outra alça nem cuida da perda dele (a presença e o `reavaliar()` do `estudio` são de quem o abriu);
- * - `estudio` por `useEstudio` (presença `{ tipo: 'membro', papel }`) e o `:controle` do episódio por
- *   `useCanalReaberto` (presença marcada: o palco republica o estado); trocar de episódio fecha o tópico
- *   antigo e abre o novo; `fechado`/`negado` em qualquer um → um `reavaliar()` só (os dois juntos, numa
- *   renovação de token, contam uma vez) e reabertura em 5 s se a tela continuar montada;
+ * - `estudio` por `useEstudio` (presença `{ tipo: 'membro', papel }`), o `:controle` do episódio (os comandos)
+ *   e o `:estado` (o estado no ar, que só o palco publica; VER-047) por `useCanalReaberto`; a presença no
+ *   `:controle` é marcada quando o `:estado` está conectado (a entrada faz o palco republicar, e o estado
+ *   chega ao canal já aberto); trocar de episódio fecha os dois tópicos antigos e abre os novos;
+ *   `fechado`/`negado` em qualquer um → um `reavaliar()` só (todos juntos, numa renovação de token,
+ *   contam uma vez) e reabertura em 5 s se a tela continuar montada;
  * - `revogacao` do próprio `usuario.id` → `reavaliar()` (D5); de outro, o `estado` publicado por esse remetente
  *   passa a ser descartado por 15 min (`Revogados`, como no palco; D5, VER-046 N3), com ou sem `estudio` de fora.
  *   Com o `estudio` de fora, quem reavalia na revogação própria é quem o abriu (o painel, Tarefa 9, rodada 1): o
@@ -242,17 +244,26 @@ export function useAoVivo(d: {
     setEstadoNoAr(null)
   }, [episodioId])
 
+  // --- :estado do episódio (VER-047): o estado no ar, que só o palco publica (RLS) ---
+  const abrirEstado = useCallback((): CanalDoEstado => canais.estado(episodioId as string), [canais, episodioId])
+  const { canal: topicoDoEstado, estado: estadoDoTopicoDoEstado } = useCanalReaberto(episodioId === null ? null : abrirEstado, perdeuCanal)
+
+  // A presença no `:controle` sai com o `:estado` conectado: o palco republica na entrada, e o estado chega aqui.
   useEffect(() => {
-    if (controle === null || episodioId === null) return
+    if (controle === null || episodioId === null || estadoDoTopicoDoEstado !== 'conectado') return
     void controle.marcarPresenca().catch(() => {})
-    return controle.aoEstado((e, remetente) => {
+  }, [controle, episodioId, estadoDoTopicoDoEstado])
+
+  useEffect(() => {
+    if (topicoDoEstado === null || episodioId === null) return
+    return topicoDoEstado.aoEstado((e, remetente) => {
       if (revogados.contem(remetente)) return
       if (e.episodioId === episodioId) setEstadoNoAr(e)
     })
-  }, [controle, episodioId, revogados])
+  }, [topicoDoEstado, episodioId, revogados])
 
   // --- envio ---
-  const canal = episodioId === null ? estadoDoEstudio : pior(estadoDoEstudio, estadoDoControle)
+  const canal = episodioId === null ? estadoDoEstudio : pior(pior(estadoDoEstudio, estadoDoControle), estadoDoTopicoDoEstado)
   const podeComandar = canal === 'conectado' && !carga.falhou
   const vistaDoEnvio = useRef<{ controle: CanalDoControle | null; podeComandar: boolean }>({ controle: null, podeComandar: false })
   useEffect(() => {

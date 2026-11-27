@@ -3,7 +3,7 @@ import type { AcaoNoObs, LinhaDoRegistro } from './comandos'
 import type { Comando, EstadoNoAr, MotivoDoResultado, ResultadoDoComando, SituacaoDoObs } from './mensagens'
 import { Revogados, lerEstadoNoAr } from './mensagens'
 import { ESTADO_A_CADA_MS, RELEITURA_MINIMA_MS, criarPalco } from './palco'
-import type { CanalDoControle, ExecutorDeAcoes, RepositorioDoPalco } from './portas'
+import type { CanalDoControle, CanalDoEstado, ExecutorDeAcoes, RepositorioDoPalco } from './portas'
 
 const EPISODIO = 'e0000000-0000-4000-8000-000000000001'
 const EU = 'a0000000-0000-4000-8000-0000000000aa'
@@ -41,12 +41,13 @@ function canalFalso(o: { rejeitar?: boolean } = {}) {
   const presencas = new Set<(u: string[]) => void>()
   const publicados: EstadoNoAr[] = []
   let tratadas = 0
+  let comandosEnviados = 0
+  // VER-047: o `:controle` só leva comandos (o palco não envia nada aqui); o estado vai pelo `:estado`
   const canal: CanalDoControle = {
     aoComando: (f) => {
       comandos.add(f)
       return () => comandos.delete(f)
     },
-    aoEstado: () => () => {},
     aoEntrarAlguem: (f) => {
       entradas.add(f)
       return () => entradas.delete(f)
@@ -56,7 +57,16 @@ function canalFalso(o: { rejeitar?: boolean } = {}) {
       return () => presencas.delete(f)
     },
     aoMudarEstado: () => () => {},
-    enviarComando: async () => 'ok',
+    enviarComando: async () => {
+      comandosEnviados++
+      return 'ok'
+    },
+    marcarPresenca: async () => {},
+    fechar: async () => {},
+  }
+  const estado: CanalDoEstado = {
+    aoEstado: () => () => {},
+    aoMudarEstado: () => () => {},
     publicarEstado: (e) => {
       publicados.push(structuredClone(e))
       if (!o.rejeitar) return Promise.resolve('ok')
@@ -69,12 +79,13 @@ function canalFalso(o: { rejeitar?: boolean } = {}) {
       }) as typeof p.catch
       return p
     },
-    marcarPresenca: async () => {},
     fechar: async () => {},
   }
   return {
     canal,
+    estado,
     publicados,
+    comandosEnviados: () => comandosEnviados,
     /** Entrega como o adaptador entregaria (o palco confere de novo). */
     comando: (c: unknown, remetente: string) => {
       for (const f of comandos) f(c as Comando, remetente)
@@ -194,6 +205,7 @@ function montar(
   const revogados = new Revogados(relogio.agora)
   const palco = criarPalco({
     canal: canal.canal,
+    canalDoEstado: canal.estado,
     repo: repo.repo,
     executor: exec.executor,
     revogados,
@@ -344,6 +356,17 @@ describe('serviço do palco (D9)', () => {
     m.canal.entrar()
     expect(m.canal.publicados.length).toBe(inicial + 1)
     expect(m.canal.publicados.at(-1)).toEqual(m.palco.estado())
+  })
+
+  test('estado-so-em-topico-proprio (VER-047)', async () => {
+    // o estado sai pelo `:estado` (o único tópico em que o palco tem envio, pela RLS) e nada vai ao `:controle`
+    const m = montar()
+    m.canal.entrar()
+    m.canal.comando({ id: novoId(), acao: 'cena', cenaId: CENA_B }, ANA)
+    await esvaziar()
+    m.relogio.avancar(ESTADO_A_CADA_MS)
+    expect(m.canal.publicados.length).toBeGreaterThanOrEqual(4)
+    expect(m.canal.comandosEnviados()).toBe(0)
   })
 
   test('republicar', async () => {

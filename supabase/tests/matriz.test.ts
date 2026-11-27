@@ -221,7 +221,7 @@ const COMANDOS: Record<string, Comandos> = {
       fixa(`insert into public.dispositivos (tipo, rotulo, usuario_anonimo_id) values ('obs_palco', 'PC matriz', auth.uid())`),
       fixa(`insert into public.dispositivos (tipo, rotulo, criado_por) values ('obs_palco', 'PC matriz', auth.uid())`),
     ],
-    proprias: (p) => membroDe(p, (u) => `insert into public.dispositivos (tipo, rotulo, criado_por) values ('obs_palco', 'PC próprio', '${u}')`),
+    proprias: (p) => membroDe(p, (u) => `insert into public.dispositivos (tipo, rotulo, criado_por) values ('camera', 'Celular próprio', '${u}')`),
     update: `update public.dispositivos set rotulo = 'matriz'`,
   },
   registro_acoes: {
@@ -259,7 +259,7 @@ beforeAll(async () => {
   await db.query(`insert into public.registro_acoes (episodio_id, origem, acao, dispositivo_id) values ($1, 'gesto', 'clipe', $2)`, [ID_EPISODIO, ID_PALCO])
   // Formas de linha: vínculo nulo e vínculo de outra sessão em cada coluna de vínculo (ver o topo).
   await db.query(`insert into public.registro_acoes (episodio_id, origem, acao, membro_id) values ($1, 'toque', 'clipe', $2)`, [ID_EPISODIO, UID_ADM])
-  await db.query(`insert into public.dispositivos (tipo, rotulo, criado_por) values ('obs_palco', 'PC sem sessão', $1)`, [UID_ADM])
+  await db.query(`insert into public.dispositivos (tipo, rotulo, criado_por) values ('camera', 'Celular sem sessão', $1)`, [UID_ADM])
   await db.query(`insert into public.episodios (titulo) values ('Sem autor')`)
   await db.query(
     `insert into public.midias (id, tipo, nome, caminho, mime, tamanho_bytes, enviado_por) values ($1, 'imagem', 'do adm', 'imagens/adm.png', 'image/png', 1, $2)`,

@@ -595,7 +595,7 @@ export function criarCanalFalso(opcoes: { conectarSozinho?: boolean } = {}) {
       }
       return fabrica
     },
-    /** Tópicos com canal na lista do cliente agora (`estudio`, `episodio:<id>:controle`). */
+    /** Tópicos com canal na lista do cliente agora (`estudio`, `episodio:<id>:controle`, `episodio:<id>:estado`). */
     abertos(): string[] {
       return realtime.canais().map((c) => c.topico)
     },

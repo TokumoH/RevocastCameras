@@ -41,11 +41,14 @@ export interface CanalDoEstudio {
   fechar(): Promise<void>
 }
 
-/** Alça do canal privado `episodio:<id>:controle` (D6, D9): comandos dos membros e estado no ar do palco. */
+/**
+ * Alça do canal privado `episodio:<id>:controle` (D6, D9): só os comandos dos membros (e a presença deles). Desde o
+ * VER-047, só membros enviam aqui (RLS); o `obs_palco` só recebe, e o estado no ar vai em `CanalDoEstado`.
+ */
 export interface CanalDoControle {
+  /** Só o evento `comando` deste tópico (`lerMensagemDoControle`): um `estado` forjado aqui é descartado. */
   aoComando(f: (c: Comando, remetente: string) => void): () => void
-  aoEstado(f: (e: EstadoNoAr, remetente: string) => void): () => void
-  /** Alguém entrou na presença do tópico: o palco republica o estado. */
+  /** Alguém entrou na presença do tópico: o palco republica o estado (em `:estado`). */
   aoEntrarAlguem(f: () => void): () => void
   /**
    * Quem está na presença do tópico (a chave de cada um, só uuid), a cada mudança; quem se inscreve com o
@@ -55,9 +58,20 @@ export interface CanalDoControle {
   aoMudarPresentes(f: (usuarios: string[]) => void): () => void
   aoMudarEstado(f: (e: EstadoDoCanal) => void): () => void
   enviarComando(c: Comando): Promise<RespostaDoEnvio>
-  publicarEstado(e: EstadoNoAr): Promise<RespostaDoEnvio>
   /** Só membros marcam presença em `:controle` (D14). */
   marcarPresenca(): Promise<void>
+  fechar(): Promise<void>
+}
+
+/**
+ * Alça do canal privado `episodio:<id>:estado` (VER-047): o estado no ar que o palco publica. Só o `obs_palco` envia
+ * (RLS; no máximo um não revogado, índice `dispositivos_um_palco_ativo`); membros e o palco recebem; ninguém marca presença.
+ */
+export interface CanalDoEstado {
+  /** Só o evento `estado` deste tópico (`lerMensagemDoEstado`): um `comando` forjado aqui é descartado. */
+  aoEstado(f: (e: EstadoNoAr, remetente: string) => void): () => void
+  aoMudarEstado(f: (e: EstadoDoCanal) => void): () => void
+  publicarEstado(e: EstadoNoAr): Promise<RespostaDoEnvio>
   fechar(): Promise<void>
 }
 
@@ -65,6 +79,8 @@ export interface CanalDoControle {
 export interface FabricaDeCanais {
   estudio(): CanalDoEstudio
   controle(episodioId: string): CanalDoControle
+  /** O tópico do estado no ar do episódio (VER-047). */
+  estado(episodioId: string): CanalDoEstado
 }
 
 /** Porta do ao vivo no painel e no `/controle` (cliente de membro): funções do banco (D2, D5, D7) e a lista de dispositivos. */

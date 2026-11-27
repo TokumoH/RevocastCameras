@@ -52,6 +52,8 @@ const AVISOS: Aviso[] = [aviso(AVISO, EP, 'Inscrições JIF', 0), aviso(AVISO2, 
 
 const OBS = { navegador: true, versaoDoPlugin: '2.24.0', nivel: 4, websocket: 'conectado', versaoObs: '31.0.1', replayBuffer: true, gravando: true }
 const controle = (id = EP) => `episodio:${id}:controle`
+/** O tópico do estado no ar (VER-047): só o palco publica aqui; o `/controle` só lê. */
+const estadoT = (id = EP) => `episodio:${id}:estado`
 const estadoNoAr = (o: Record<string, unknown> = {}) => ({ episodioId: EP, modo: 'teste', cenaObs: null, avisoId: null, avisoAte: null, ultimo: null, obs: OBS, remetente: PALCO, ...o })
 
 /** Esvazia as promessas pendentes e anda `ms` no relógio falso (dentro do `act`). */
@@ -63,8 +65,8 @@ async function esperar(ms = 0) {
   })
 }
 
-function servicosDeTeste(o: { ativo?: { id: string; modo: 'ao_vivo' | 'teste' } | null; avisos?: Aviso[]; sons?: Som[] }) {
-  const canal = criarCanalFalso()
+function servicosDeTeste(o: { ativo?: { id: string; modo: 'ao_vivo' | 'teste' } | null; avisos?: Aviso[]; sons?: Som[]; conectarSozinho?: boolean }) {
+  const canal = criarCanalFalso({ conectarSozinho: o.conectarSozinho })
   let ativo = o.ativo === undefined ? { id: EP, modo: 'teste' as const } : o.ativo
   const episodioAtivo = vi.fn(async () => (ativo === null ? null : { ...ativo }))
   const aoVivo: ServicosDeAoVivo = { repo: { ...aoVivoVazio().repo, episodioAtivo }, canais: canal.canais }
@@ -80,7 +82,7 @@ function servicosDeTeste(o: { ativo?: { id: string; modo: 'ao_vivo' | 'teste' } 
   }
 }
 
-function montar(o: { ativo?: { id: string; modo: 'ao_vivo' | 'teste' } | null; papel?: Papel; avisos?: Aviso[]; sons?: Som[]; strict?: boolean; antes?: (s: ReturnType<typeof servicosDeTeste>) => void } = {}) {
+function montar(o: { ativo?: { id: string; modo: 'ao_vivo' | 'teste' } | null; papel?: Papel; avisos?: Aviso[]; sons?: Som[]; strict?: boolean; conectarSozinho?: boolean; antes?: (s: ReturnType<typeof servicosDeTeste>) => void } = {}) {
   const s = servicosDeTeste(o)
   o.antes?.(s)
   const reavaliar = vi.fn()
@@ -199,18 +201,18 @@ describe('/controle por toque (Tarefa 7)', () => {
     const estado = screen.getByRole('region', { name: 'Estado' })
     expect(within(estado).getByText('TESTE')).toBeTruthy()
     expect(within(estado).getByText('Ensaio geral')).toBeTruthy()
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral', avisoId: AVISO2 })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral', avisoId: AVISO2 })))
     await esperar()
     // a cena pelo nome de exibição da lista e o aviso pelo título da lista
     expect(within(estado).getByText('Geral')).toBeTruthy()
     expect(within(estado).getByText('Festa Revoada')).toBeTruthy()
     // cena que a lista não conhece: o nome do OBS, como texto
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Avulsa', avisoId: null })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ cenaObs: 'Cena Avulsa', avisoId: null })))
     await esperar()
     expect(within(estado).getByText('Cena Avulsa')).toBeTruthy()
     expect(within(estado).queryByText('Festa Revoada')).toBeNull()
     // estado de outro episódio não entra
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ episodioId: EP2, cenaObs: 'Cena Close' })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ episodioId: EP2, cenaObs: 'Cena Close' })))
     await esperar()
     expect(within(estado).getByText('Cena Avulsa')).toBeTruthy()
   })
@@ -257,18 +259,18 @@ describe('/controle por toque (Tarefa 7)', () => {
     fireEvent.click(botao('👏 aplauso'))
     await esperar()
     const [som] = comandosEnviados(m)
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ ultimo: { comandoId: som.id, acao: 'som', resultado: 'ok', motivo: null } })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ ultimo: { comandoId: som.id, acao: 'som', resultado: 'ok', motivo: null } })))
     await esperar()
     expect(screen.getByText('🎵 aplauso ✓')).toBeTruthy()
     fireEvent.click(botao('Geral'))
     await esperar()
     const cena = comandosEnviados(m)[1]
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ ultimo: { comandoId: cena.id, acao: 'cena', resultado: 'recusado', motivo: 'cena_inexistente_no_obs' } })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ ultimo: { comandoId: cena.id, acao: 'cena', resultado: 'recusado', motivo: 'cena_inexistente_no_obs' } })))
     await esperar()
     expect(screen.getByText('Cena não existe no OBS')).toBeTruthy()
     // comando de outra pessoa: só a ação
     act(() =>
-      m.canal.entregar(controle(), 'estado', estadoNoAr({ ultimo: { comandoId: 'f0000000-0000-4000-8000-000000000009', acao: 'clipe', resultado: 'pendente', motivo: null } })),
+      m.canal.entregar(estadoT(), 'estado', estadoNoAr({ ultimo: { comandoId: 'f0000000-0000-4000-8000-000000000009', acao: 'clipe', resultado: 'pendente', motivo: null } })),
     )
     await esperar()
     expect(screen.getByText('✂️ Clipe …')).toBeTruthy()
@@ -318,7 +320,7 @@ describe('/controle por toque (Tarefa 7)', () => {
 
   test('estado-forjado-invalido-ignorado', async () => {
     const m = await pronto()
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral', avisoId: AVISO })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral', avisoId: AVISO })))
     await esperar()
     const estado = screen.getByRole('region', { name: 'Estado' })
     const antes = estado.innerHTML
@@ -332,7 +334,7 @@ describe('/controle por toque (Tarefa 7)', () => {
       estadoNoAr({ obs: { ...OBS, nivel: 9 } }),
       'texto',
     ]
-    for (const f of forjados) act(() => m.canal.entregar(controle(), 'estado', f))
+    for (const f of forjados) act(() => m.canal.entregar(estadoT(), 'estado', f))
     await esperar()
     expect(estado.innerHTML).toBe(antes)
     expect(within(estado).getByText('Inscrições JIF')).toBeTruthy()
@@ -341,11 +343,11 @@ describe('/controle por toque (Tarefa 7)', () => {
 
   test('troca-de-episodio', async () => {
     const m = await pronto()
-    expect(m.canal.abertos()).toEqual(['estudio', controle(EP)])
+    expect(m.canal.abertos()).toEqual(['estudio', controle(EP), estadoT(EP)])
     m.definirAtivo({ id: EP2, modo: 'ao_vivo' })
     act(() => m.canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: OUTRO }))
     await esperar()
-    expect(m.canal.abertos()).toEqual(['estudio', controle(EP2)])
+    expect(m.canal.abertos()).toEqual(['estudio', controle(EP2), estadoT(EP2)])
     expect(screen.getByRole('button', { name: 'Aviso da sexta ▶' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Inscrições JIF ▶' })).toBeNull()
     expect(screen.getByText('AO VIVO')).toBeTruthy()
@@ -361,20 +363,20 @@ describe('/controle por toque (Tarefa 7)', () => {
   test('estado-de-remetente-revogado-ignorado (D5, VER-046 N3)', async () => {
     const m = await pronto()
     const estado = screen.getByRole('region', { name: 'Estado' })
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral' })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral' })))
     await esperar()
     expect(within(estado).getByText('Geral')).toBeTruthy()
     // o palco antigo (trocado ou revogado) é avisado em `estudio`: o estado dele deixa de valer por 15 min
     act(() => m.canal.entregar('estudio', 'revogacao', { usuario: PALCO, remetente: OUTRO }))
     await esperar()
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Avulsa' })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ cenaObs: 'Cena Avulsa' })))
     await esperar()
     expect(within(estado).queryByText('Cena Avulsa')).toBeNull()
     expect(within(estado).getByText('Geral')).toBeTruthy()
     expect(m.reavaliar).not.toHaveBeenCalled()
     // o estado de outro remetente (o palco novo) continua valendo
     const NOVO = 'a1b2c3d4-0000-4000-8000-000000000004'
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Avulsa', remetente: NOVO })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ cenaObs: 'Cena Avulsa', remetente: NOVO })))
     await esperar()
     expect(within(estado).getByText('Cena Avulsa')).toBeTruthy()
   })
@@ -413,7 +415,7 @@ describe('/controle por toque (Tarefa 7)', () => {
     })
     expect(screen.getByRole('button', { name: `${html} ▶` })).toBeTruthy()
     expect(screen.getByRole('button', { name: '<u> <i>palmas</i>' })).toBeTruthy()
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ avisoId: AVISO, cenaObs: '<script>x</script>' })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ avisoId: AVISO, cenaObs: '<script>x</script>' })))
     await esperar()
     expect(within(screen.getByRole('region', { name: 'Estado' })).getByText(html)).toBeTruthy()
     expect(screen.getByText('<script>x</script>')).toBeTruthy()
@@ -427,7 +429,7 @@ describe('/controle por toque (Tarefa 7)', () => {
     m.voltar()
     await esperar()
     expect(m.episodioAtivo).toHaveBeenCalledTimes(2)
-    expect(m.canal.abertos()).toEqual(['estudio', controle(EP2)])
+    expect(m.canal.abertos()).toEqual(['estudio', controle(EP2), estadoT(EP2)])
     // a volta do canal a `conectado` também consulta de novo (D15)
     act(() => m.canal.definirEstado('estudio', 'reconectando'))
     await esperar()
@@ -490,7 +492,7 @@ describe('/controle por toque (Tarefa 7)', () => {
     await esperar(REABRIR_CANAIS_MS)
     expect(m.criados(controle())).toBe(2)
     expect(m.criados('estudio')).toBe(2)
-    expect(m.canal.abertos()).toEqual(expect.arrayContaining(['estudio', controle()]))
+    expect(m.canal.abertos()).toEqual(expect.arrayContaining(['estudio', controle(), estadoT()]))
     // desmontar fecha tudo
     m.r.unmount()
     await esperar()
@@ -570,7 +572,7 @@ describe('/controle por toque (Tarefa 7)', () => {
     await esperar()
     palcoPresente(m)
     await esperar()
-    expect(m.canal.abertos()).toEqual(['estudio', controle()])
+    expect(m.canal.abertos()).toEqual(['estudio', controle(), estadoT()])
     fireEvent.click(botao('✂️ CLIPE'))
     await esperar()
     expect(comandosEnviados(m)).toHaveLength(1)
@@ -614,13 +616,74 @@ describe('/controle por toque (Tarefa 7)', () => {
     await esperar()
     expect(screen.getByText('Programa de sexta')).toBeTruthy()
     expect(screen.queryByText('Ensaio geral')).toBeNull()
-    expect(m.canal.abertos()).toEqual(['estudio', controle(EP2)])
+    expect(m.canal.abertos()).toEqual(['estudio', controle(EP2), estadoT(EP2)])
     expect(m.criados(controle(EP))).toBe(0)
+  })
+
+  test('estado-so-de-topico-proprio (VER-047): o estado forjado no `:controle` é ignorado', async () => {
+    const m = await pronto()
+    const estado = screen.getByRole('region', { name: 'Estado' })
+    // um estado válido, mas vindo de `:controle` (onde só membros enviam e o palco não publica mais), não entra
+    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral', avisoId: AVISO2 })))
+    await esperar()
+    expect(within(estado).queryByText('Geral')).toBeNull()
+    expect(within(estado).queryByText('Festa Revoada')).toBeNull()
+    // o mesmo estado vindo de `:estado` entra
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral', avisoId: AVISO2 })))
+    await esperar()
+    expect(within(estado).getByText('Geral')).toBeTruthy()
+    expect(within(estado).getByText('Festa Revoada')).toBeTruthy()
+    // o `/controle` não envia nada no `:estado` (a RLS também não deixa) e a presença fica só no `:controle`
+    fireEvent.click(botao('✂️ CLIPE'))
+    await esperar()
+    expect(m.canal.enviados(estadoT())).toEqual([])
+    expect(m.canal.presencas(estadoT())).toEqual([])
+    expect(m.canal.presencas(controle())).toEqual([{}])
+  })
+
+  test('reconexao-do-estado (VER-047): `:estado` fora desliga os botões; fechado reavalia e reabre os dois tópicos', async () => {
+    const m = await pronto()
+    act(() => m.canal.definirEstado(estadoT(), 'reconectando'))
+    await esperar()
+    expect(botao('✂️ CLIPE').disabled).toBe(true)
+    expect(screen.getByText(TEXTO_DO_CONTROLE.reconectando)).toBeTruthy()
+    act(() => m.canal.definirEstado(estadoT(), 'conectado'))
+    await esperar()
+    expect(botao('✂️ CLIPE').disabled).toBe(false)
+    act(() => m.canal.definirEstado(estadoT(), 'fechado'))
+    await esperar()
+    expect(m.reavaliar).toHaveBeenCalledTimes(1)
+    await esperar(REABRIR_CANAIS_MS)
+    expect(m.criados(estadoT())).toBe(2)
+    expect(m.criados(controle())).toBe(1) // o `:controle` continuou
+    expect(m.canal.abertos()).toEqual(['estudio', controle(), estadoT()])
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral' })))
+    await esperar()
+    expect(within(screen.getByRole('region', { name: 'Estado' })).getByText('Geral')).toBeTruthy()
+  })
+
+  test('presenca-so-com-o-estado-conectado (VER-047, rodada 1)', async () => {
+    // a entrada na presença do `:controle` faz o palco republicar: ela só sai com o `:estado` já conectado
+    const m = montar({ conectarSozinho: false })
+    await esperar()
+    act(() => {
+      m.canal.definirEstado('estudio', 'conectado')
+      m.canal.definirEstado(controle(), 'conectado')
+    })
+    await esperar()
+    expect(m.canal.abertos()).toEqual(['estudio', controle(), estadoT()])
+    expect(m.canal.presencas(controle())).toEqual([])
+    act(() => m.canal.definirEstado(estadoT(), 'reconectando'))
+    await esperar()
+    expect(m.canal.presencas(controle())).toEqual([])
+    act(() => m.canal.definirEstado(estadoT(), 'conectado'))
+    await esperar()
+    expect(m.canal.presencas(controle())).toEqual([{}])
   })
 
   test('troca-de-episodio-limpa-o-estado', async () => {
     const m = await pronto()
-    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral', avisoId: AVISO })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral', avisoId: AVISO })))
     await esperar()
     expect(within(screen.getByRole('region', { name: 'Estado' })).getByText('Inscrições JIF')).toBeTruthy()
     for (const ativo of [{ id: EP2, modo: 'ao_vivo' as const }, { id: EP, modo: 'teste' as const }]) {

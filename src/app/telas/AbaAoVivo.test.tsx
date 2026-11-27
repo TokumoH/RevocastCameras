@@ -1090,13 +1090,13 @@ describe('aba Ao vivo — comandos (Tarefa 9)', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Ao vivo' }))
     await esperar()
     expect(within(secao('Episódio')).getByText('Ensaio geral')).toBeTruthy()
-    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP_A}:controle`])
+    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP_A}:controle`, `episodio:${EP_A}:estado`])
     fireEvent.change(seletor(), { target: { value: EP_B } })
     fireEvent.click(botao('Iniciar o ao vivo'))
     fireEvent.click(botao('Confirmar início'))
     await esperar()
     expect(b.iniciar).toHaveBeenCalledWith(EP_B)
-    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP_B}:controle`])
+    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP_B}:controle`, `episodio:${EP_B}:estado`]) // VER-047: os dois tópicos do episódio novo
     fireEvent.click(within(secao('Comandos')).getByRole('button', { name: '✂️ CLIPE' }))
     await esperar()
     const clipes = (topico: string) => canal.enviados(topico).filter((e) => (e.payload as { acao?: string }).acao === 'clipe').length
@@ -1104,6 +1104,34 @@ describe('aba Ao vivo — comandos (Tarefa 9)', () => {
     expect(clipes(`episodio:${EP_A}:controle`)).toBe(0)
     // um canal `estudio` só no cliente (o do painel)
     expect(canal.realtime.contar('channel', 'estudio')).toBe(1)
+  })
+
+  test('estado-do-palco-pelo-topico-proprio (VER-047)', async () => {
+    // a aba lê o estado no ar só do `:estado` do episódio; o mesmo estado forjado no `:controle` não entra
+    const b = bancoDeTeste({ teste: EP_A })
+    const canal = criarCanalFalso()
+    const aoVivo: ServicosDeAoVivo = { repo: b.repo, canais: canal.canais }
+    const f = criarFalsos({
+      usuario: usuarioGoogle('equipe@revocast.test', EU),
+      papel: 'equipe',
+      permitidos: [{ email: 'equipe@revocast.test', papel: 'equipe', criadoPor: null }],
+    })
+    render(<App caminho="/painel" dependencias={f.dependencias({ obterAoVivo: () => aoVivo, obterPreparacao: () => b.preparacao, origem: ORIGEM })} />)
+    await esperar()
+    fireEvent.click(screen.getByRole('tab', { name: 'Ao vivo' }))
+    await esperar()
+    const estadoNoAr = { episodioId: EP_A, modo: 'teste', cenaObs: 'Cena Geral', avisoId: null, avisoAte: null, ultimo: null, obs: OBS_OK, remetente: SESSAO_PALCO }
+    const regiao = () => within(secao('Comandos')).getByRole('region', { name: 'Estado' })
+    act(() => canal.entregar(`episodio:${EP_A}:controle`, 'estado', estadoNoAr))
+    await esperar()
+    expect(within(regiao()).queryByText('Geral')).toBeNull()
+    act(() => canal.entregar(`episodio:${EP_A}:estado`, 'estado', estadoNoAr))
+    await esperar()
+    expect(within(regiao()).getByText('Geral')).toBeTruthy()
+    // a presença de membro vai ao `:controle` (o palco republica na entrada); nada é enviado nem marcado no `:estado`
+    expect(canal.presencas(`episodio:${EP_A}:controle`)).toEqual([{}])
+    expect(canal.presencas(`episodio:${EP_A}:estado`)).toEqual([])
+    expect(canal.enviados(`episodio:${EP_A}:estado`)).toEqual([])
   })
 
   test('comando-vai-ao-episodio-novo-sem-canal', async () => {
@@ -1129,6 +1157,7 @@ describe('aba Ao vivo — comandos (Tarefa 9)', () => {
     expect(screen.getByText(TEXTO_DO_EPISODIO.semAviso)).toBeTruthy()
     expect(canal.abertos()).toContain(`episodio:${EP_B}:controle`)
     expect(canal.abertos()).not.toContain(`episodio:${EP_A}:controle`)
+    expect(canal.abertos()).not.toContain(`episodio:${EP_A}:estado`)
     expect(within(secao('Episódio')).getByText('<b>Programa</b> de sexta')).toBeTruthy()
   })
 })

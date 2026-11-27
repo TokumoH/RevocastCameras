@@ -1,6 +1,6 @@
 import { linhaDoRegistro, resolverComando, type AcaoNoObs, type MotivoDaRecusa } from './comandos'
 import { UUID, lerComando, lerEstadoNoAr, type Comando, type EstadoNoAr, type MotivoDoResultado, type ResultadoDoComando, type Revogados } from './mensagens'
-import type { CanalDoControle, ExecutorDeAcoes, RepositorioDoPalco } from './portas'
+import type { CanalDoControle, CanalDoEstado, ExecutorDeAcoes, RepositorioDoPalco } from './portas'
 
 /** O palco republica o estado no ar a cada 30 s, além de depois de cada mudança e quando alguém entra (DES-001 §8, D9). */
 export const ESTADO_A_CADA_MS = 30_000
@@ -24,7 +24,10 @@ export const RELEITURA_MINIMA_MS = 5000
 type Dados = Awaited<ReturnType<RepositorioDoPalco['carregar']>>
 
 export interface DependenciasDoPalco {
+  /** `:controle`: os comandos e a presença dos membros (o palco só recebe ali, VER-047). */
   canal: CanalDoControle
+  /** `:estado`: onde o palco publica o estado no ar (o único tópico do episódio em que ele envia, VER-047). */
+  canalDoEstado: CanalDoEstado
   repo: RepositorioDoPalco
   executor: ExecutorDeAcoes
   /** Remetentes revogados avisados em `estudio` (quem os alimenta é a rota do palco, Tarefa 6). */
@@ -58,7 +61,8 @@ function copiar(e: EstadoNoAr): EstadoNoAr {
  * 1. confere de novo a forma (`lerComando`) e o remetente (uuid); inválido → descartado sem efeito;
  * 2. ignora o próprio eco, o remetente revogado (`Revogados`, 15 min), o remetente que **não está na
  *    presença do `:controle`** (só membros marcam presença ali, pela RLS; um `obs_palco` não entra nela,
- *    VER-046, I4) e o `id` repetido (últimos 200);
+ *    VER-046, I4) e o `id` repetido (últimos 200). Desde o VER-047, só membros enviam em `:controle` (RLS),
+ *    e o filtro de presença fica como defesa em profundidade (vale também num banco ainda sem a migração);
  * 3. resolve contra as listas carregadas (`resolverComando`); recusa por item desconhecido
  *    (`RECUSAS_QUE_RELEEM`) → relê as listas uma vez (`recarregarDados`) e resolve de novo; recusa que
  *    sobra → estado publicado, nada executado e nada registrado;
@@ -66,8 +70,8 @@ function copiar(e: EstadoNoAr): EstadoNoAr {
  * 5. atualiza o estado (cena do OBS, aviso no ar e o prazo dele, último resultado) e o publica;
  * 6. com `ok`, grava `registro_acoes` (`linhaDoRegistro`); a falha ao gravar não desfaz nem bloqueia nada.
  * Comandos diferentes não esperam um pelo outro (um clipe pendente não segura uma troca de cena).
- * O estado também é publicado ao começar, a cada 30 s, quando alguém entra no `:controle` e quando a
- * rota pede (`republicar`, ao voltar a `conectado`: a publicação do começo pode ter saído com o canal
+ * O estado vai ao `:estado` (VER-047), nunca ao `:controle`; é publicado ao começar, a cada 30 s, quando
+ * alguém entra no `:controle` e quando a rota pede (`republicar`, ao voltar a `conectado`: a publicação do começo pode ter saído com o canal
  * ainda conectando, e a reconexão do próprio palco não gera entrada na presença; Tarefa 6).
  * A cena do OBS lida pela rota (`definirCenaObs`, `getCurrentScene`) entra no estado e é o ponto de
  * partida da `proxima_cena` (D9; VER-044 A1); quem entra no `:controle` também faz o palco reler as
@@ -122,7 +126,7 @@ export function criarPalco(d: DependenciasDoPalco): {
     if (parado) return
     estado.obs = d.executor.situacao()
     const saida = paraOCanal(copiar(estado))
-    if (saida !== null) d.canal.publicarEstado(saida).catch(() => {})
+    if (saida !== null) d.canalDoEstado.publicarEstado(saida).catch(() => {})
     if (avisar) for (const f of ouvintes) f(copiar(estado))
   }
 

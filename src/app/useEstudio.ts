@@ -3,7 +3,7 @@ import type { Papel } from '../domains/acesso/papeis'
 import type { CanalDoEstudio, EstadoDoCanal, FabricaDeCanais } from '../domains/aovivo/portas'
 import { REABRIR_CANAIS_MS } from './canais'
 
-/** O que `useCanalReaberto` precisa de uma alça de canal (`CanalDoEstudio` e `CanalDoControle` servem). */
+/** O que `useCanalReaberto` precisa de uma alça de canal (`CanalDoEstudio`, `CanalDoControle` e `CanalDoEstado` servem). */
 export interface AlcaReabrivel {
   aoMudarEstado(f: (e: EstadoDoCanal) => void): () => void
   fechar(): Promise<void>

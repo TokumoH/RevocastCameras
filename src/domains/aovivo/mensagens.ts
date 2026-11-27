@@ -2,7 +2,8 @@ import type { TipoDeDispositivo } from '../acesso/dispositivos'
 import { UUID } from '../preparacao/midia'
 
 /*
- * Mensagens dos canais `estudio` e `episodio:<id>:controle` (DES-001 §8; PLA-004, D6, D9, D14).
+ * Mensagens dos canais `estudio`, `episodio:<id>:controle` e, desde o VER-047, `episodio:<id>:estado` (DES-001 §8;
+ * PLA-004, D6, D9, D14).
  * Tudo que chega pelo canal vem de fora: o Broadcast não autentica o remetente nem o conteúdo, e
  * a autorização de canal só separa tópicos. Por isso cada leitor:
  * - aceita só um objeto simples (protótipo `Object.prototype` ou nulo; nunca lista nem classe);
@@ -21,8 +22,24 @@ import { UUID } from '../preparacao/midia'
 /** uuid em minúsculas (a forma que o Postgres devolve): a de `preparacao/midia.ts`, a única do app (VER-046, N4). */
 export { UUID }
 
-/** Nomes dos eventos do Broadcast no tópico `episodio:<id>:controle`. */
-export const EVENTOS_DO_CONTROLE = Object.freeze({ comando: 'comando', estado: 'estado' } as const)
+/**
+ * Nome do evento do Broadcast no tópico `episodio:<id>:controle`: só comandos dos membros. Desde o VER-047, o estado
+ * no ar tem tópico próprio (`EVENTOS_DO_ESTADO`), porque o Realtime autoriza o envio por tópico, não por evento.
+ */
+export const EVENTOS_DO_CONTROLE = Object.freeze({ comando: 'comando' } as const)
+
+/** Nome do evento do Broadcast no tópico `episodio:<id>:estado` (VER-047): só o estado no ar, que só o palco publica (RLS). */
+export const EVENTOS_DO_ESTADO = Object.freeze({ estado: 'estado' } as const)
+
+/** Tópico dos comandos do episódio (D6): membros enviam e recebem; o `obs_palco` só recebe (VER-047). */
+export function topicoDoControle(episodioId: string): string {
+  return `episodio:${episodioId}:controle`
+}
+
+/** Tópico do estado no ar do episódio (VER-047): só o `obs_palco` envia; membros e o palco recebem. */
+export function topicoDoEstado(episodioId: string): string {
+  return `episodio:${episodioId}:estado`
+}
 
 /** Mensagens de `estudio` (só `equipe`/`admin` publicam, D6). */
 export type MensagemDoEstudio = { evento: 'episodio_ativo_mudou' } | { evento: 'dispositivo_mudou'; dispositivoId: string } | { evento: 'revogacao'; usuario: string }
@@ -78,7 +95,7 @@ export const MOTIVOS_DO_RESULTADO = Object.freeze([
 ] as const)
 export type MotivoDoResultado = (typeof MOTIVOS_DO_RESULTADO)[number]
 
-/** Estado no ar que o palco publica em `:controle` (D9): só ids e o nome da cena do OBS. */
+/** Estado no ar que o palco publica em `:estado` (D9; em `:controle` até o VER-047): só ids e o nome da cena do OBS. */
 export interface EstadoNoAr {
   episodioId: string
   modo: 'ao_vivo' | 'teste'
@@ -263,6 +280,22 @@ export function lerEstadoNoAr(payload: unknown): EstadoNoAr | null {
 
 function referenciaValida(o: Objeto): boolean {
   return !Object.hasOwn(o, 'presence_ref') || textoAte(o.presence_ref, TAMANHO_DA_REFERENCIA)
+}
+
+/**
+ * Mensagem de `:controle` (VER-047): só o evento `comando`, lido por `lerComando`. Qualquer outro evento (um `estado`
+ * forjado por quem pode enviar ali, mesmo válido) → `null`: o estado só é aceito vindo de `:estado`.
+ */
+export function lerMensagemDoControle(evento: string, payload: unknown): Comando | null {
+  return evento === EVENTOS_DO_CONTROLE.comando ? lerComando(payload) : null
+}
+
+/**
+ * Mensagem de `:estado` (VER-047): só o evento `estado`, lido por `lerEstadoNoAr`. Qualquer outro evento (um `comando`
+ * forjado, mesmo válido) → `null`: comando só é aceito vindo de `:controle`.
+ */
+export function lerMensagemDoEstado(evento: string, payload: unknown): EstadoNoAr | null {
+  return evento === EVENTOS_DO_ESTADO.estado ? lerEstadoNoAr(payload) : null
 }
 
 /** Um registro de presença de `estudio` (o `presence_ref` do realtime-js é tolerado e descartado). */

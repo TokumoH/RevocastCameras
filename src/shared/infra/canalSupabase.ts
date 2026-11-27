@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { EVENTOS_DO_CONTROLE, UUID, lerComando, lerEstadoNoAr, lerMensagemDoEstudio, lerPresenca, lerRemetente } from '../../domains/aovivo/mensagens'
+import { EVENTOS_DO_CONTROLE, EVENTOS_DO_ESTADO, UUID, lerMensagemDoControle, lerMensagemDoEstado, lerMensagemDoEstudio, lerPresenca, lerRemetente, topicoDoControle, topicoDoEstado } from '../../domains/aovivo/mensagens'
 import type { PresencaNoEstudio } from '../../domains/aovivo/mensagens'
-import type { CanalDoControle, CanalDoEstudio, EstadoDoCanal, FabricaDeCanais, RespostaDoEnvio } from '../../domains/aovivo/portas'
+import type { CanalDoControle, CanalDoEstado, CanalDoEstudio, EstadoDoCanal, FabricaDeCanais, RespostaDoEnvio } from '../../domains/aovivo/portas'
 
 type Canal = ReturnType<SupabaseClient['channel']>
 
@@ -307,20 +307,13 @@ export function criarFabricaDeCanais(cliente: SupabaseClient, usuarioId: string,
     },
 
     controle(episodioId: string): CanalDoControle {
-      const alca = criarAlca(abrir(`episodio:${episodioId}:controle`))
+      const alca = criarAlca(abrir(topicoDoControle(episodioId)))
       return {
+        // VER-047: deste tópico só sai comando (um `estado` forjado aqui é descartado pelo leitor do domínio)
         aoComando(f) {
           return alca.aoBroadcast((evento, payload, remetente) => {
-            if (evento !== EVENTOS_DO_CONTROLE.comando) return
-            const c = lerComando(payload)
+            const c = lerMensagemDoControle(evento, payload)
             if (c !== null) f(c, remetente)
-          })
-        },
-        aoEstado(f) {
-          return alca.aoBroadcast((evento, payload, remetente) => {
-            if (evento !== EVENTOS_DO_CONTROLE.estado) return
-            const e = lerEstadoNoAr(payload)
-            if (e !== null) f(e, remetente)
           })
         },
         aoEntrarAlguem(f) {
@@ -338,11 +331,31 @@ export function criarFabricaDeCanais(cliente: SupabaseClient, usuarioId: string,
         enviarComando(c) {
           return alca.enviar(EVENTOS_DO_CONTROLE.comando, { ...c })
         },
-        publicarEstado(e) {
-          return alca.enviar(EVENTOS_DO_CONTROLE.estado, { ...e })
-        },
         marcarPresenca() {
           return alca.marcar({})
+        },
+        fechar: alca.fechar,
+      }
+    },
+
+    /**
+     * O estado no ar do palco num tópico próprio (VER-047): só o `obs_palco` envia (RLS), membros e o palco recebem.
+     * Mesmo registro dos outros tópicos (um canal por tópico, contagem de referências, eco local, fechado/negado saem
+     * do mapa); ninguém marca presença aqui, então a remoção não faz `untrack`.
+     */
+    estado(episodioId: string): CanalDoEstado {
+      const alca = criarAlca(abrir(topicoDoEstado(episodioId)))
+      return {
+        // deste tópico só sai estado (um `comando` forjado aqui é descartado pelo leitor do domínio)
+        aoEstado(f) {
+          return alca.aoBroadcast((evento, payload, remetente) => {
+            const e = lerMensagemDoEstado(evento, payload)
+            if (e !== null) f(e, remetente)
+          })
+        },
+        aoMudarEstado: alca.aoEstado,
+        publicarEstado(e) {
+          return alca.enviar(EVENTOS_DO_ESTADO.estado, { ...e })
         },
         fechar: alca.fechar,
       }

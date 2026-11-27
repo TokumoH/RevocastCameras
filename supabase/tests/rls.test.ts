@@ -258,7 +258,7 @@ describe('membros e papéis', () => {
     expect(linhas(await disp(palco))).toEqual([{ id: ID_PALCO }]) // controle
     expect(linhas(await disp(palcoSemAnonimo as Claims))).toEqual([])
     // Sem sub: auth.uid() é nulo e não pode casar com um dispositivo ainda não pareado (usuario_anonimo_id nulo).
-    await db.query(`insert into public.dispositivos (tipo, rotulo) values ('obs_palco', 'PC sem sessão')`)
+    await db.query(`insert into public.dispositivos (tipo, rotulo) values ('camera', 'Celular sem sessão')`)
     const { sub: _s, ...anonimaSemSub } = palco
     expect(linhas(await disp(anonimaSemSub as Claims))).toEqual([])
     expect(await ids(anonimaSemSub as Claims, 'avisos')).toEqual([])
@@ -1459,7 +1459,7 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   test('e3-codigo-so-equipe', async () => {
     await cadastrarSessoesExtras()
     for (const [nome, s] of SESSOES) {
-      const r = await comoSessao<CodigoCriado>(db, s, CRIA, ['obs_palco', 'PC', null, null])
+      const r = await comoSessao<CodigoCriado>(db, s, CRIA, ['camera', 'PC', null, null])
       if (nome === 'ana' || nome === 'adm') {
         const l = linhas(r)
         expect([nome, l.length, FORMA_DO_CODIGO.test(l[0].codigo)]).toEqual([nome, 1, true])
@@ -1474,7 +1474,7 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   })
 
   test('e3-codigo-so-hash', async () => {
-    const { dispositivo, codigo } = await criarCodigo('obs_palco', 'PC do hash')
+    const { dispositivo, codigo } = await criarCodigo('camera', 'PC do hash')
     const conta = async (sql: string, params: unknown[]) => (await db.query<{ n: number }>(sql, params)).rows[0].n
     expect(await conta('select count(*)::int as n from public.codigos_pareamento where codigo_hash = $1', [codigo])).toBe(0)
     expect(await conta(`select count(*)::int as n from public.codigos_pareamento where codigo_hash = encode(sha256(convert_to($1, 'UTF8')), 'hex')`, [codigo])).toBe(1)
@@ -1486,9 +1486,9 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   })
 
   test('e3-codigo-aleatorio', async () => {
-    const { dispositivo } = await criarCodigo('obs_palco', 'PC aleatório')
+    const { dispositivo } = await criarCodigo('camera', 'PC aleatório')
     const codigos: string[] = []
-    for (let i = 0; i < 50; i += 1) codigos.push((await criarCodigo('obs_palco', null, dispositivo)).codigo)
+    for (let i = 0; i < 50; i += 1) codigos.push((await criarCodigo('camera', null, dispositivo)).codigo)
     expect(new Set(codigos).size).toBe(50)
     expect(codigos.every((c) => c.length === 43 && FORMA_DO_CODIGO.test(c))).toBe(true)
     // Um código novo do mesmo dispositivo apaga o pendente anterior: sobra só o último.
@@ -1503,8 +1503,8 @@ describe('E3 — pareamento, ao vivo e canais', () => {
       { tipo: 'obs_camera', camera_id: ID_CAMERA, criado_por: UID_ANA },
     ])
     // Nos outros tipos a câmera indicada é ignorada (dispositivos_camera_so_obs_camera).
-    const palcoNovo = await criarCodigo('obs_palco', 'PC palco', null, ID_CAMERA)
-    expect((await db.query('select camera_id from public.dispositivos where id = $1', [palcoNovo.dispositivo])).rows).toEqual([{ camera_id: null }])
+    const cameraNova = await criarCodigo('camera', 'Celular novo', null, ID_CAMERA)
+    expect((await db.query('select camera_id from public.dispositivos where id = $1', [cameraNova.dispositivo])).rows).toEqual([{ camera_id: null }])
   })
 
   test('e3-codigo-parametros-invalidos', async () => {
@@ -1523,34 +1523,36 @@ describe('E3 — pareamento, ao vivo e canais', () => {
     expect(await contar('dispositivos')).toBe(antes)
     expect(await contar('codigos_pareamento')).toBe(0)
     // Controles: 60 caracteres (com espaços nas pontas, tirados) e o dispositivo existente do mesmo tipo.
-    const longo = await criarCodigo('obs_palco', `  ${'y'.repeat(60)}  `)
+    const longo = await criarCodigo('camera', `  ${'y'.repeat(60)}  `)
     expect((await db.query('select rotulo from public.dispositivos where id = $1', [longo.dispositivo])).rows).toEqual([{ rotulo: 'y'.repeat(60) }])
     expect((await criarCodigo('obs_palco', null, ID_PALCO)).dispositivo).toBe(ID_PALCO)
   })
 
   test('e3-codigo-novo-invalida-pendente', async () => {
-    const primeiro = await criarCodigo('obs_palco', 'PC trocado')
-    const segundo = await criarCodigo('obs_palco', null, primeiro.dispositivo)
+    const primeiro = await criarCodigo('camera', 'PC trocado')
+    const segundo = await criarCodigo('camera', null, primeiro.dispositivo)
     expect(segundo.dispositivo).toBe(primeiro.dispositivo)
     const s = await novaAnonima()
-    expect((await parear(s, primeiro.codigo, 'obs_palco')).resultado).toBe('invalido')
-    expect(await parear(s, segundo.codigo, 'obs_palco')).toEqual({ resultado: 'pareado', dispositivo: primeiro.dispositivo, nome: 'PC trocado' })
+    expect((await parear(s, primeiro.codigo, 'camera')).resultado).toBe('invalido')
+    expect(await parear(s, segundo.codigo, 'camera')).toEqual({ resultado: 'pareado', dispositivo: primeiro.dispositivo, nome: 'PC trocado' })
   })
 
   test('e3-parear-so-anonima', async () => {
-    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC membro')
-    for (const s of [ana, bia, adm]) expect(codigoDoErro(erro(await comoSessao(db, s, PAREIA, [codigo, 'obs_palco'])))).toBe('42501')
-    expect(erro(await comoSessao(db, null, PAREIA, [codigo, 'obs_palco'])).message).toBe('permission denied for function parear_dispositivo')
+    const { codigo, dispositivo } = await criarCodigo('camera', 'PC membro')
+    for (const s of [ana, bia, adm]) expect(codigoDoErro(erro(await comoSessao(db, s, PAREIA, [codigo, 'camera'])))).toBe('42501')
+    expect(erro(await comoSessao(db, null, PAREIA, [codigo, 'camera'])).message).toBe('permission denied for function parear_dispositivo')
     // Sem a claim is_anonymous, a sessão não conta como anônima (falha fechada).
     const s = await novaAnonima()
     const { is_anonymous: _a, ...semClaim } = s
-    expect(codigoDoErro(erro(await comoSessao(db, semClaim as Claims, PAREIA, [codigo, 'obs_palco'])))).toBe('42501')
+    expect(codigoDoErro(erro(await comoSessao(db, semClaim as Claims, PAREIA, [codigo, 'camera'])))).toBe('42501')
     expect(await usadoEm(dispositivo)).toEqual([null])
-    expect((await parear(s, codigo, 'obs_palco')).resultado).toBe('pareado') // controle
+    expect((await parear(s, codigo, 'camera')).resultado).toBe('pareado') // controle
   })
 
   test('e3-parear-ok', async () => {
     const midia = await semearMidia()
+    // Um palco ativo só (VER-047, índice dispositivos_um_palco_ativo): o semeado é revogado antes de criar um palco novo.
+    await db.query('update public.dispositivos set revogado_em = now() where id = $1', [ID_PALCO])
     const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC novo')
     const s = await novaAnonima()
     expect(await ids(s, 'midias')).toEqual([]) // controle: antes de parear, nada
@@ -1566,11 +1568,11 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   })
 
   test('e3-codigo-uso-unico', async () => {
-    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC único')
+    const { codigo, dispositivo } = await criarCodigo('camera', 'PC único')
     const s1 = await novaAnonima()
     const s2 = await novaAnonima()
-    expect((await parear(s1, codigo, 'obs_palco')).resultado).toBe('pareado')
-    expect(await parear(s2, codigo, 'obs_palco')).toEqual({ resultado: 'invalido', dispositivo: null, nome: null })
+    expect((await parear(s1, codigo, 'camera')).resultado).toBe('pareado')
+    expect(await parear(s2, codigo, 'camera')).toEqual({ resultado: 'invalido', dispositivo: null, nome: null })
     expect(await dispositivoDe(s2)).toEqual([])
     expect(await dispositivoDe(s1)).toEqual([dispositivo]) // o dono continua o mesmo
     expect(await tentativasDe(s2.sub)).toBe(1)
@@ -1587,19 +1589,19 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   })
 
   test('e3-codigo-expirado', async () => {
-    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC expirado')
+    const { codigo, dispositivo } = await criarCodigo('camera', 'PC expirado')
     await db.query(`update public.codigos_pareamento set expira_em = now() - interval '1 second' where dispositivo_id = $1`, [dispositivo])
     const s = await novaAnonima()
-    expect((await parear(s, codigo, 'obs_palco')).resultado).toBe('invalido')
+    expect((await parear(s, codigo, 'camera')).resultado).toBe('invalido')
     expect(await usadoEm(dispositivo)).toEqual([null])
     expect(await dispositivoDe(s)).toEqual([])
     // Controle: o mesmo código, de volta à validade, pareia.
     await db.query(`update public.codigos_pareamento set expira_em = now() + interval '1 minute' where dispositivo_id = $1`, [dispositivo])
-    expect((await parear(s, codigo, 'obs_palco')).resultado).toBe('pareado')
+    expect((await parear(s, codigo, 'camera')).resultado).toBe('pareado')
   })
 
   test('e3-codigo-vale-2-minutos', async () => {
-    const { dispositivo, expira } = await criarCodigo('obs_palco', 'PC validade')
+    const { dispositivo, expira } = await criarCodigo('camera', 'PC validade')
     const r = await db.query<{ ok: boolean; expira_em: Date }>(
       `select expira_em = now() + interval '2 minutes' as ok, expira_em from public.codigos_pareamento where dispositivo_id = $1`,
       [dispositivo],
@@ -1609,22 +1611,22 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   })
 
   test('e3-parear-tipo-errado', async () => {
-    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC do palco')
+    const { codigo, dispositivo } = await criarCodigo('camera', 'Celular do tipo')
     const s = await novaAnonima()
-    for (const tipo of ['camera', 'obs_camera', null]) {
+    for (const tipo of ['obs_palco', 'obs_camera', null]) {
       expect([tipo, await parear(s, codigo, tipo)]).toEqual([tipo, { resultado: 'tipo_errado', dispositivo: null, nome: null }])
     }
     expect(await usadoEm(dispositivo)).toEqual([null])
     expect(await tentativasDe(s.sub)).toBe(0)
     expect(await dispositivoDe(s)).toEqual([])
-    expect((await parear(s, codigo, 'obs_palco')).resultado).toBe('pareado')
+    expect((await parear(s, codigo, 'camera')).resultado).toBe('pareado')
   })
 
   test('e3-codigo-nulo-ou-fora-da-forma', async () => {
-    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC forma')
+    const { codigo, dispositivo } = await criarCodigo('camera', 'PC forma')
     const s = await novaAnonima()
     for (const errado of [null, '', codigo.slice(0, 42), `${codigo}x`, ` ${codigo}`]) {
-      expect([errado, (await parear(s, errado, 'obs_palco')).resultado]).toEqual([errado, 'invalido'])
+      expect([errado, (await parear(s, errado, 'camera')).resultado]).toEqual([errado, 'invalido'])
     }
     expect(await tentativasDe(s.sub)).toBe(5)
     expect(await usadoEm(dispositivo)).toEqual([null])
@@ -1632,24 +1634,24 @@ describe('E3 — pareamento, ao vivo e canais', () => {
 
   test('e3-limite-de-tentativas', async () => {
     const s = await novaAnonima()
-    for (let i = 0; i < 5; i += 1) expect((await parear(s, codigoErrado(i), 'obs_palco')).resultado).toBe('invalido')
+    for (let i = 0; i < 5; i += 1) expect((await parear(s, codigoErrado(i), 'camera')).resultado).toBe('invalido')
     expect(await tentativasDe(s.sub)).toBe(5)
-    const { codigo, dispositivo } = await criarCodigo('obs_palco', 'PC limite')
-    expect(await parear(s, codigo, 'obs_palco')).toEqual({ resultado: 'limite', dispositivo: null, nome: null })
+    const { codigo, dispositivo } = await criarCodigo('camera', 'PC limite')
+    expect(await parear(s, codigo, 'camera')).toEqual({ resultado: 'limite', dispositivo: null, nome: null })
     expect(await usadoEm(dispositivo)).toEqual([null]) // o válido continua sem uso
     expect(await tentativasDe(s.sub)).toBe(5) // a resposta limite não grava tentativa
     expect(await dispositivoDe(s)).toEqual([])
     const outra = await novaAnonima()
-    expect((await parear(outra, codigo, 'obs_palco')).resultado).toBe('pareado')
+    expect((await parear(outra, codigo, 'camera')).resultado).toBe('pareado')
     // Limite inferior da janela: com as 5 falhas de 9 min atrás, a sessão continua em limite (a janela é de 10 min, não menos).
     await db.query(`update public.tentativas_pareamento set criado_em = criado_em - interval '9 minutes' where usuario_id = $1`, [s.sub])
-    const outroCodigo = await criarCodigo('obs_palco', 'PC ainda no limite')
-    expect((await parear(s, outroCodigo.codigo, 'obs_palco')).resultado).toBe('limite')
+    const outroCodigo = await criarCodigo('camera', 'PC ainda no limite')
+    expect((await parear(s, outroCodigo.codigo, 'camera')).resultado).toBe('limite')
     expect(await usadoEm(outroCodigo.dispositivo)).toEqual([null])
     // Depois de 10 min sem falha (11 min no total), a primeira sessão volta a tentar.
     await db.query(`update public.tentativas_pareamento set criado_em = criado_em - interval '2 minutes' where usuario_id = $1`, [s.sub])
-    const novo = await criarCodigo('obs_palco', 'PC depois do limite')
-    expect((await parear(s, novo.codigo, 'obs_palco')).resultado).toBe('pareado')
+    const novo = await criarCodigo('camera', 'PC depois do limite')
+    expect((await parear(s, novo.codigo, 'camera')).resultado).toBe('pareado')
   })
 
   test('e3-tentativas-antigas-limpas', async () => {
@@ -1665,13 +1667,13 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   test('e3-codigos-vencidos-limpos', async () => {
     // Códigos vencidos há mais de 1 dia somem na chamada seguinte de criar_codigo_pareamento (de qualquer dispositivo);
     // o vencido há menos de 1 dia fica (o usado, para a auditoria do pareamento recente).
-    const velho = await criarCodigo('obs_palco', 'PC velho')
-    const recente = await criarCodigo('obs_palco', 'PC recente')
+    const velho = await criarCodigo('camera', 'PC velho')
+    const recente = await criarCodigo('camera', 'PC recente')
     const s = await novaAnonima()
-    expect((await parear(s, recente.codigo, 'obs_palco')).resultado).toBe('pareado')
+    expect((await parear(s, recente.codigo, 'camera')).resultado).toBe('pareado')
     await db.query(`update public.codigos_pareamento set expira_em = now() - interval '25 hours' where dispositivo_id = $1`, [velho.dispositivo])
     await db.query(`update public.codigos_pareamento set expira_em = now() - interval '23 hours' where dispositivo_id = $1`, [recente.dispositivo])
-    await criarCodigo('obs_palco', 'PC que dispara a limpeza')
+    await criarCodigo('camera', 'PC que dispara a limpeza')
     expect(await usadoEm(velho.dispositivo)).toEqual([])
     expect(await usadoEm(recente.dispositivo)).toHaveLength(1)
     expect((await usadoEm(recente.dispositivo))[0]).not.toBeNull()
@@ -1691,6 +1693,8 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   })
 
   test('e3-sessao-em-um-dispositivo-so', async () => {
+    // A troca entre tipos (palco → câmera): o palco semeado é revogado antes (um palco ativo só, VER-047).
+    await db.query('update public.dispositivos set revogado_em = now() where id = $1', [ID_PALCO])
     const um = await criarCodigo('obs_palco', 'PC um')
     const dois = await criarCodigo('camera', 'Celular dois')
     const s = await novaAnonima()
@@ -1703,7 +1707,7 @@ describe('E3 — pareamento, ao vivo e canais', () => {
 
   test('e3-sem-acesso-direto', async () => {
     await cadastrarSessoesExtras()
-    await criarCodigo('obs_palco', 'PC tabela')
+    await criarCodigo('camera', 'PC tabela')
     const comandos = (t: string) => [
       `select * from public.${t}`,
       t === 'codigos_pareamento'
@@ -2002,6 +2006,16 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   const TOPICOS = (ativo: string, outro: string): [string, string][] => [
     ['estudio', 'estudio'], ['controle', `episodio:${ativo}:controle`], ['outro', `episodio:${outro}:controle`],
     ['video', `episodio:${ativo}:video`], ['x', 'x'],
+    // VER-047: o estado no ar do palco num tópico próprio (o do episódio ativo e o de outro episódio).
+    ['estado', `episodio:${ativo}:estado`], ['outro_estado', `episodio:${outro}:estado`],
+    // VER-047, rodada 1: tópicos parecidos com os do episódio ativo (sufixo, subtópico, maiúsculas), que só a igualdade
+    // exata do tópico nega; uma pode_usar_canal com like/prefixo/ilike os abriria.
+    ['estado_x', `episodio:${ativo}:estadox`], ['estado_sub', `episodio:${ativo}:estado:x`],
+    ['estado_maiusculo', `episodio:${ativo}:ESTADO`], ['topico_estado_maiusculo', `EPISODIO:${ativo.toUpperCase()}:ESTADO`],
+    ['controle_x', `episodio:${ativo}:controlex`], ['controle_sub', `episodio:${ativo}:controle:x`],
+    ['controle_maiusculo', `EPISODIO:${ativo.toUpperCase()}:CONTROLE`],
+    // Nit da rodada 2: espaço e tab no fim (uma comparação com btrim/trim os abriria).
+    ['estado_espaco', `episodio:${ativo}:estado `], ['controle_tab', `episodio:${ativo}:controle\t`],
   ]
   /** O que cada sessão pode, por tópico (rb/rp receber broadcast/presence; eb/ep/es enviar broadcast/presence/persistence). */
   async function permissoesNoCanal(quem: Claims | null): Promise<Record<string, string>> {
@@ -2013,16 +2027,26 @@ describe('E3 — pareamento, ao vivo e canais', () => {
     }
     return r
   }
-  const NADA = { estudio: '', controle: '', outro: '', video: '', x: '' }
-  /** A matriz da D6: uma linha por sessão; persistence nunca; outro episódio, :video e qualquer outro tópico, nunca. */
+  const NADA = {
+    estudio: '', controle: '', outro: '', video: '', x: '', estado: '', outro_estado: '',
+    estado_x: '', estado_sub: '', estado_maiusculo: '', topico_estado_maiusculo: '', controle_x: '', controle_sub: '', controle_maiusculo: '', estado_espaco: '', controle_tab: '',
+  }
+  /**
+   * A matriz da D6: uma linha por sessão; persistence nunca; outro episódio, :video e qualquer outro tópico, nunca.
+   * VER-047 (células mudadas): palco × controle de 'rb rp eb' para 'rb rp' (o palco não envia mais em :controle);
+   * coluna nova estado: membros 'rb rp' (recebem o estado), palco 'rb rp eb' (só ele publica), os outros nada;
+   * coluna nova outro_estado: ninguém. Rodada 1 do VER-047: as 7 colunas de tópicos parecidos (estado_x, estado_sub,
+   * estado_maiusculo, topico_estado_maiusculo, controle_x, controle_sub, controle_maiusculo): ninguém. Nit da rodada 2:
+   * estado_espaco (`:estado ` com espaço no fim) e controle_tab (`:controle` com tab no fim): ninguém.
+   */
   const MATRIZ_DO_CANAL: [string, Record<string, string>][] = [
     ['anon', NADA],
-    ['ana', { ...NADA, estudio: 'rb rp eb ep', controle: 'rb rp eb ep' }],
-    ['bia', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp eb ep' }],
-    ['adm', { ...NADA, estudio: 'rb rp eb ep', controle: 'rb rp eb ep' }],
+    ['ana', { ...NADA, estudio: 'rb rp eb ep', controle: 'rb rp eb ep', estado: 'rb rp' }],
+    ['bia', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp eb ep', estado: 'rb rp' }],
+    ['adm', { ...NADA, estudio: 'rb rp eb ep', controle: 'rb rp eb ep', estado: 'rb rp' }],
     ['estranho', NADA],
     ['camera', { ...NADA, estudio: 'rb rp ep' }],
-    ['palco', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp eb' }],
+    ['palco', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp', estado: 'rb rp eb' }],
     ['obs_camera', { ...NADA, estudio: 'rb rp ep' }],
     ['solta', NADA],
     ['revogado', NADA],
@@ -2036,30 +2060,155 @@ describe('E3 — pareamento, ao vivo e canais', () => {
 
   test('e3-canal-segue-o-episodio-ativo', async () => {
     const CONTROLE = `episodio:${ID_EPISODIO}:controle`
+    const ESTADO = `episodio:${ID_EPISODIO}:estado`
     linhas(await comoSessao(db, ana, 'select public.definir_modo_teste($1)', [ID_EPISODIO]))
     expect(await comoCanal(db, ana, CONTROLE, 'broadcast', 'receber')).toBe(true)
-    expect(await comoCanal(db, palco, CONTROLE, 'broadcast', 'enviar')).toBe(true)
+    expect(await comoCanal(db, palco, ESTADO, 'broadcast', 'enviar')).toBe(true) // VER-047: o palco publica em :estado
     linhas(await comoSessao(db, ana, 'select public.definir_modo_teste($1)', [null]))
     for (const [ext, op] of [['broadcast', 'receber'], ['presence', 'receber'], ['broadcast', 'enviar'], ['presence', 'enviar']] as const) {
       expect([ext, op, await comoCanal(db, ana, CONTROLE, ext, op), await comoCanal(db, palco, CONTROLE, ext, 'receber')]).toEqual([ext, op, false, false])
+      expect([ext, op, await comoCanal(db, ana, ESTADO, ext, 'receber'), await comoCanal(db, palco, ESTADO, ext, op)]).toEqual([ext, op, false, false])
     }
     // Ao vivo: o tópico passa a ser o do episódio ao vivo.
     linhas(await comoSessao(db, ana, 'select public.iniciar_ao_vivo($1)', [ID_EPISODIO]))
     expect(await comoCanal(db, bia, CONTROLE, 'broadcast', 'enviar')).toBe(true)
+    expect(await comoCanal(db, palco, ESTADO, 'broadcast', 'enviar')).toBe(true)
     linhas(await comoSessao(db, ana, 'select public.encerrar_ao_vivo($1)', [ID_EPISODIO]))
     expect(await comoCanal(db, bia, CONTROLE, 'broadcast', 'enviar')).toBe(false)
+    expect(await comoCanal(db, palco, ESTADO, 'broadcast', 'enviar')).toBe(false)
     expect(await comoCanal(db, bia, 'estudio', 'broadcast', 'receber')).toBe(true) // estudio não depende do episódio
   })
 
   test('e3-revogado-sem-canal', async () => {
     await definirTeste(ID_EPISODIO)
     const CONTROLE = `episodio:${ID_EPISODIO}:controle`
+    const ESTADO = `episodio:${ID_EPISODIO}:estado`
     expect(await comoCanal(db, palco, 'estudio', 'broadcast', 'receber')).toBe(true) // controle
-    expect(await comoCanal(db, palco, CONTROLE, 'broadcast', 'enviar')).toBe(true) // controle
+    expect(await comoCanal(db, palco, CONTROLE, 'broadcast', 'receber')).toBe(true) // controle
+    expect(await comoCanal(db, palco, ESTADO, 'broadcast', 'enviar')).toBe(true) // controle (VER-047: o envio do palco é em :estado)
     linhas(await comoSessao(db, ana, 'select public.revogar_dispositivo($1)', [ID_PALCO]))
-    for (const topico of ['estudio', CONTROLE]) {
+    for (const topico of ['estudio', CONTROLE, ESTADO]) {
       for (const [, ext, op] of COMBINACOES) expect([topico, ext, op, await comoCanal(db, palco, topico, ext, op)]).toEqual([topico, ext, op, false])
     }
+  })
+
+  // ----- VER-047: estado do palco num tópico próprio; comandos só de membros; um palco ativo só -----
+
+  test('e3-palco-nao-envia-em-controle', async () => {
+    await definirTeste(ID_EPISODIO)
+    const CONTROLE = `episodio:${ID_EPISODIO}:controle`
+    // O palco recebe os comandos e a presença dos membros (para republicar o estado e o filtro do VER-046) e não envia nada.
+    expect(await comoCanal(db, palco, CONTROLE, 'broadcast', 'receber')).toBe(true)
+    expect(await comoCanal(db, palco, CONTROLE, 'presence', 'receber')).toBe(true)
+    for (const ext of ['broadcast', 'presence', 'persistence'] as const) {
+      expect([ext, await comoCanal(db, palco, CONTROLE, ext, 'enviar')]).toEqual([ext, false])
+    }
+    // Controle: os três papéis de membro enviam comando em :controle.
+    for (const s of [ana, bia, adm]) expect(await comoCanal(db, s, CONTROLE, 'broadcast', 'enviar')).toBe(true)
+  })
+
+  test('e3-estado-so-o-palco-envia', async () => {
+    await cadastrarSessoesExtras()
+    await definirTeste(ID_EPISODIO)
+    const ESTADO = `episodio:${ID_EPISODIO}:estado`
+    expect(await comoCanal(db, palco, ESTADO, 'broadcast', 'enviar')).toBe(true) // controle
+    for (const [nome, s] of SESSOES) {
+      const envia = []
+      for (const ext of ['broadcast', 'presence', 'persistence'] as const) if (await comoCanal(db, s, ESTADO, ext, 'enviar')) envia.push(ext)
+      expect([nome, envia]).toEqual([nome, nome === 'palco' ? ['broadcast'] : []])
+    }
+    // Membros recebem; câmera, câmera do OBS e sessões sem papel não recebem nada.
+    for (const s of [ana, bia, adm]) expect(await comoCanal(db, s, ESTADO, 'broadcast', 'receber')).toBe(true)
+    for (const s of [camera, obsCamera, solta, revogado, estranho, null]) {
+      for (const ext of ['broadcast', 'presence'] as const) expect(await comoCanal(db, s, ESTADO, ext, 'receber')).toBe(false)
+    }
+  })
+
+  test('e3-canal-funcao-que-libera-tudo-e-pega', async () => {
+    // N5 do PLA-004: um create or replace de pode_usar_canal que devolva true mantém o oid e passa no data-api:check; só
+    // estes testes de banco o pegam. A troca vale só nesta transação (desfeita no rollback).
+    await definirTeste(ID_EPISODIO)
+    expect(await permissoesNoCanal(palco)).toEqual(MATRIZ_DO_CANAL.find(([n]) => n === 'palco')![1]) // controle
+    await db.query(`create or replace function public.pode_usar_canal(p_topico text, p_extensao text, p_enviar boolean)
+      returns boolean language sql stable security definer set search_path = '' as $$ select true $$`)
+    const solto = await permissoesNoCanal(palco)
+    expect(solto.controle).toBe('rb rp eb ep es')
+    expect(solto).not.toEqual(MATRIZ_DO_CANAL.find(([n]) => n === 'palco')![1])
+  })
+
+  const UM_PALCO = 'dispositivos_um_palco_ativo'
+  /** Passo 2 do guia (supabase/README.md): com dois ou mais palcos ativos, revoga todos menos o pareado por último. */
+  const REVOGA_PALCOS_QUE_SOBRAM = `update public.dispositivos set revogado_em = now()
+  where tipo = 'obs_palco' and revogado_em is null
+    and id <> (select d.id from public.dispositivos d where d.tipo = 'obs_palco' and d.revogado_em is null order by d.pareado_em desc nulls last limit 1);`
+  /** Passo 2 do guia: os códigos pendentes dos palcos revogados saem (parear com um deles limparia revogado_em). */
+  const APAGA_CODIGOS_DOS_REVOGADOS = `delete from public.codigos_pareamento c using public.dispositivos d
+  where d.id = c.dispositivo_id and d.tipo = 'obs_palco' and d.revogado_em is not null and c.usado_em is null;`
+  async function palcosAtivos(): Promise<string[]> {
+    return (await db.query<{ id: string }>(`select id from public.dispositivos where tipo = 'obs_palco' and revogado_em is null order by id`)).rows.map((l) => l.id)
+  }
+
+  test('e3-um-palco-ativo', async () => {
+    expect(await palcosAtivos()).toEqual([ID_PALCO]) // controle: o semeado
+    // Palco novo pela API com um ativo: 23505 do índice, e nada é criado.
+    const antes = await contar('dispositivos')
+    const r = erro(await comoSessao(db, adm, CRIA, ['obs_palco', 'PC 2', null, null]))
+    expect([codigoDoErro(r), (r as { constraint?: string }).constraint]).toEqual(['23505', UM_PALCO])
+    expect(await contar('dispositivos')).toBe(antes)
+    expect(await contar('codigos_pareamento')).toBe(0)
+    // Um palco ainda não pareado (código pendente) também conta: só um pendente ou pareado por vez.
+    linhas(await comoSessao(db, ana, 'select public.revogar_dispositivo($1)', [ID_PALCO]))
+    const novo = await criarCodigo('obs_palco', 'PC novo')
+    expect(await palcosAtivos()).toEqual([novo.dispositivo])
+    expect(codigoDoErro(erro(await comoSessao(db, ana, CRIA, ['obs_palco', 'PC 3', null, null])))).toBe('23505')
+    // Parear de novo o palco revogado com outro ativo: o código é criado, mas o pareamento cai no índice (23505) e o código
+    // continua sem uso (a transação da função é desfeita).
+    const antigo = await criarCodigo('obs_palco', null, ID_PALCO)
+    const s = await novaAnonima()
+    expect(codigoDoErro(erro(await comoSessao(db, s, PAREIA, [antigo.codigo, 'obs_palco'])))).toBe('23505')
+    expect(await usadoEm(ID_PALCO)).toEqual([null])
+    expect(await dispositivoDe(s)).toEqual([])
+    expect(await palcosAtivos()).toEqual([novo.dispositivo])
+    // Câmeras não têm o limite (controle: o índice é só do obs_palco).
+    await criarCodigo('camera', 'Celular 2')
+    await criarCodigo('camera', 'Celular 3')
+  })
+
+  test('e3-repareamento-reusa-o-palco', async () => {
+    // Trocar o aparelho do palco (a aba Ao vivo reaproveita o cadastrado): o mesmo dispositivo, sessão nova, um palco ativo.
+    await definirTeste(ID_EPISODIO)
+    const ESTADO = `episodio:${ID_EPISODIO}:estado`
+    const { dispositivo, codigo } = await criarCodigo('obs_palco', null, ID_PALCO)
+    expect(dispositivo).toBe(ID_PALCO)
+    const s = await novaAnonima()
+    expect(await parear(s, codigo, 'obs_palco')).toEqual({ resultado: 'pareado', dispositivo: ID_PALCO, nome: 'PC do estúdio (palco)' })
+    expect(await palcosAtivos()).toEqual([ID_PALCO])
+    expect(await comoCanal(db, s, ESTADO, 'broadcast', 'enviar')).toBe(true)
+    // A sessão antiga perde o envio na próxima autorização (no Realtime real, até a renovação do token: Riscos do VER-047).
+    expect(await comoCanal(db, palco, ESTADO, 'broadcast', 'enviar')).toBe(false)
+    expect(await comoCanal(db, palco, ESTADO, 'broadcast', 'receber')).toBe(false)
+  })
+
+  test('e3-guia-revoga-o-palco-que-sobra (VER-047, rodada 1)', async () => {
+    // As duas consultas do passo 2 do guia "Ao vivo e pareamento (E3)" (supabase/README.md), para um banco que já tenha
+    // dois obs_palco ativos antes da sexta migração: rodadas pelo dono (o editor SQL roda como postgres; aqui,
+    // postgres_sim), deixam ativo só o palco pareado por último e apagam os códigos pendentes dos revogados. O índice
+    // é tirado nesta transação (desfeita no rollback) para simular o banco antes da migração.
+    const guia = Object.values(import.meta.glob('../README.md', { query: '?raw', import: 'default', eager: true }) as Record<string, string>)[0]
+    const normal = (t: string) => t.replace(/\s+/g, ' ').trim()
+    for (const sql of [REVOGA_PALCOS_QUE_SOBRAM, APAGA_CODIGOS_DOS_REVOGADOS]) expect(normal(guia)).toContain(normal(sql))
+    await db.query('drop index public.dispositivos_um_palco_ativo')
+    const sobra = (await db.query<{ id: string }>(`insert into public.dispositivos (tipo, rotulo) values ('obs_palco', 'PC pendente') returning id`)).rows[0].id
+    await db.query(`insert into public.codigos_pareamento (dispositivo_id, codigo_hash) values ($1, 'h')`, [sobra])
+    expect(await palcosAtivos()).toEqual([ID_PALCO, sobra].sort())
+    await db.exec('set local role postgres_sim')
+    await db.query(REVOGA_PALCOS_QUE_SOBRAM)
+    await db.query(APAGA_CODIGOS_DOS_REVOGADOS)
+    await db.exec('reset role')
+    expect(await palcosAtivos()).toEqual([ID_PALCO]) // o pareado fica
+    expect(await usadoEm(sobra)).toEqual([])
+    // Com um palco ativo, o índice da migração entra.
+    await db.query(`create unique index dispositivos_um_palco_ativo on public.dispositivos (tipo) where tipo = 'obs_palco' and revogado_em is null`)
   })
 
   test('e3-politicas-do-canal', async () => {

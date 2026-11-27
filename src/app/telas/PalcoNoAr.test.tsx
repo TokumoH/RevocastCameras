@@ -160,9 +160,11 @@ function montar(
   const tela = <ObsPalco titulo="Palco" dependencias={dep} obs={criarObsNoNavegador()} criarWs={() => ws.ws} armazenamentoLocal={arm} />
   const r = render(o.strict ? <StrictMode>{tela}</StrictMode> : tela)
   const controle = (id = EP) => `episodio:${id}:controle`
+  /** O tópico do estado no ar (VER-047): o palco publica aqui, nunca no `:controle`. */
+  const estado = (id = EP) => `episodio:${id}:estado`
   /** Quantos canais já foram criados para o tópico (reabrir o `:controle` cria outro). */
   const criados = (topico: string) => d.canal.realtime.criados.filter((c) => c.topico === topico).length
-  return { d, r, arm, ws, episodioAtivo, controle, criados }
+  return { d, r, arm, ws, episodioAtivo, controle, estado, criados }
 }
 
 /** Presença do `:controle` (membros) que os testes de comando simulam: o palco só aceita comando de quem está nela (VER-046, I4). */
@@ -202,7 +204,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     instalarObs()
     const m = montar({ episodio })
     await esperar()
-    expect(m.d.canal.abertos()).toEqual(episodio === null ? ['estudio'] : ['estudio', m.controle()])
+    expect(m.d.canal.abertos()).toEqual(episodio === null ? ['estudio'] : ['estudio', m.controle(), m.estado()])
     await esperar(60_000)
     expect(m.r.container.textContent).toBe('')
     expect(m.r.container.querySelector('input, form, .selo-do-palco, .aviso-no-ar')).toBeNull()
@@ -333,7 +335,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     expect(play.mock.contexts[0]).toBe(audio)
     expect(audio.currentTime).toBe(0)
     expect(audio.volume).toBe(0.8)
-    const estado = m.d.canal.enviados(m.controle()).filter((e) => e.event === 'estado').at(-1)?.payload as { ultimo: { resultado: string } }
+    const estado = m.d.canal.enviados(m.estado()).filter((e) => e.event === 'estado').at(-1)?.payload as { ultimo: { resultado: string } }
     expect(estado.ultimo.resultado).toBe('ok')
     expect(m.d.chamadas.registros).toHaveLength(1)
   })
@@ -399,7 +401,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     expect(m.r.container.querySelector('input')).toBeNull()
     expect(document.body.innerHTML).not.toContain(SENHA)
     expect(JSON.stringify(m.d.canal.presencas('estudio'))).not.toContain(SENHA)
-    expect(JSON.stringify(m.d.canal.enviados(m.controle()))).not.toContain(SENHA)
+    expect(JSON.stringify(m.d.canal.enviados(m.estado()))).not.toContain(SENHA)
     expect((m.d.canal.presencas('estudio').at(-1) as { obs: { websocket: string } }).obs.websocket).toBe('conectado')
     // reaberto: o campo vem vazio e a porta salva
     tecla('c')
@@ -446,7 +448,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     // o marcador pedido com o websocket caído responde sem_websocket (o executor não foi recriado)
     comando(m, { acao: 'marcador' })
     await esperar()
-    const ultimo = () => (m.d.canal.enviados(m.controle()).filter((e) => e.event === 'estado').at(-1)?.payload as { ultimo: { resultado: string; motivo: string | null } }).ultimo
+    const ultimo = () => (m.d.canal.enviados(m.estado()).filter((e) => e.event === 'estado').at(-1)?.payload as { ultimo: { resultado: string; motivo: string | null } }).ultimo
     expect(ultimo()).toMatchObject({ resultado: 'falhou', motivo: 'sem_websocket' })
     await esperar(RECONECTAR_WS_MS)
     expect(ws.conexoes).toHaveLength(2)
@@ -470,7 +472,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     const m = montar()
     await esperar()
     expect(m.episodioAtivo).toHaveBeenCalledTimes(1)
-    const estados = () => m.d.canal.enviados(m.controle()).filter((e) => e.event === 'estado')
+    const estados = () => m.d.canal.enviados(m.estado()).filter((e) => e.event === 'estado')
     const antes = estados().length
     expect(antes).toBeGreaterThan(0) // publicado ao conectar o `:controle`
     act(() => {
@@ -486,14 +488,14 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     expect(m.episodioAtivo).toHaveBeenCalledTimes(2)
     expect(estados().length).toBeGreaterThan(antes)
     expect(lerEstadoNoAr(estados().at(-1)?.payload)).not.toBeNull()
-    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle()]) // o mesmo episódio: nada reaberto
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(), m.estado()]) // o mesmo episódio: nada reaberto
   })
 
   test('palco-reconecta: o `:controle` de volta a conectado republica o estado', async () => {
     instalarObs()
     const m = montar()
     await esperar()
-    const estados = () => m.d.canal.enviados(m.controle()).filter((e) => e.event === 'estado')
+    const estados = () => m.d.canal.enviados(m.estado()).filter((e) => e.event === 'estado')
     const antes = estados().length
     act(() => m.d.canal.definirEstado(m.controle(), 'reconectando'))
     await esperar()
@@ -512,7 +514,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     await esperar()
     expect(m.r.container.querySelector('.aviso-no-ar')).not.toBeNull()
     expect(m.criados(m.controle())).toBe(1)
-    const ultimoEstado = () => m.d.canal.enviados(m.controle()).filter((e) => e.event === 'estado').at(-1)?.payload as { avisoId: string | null; ultimo: { acao: string } | null }
+    const ultimoEstado = () => m.d.canal.enviados(m.estado()).filter((e) => e.event === 'estado').at(-1)?.payload as { avisoId: string | null; ultimo: { acao: string } | null }
     const websocket = () => (m.d.canal.presencas('estudio').at(-1) as { obs: { websocket: string } }).obs.websocket
     // o OBS reinicia o obs-websocket com outra senha: cai, e a reconexão volta `senha_errada`
     ws.responder('senha_errada')
@@ -576,7 +578,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     m.d.definirCarga(carga(EP2, 'Episódio dois'))
     act(() => m.d.canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: MEMBRO }))
     await esperar()
-    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(EP2)])
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(EP2), m.estado(EP2)])
     expect(vi.getTimerCount()).toBe(timers)
   })
 
@@ -602,7 +604,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     instalarObs()
     const m = montar({ strict: true })
     await esperar()
-    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle()])
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(), m.estado()])
   })
 
   test('palco-canal-fechado durante a consulta do episódio: o `:controle` não reabre sozinho', async () => {
@@ -623,7 +625,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     await esperar(1000)
     expect(m.d.canal.abertos()).toEqual([])
     await esperar(4000)
-    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle()])
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(), m.estado()])
   })
 
   test.each([
@@ -649,7 +651,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     const obs = instalarObs({ nivel: 4, status: { replaybuffer: true } })
     const m = montar()
     await esperar()
-    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(EP)])
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(EP), m.estado(EP)])
     // um clipe esperando os 5 s não é salvo depois da troca (executor.parar(), VER-039 N5)
     comando(m, { acao: 'clipe' })
     await esperar()
@@ -657,7 +659,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     m.d.definirCarga(carga(EP2, 'Episódio dois'))
     act(() => m.d.canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: MEMBRO }))
     await esperar()
-    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(EP2)])
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(EP2), m.estado(EP2)])
     await esperar(6000)
     expect(obs.chamadas).not.toContain('saveReplayBuffer')
     // comandos do tópico antigo não chegam; os do novo, sim
@@ -689,7 +691,7 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     await esperar(4999)
     expect(m.d.canal.abertos()).toEqual([])
     await esperar(1)
-    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle()])
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(), m.estado()])
     expect(screen.queryByText(TEXTO_DO_DISPOSITIVO.revogado)).toBeNull()
     expect(m.r.container.textContent).toBe('')
   })
@@ -713,9 +715,9 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
   })
 })
 
-/** Último estado publicado pelo palco no `:controle`. */
+/** Último estado publicado pelo palco no `:estado` (no `:controle` até o VER-047). */
 function ultimoEstado(m: ReturnType<typeof montar>, ep = EP): Record<string, unknown> | undefined {
-  return m.d.canal.enviados(m.controle(ep)).filter((e) => e.event === 'estado').at(-1)?.payload as Record<string, unknown> | undefined
+  return m.d.canal.enviados(m.estado(ep)).filter((e) => e.event === 'estado').at(-1)?.payload as Record<string, unknown> | undefined
 }
 
 describe('/obs/palco: revisão final da E3 (VER-046)', () => {
@@ -902,7 +904,7 @@ describe('/obs/palco: revisão final da E3 (VER-046)', () => {
     act(() => m.d.canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: MEMBRO }))
     await esperar()
     expect(carregar).toHaveBeenCalledTimes(2)
-    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle()])
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(), m.estado()])
   })
 
   test('cena atual do OBS no estado; troca à mão aparece (A1, D9)', async () => {
@@ -984,5 +986,80 @@ describe('/obs/palco sem piscar (N2)', () => {
     expect(rodar(script, '/camera')).toBe(false)
 
     expect(css).toMatch(/html\.palco,\s*html\.palco body\s*\{[^}]*background:\s*transparent/)
+  })
+})
+
+describe('/obs/palco: estado num tópico próprio (VER-047)', () => {
+  test('palco-publica-estado-no-topico-novo: o estado vai a `:estado`; nada sai no `:controle`', async () => {
+    instalarObs()
+    const m = montar()
+    await esperar()
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(), m.estado()])
+    comando(m, { acao: 'aviso', avisoId: AVISO })
+    await esperar()
+    expect(m.r.container.querySelector('.aviso-no-ar')).not.toBeNull()
+    expect(ultimoEstado(m)).toMatchObject({ avisoId: AVISO, ultimo: { acao: 'aviso', resultado: 'ok' } })
+    act(() => m.d.canal.entrarAlguem(m.controle()))
+    await esperar(30_000)
+    const estados = m.d.canal.enviados(m.estado())
+    expect(estados.length).toBeGreaterThan(3) // ao conectar, depois do comando, na entrada e o periódico
+    expect(estados.every((e) => e.event === 'estado' && lerEstadoNoAr(e.payload) !== null)).toBe(true)
+    expect(m.d.canal.enviados(m.controle())).toEqual([]) // o palco não envia nada no `:controle` (a RLS também não deixa)
+  })
+
+  test('comando forjado vindo de `:estado` é ignorado', async () => {
+    instalarObs()
+    const m = montar()
+    await esperar()
+    presentesNoControle(m, [MEMBRO])
+    act(() => m.d.canal.entregar(m.estado(), 'comando', { id: novoId(), acao: 'aviso', avisoId: AVISO, remetente: MEMBRO }))
+    await esperar()
+    expect(m.r.container.querySelector('.aviso-no-ar')).toBeNull()
+    expect(ultimoEstado(m)).toMatchObject({ ultimo: null })
+    comando(m, { acao: 'aviso', avisoId: AVISO }) // controle: o mesmo comando pelo `:controle` vai ao ar
+    await esperar()
+    expect(m.r.container.querySelector('.aviso-no-ar')).not.toBeNull()
+  })
+
+  test('troca de episódio fecha os dois tópicos antigos e abre os dois novos', async () => {
+    instalarObs()
+    const m = montar()
+    await esperar()
+    m.d.definirEpisodioAtivo({ id: EP2, modo: 'ao_vivo' })
+    m.d.definirCarga(carga(EP2, 'Episódio dois'))
+    act(() => m.d.canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: MEMBRO }))
+    await esperar()
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(EP2), m.estado(EP2)])
+    expect(m.d.canal.realtime.contar('removeChannel', m.controle(EP))).toBe(1)
+    expect(m.d.canal.realtime.contar('removeChannel', m.estado(EP))).toBe(1)
+    expect(ultimoEstado(m, EP2)).toMatchObject({ episodioId: EP2 })
+  })
+
+  test('o `:estado` de volta a conectado republica o estado', async () => {
+    instalarObs()
+    const m = montar()
+    await esperar()
+    const estados = () => m.d.canal.enviados(m.estado()).filter((e) => e.event === 'estado')
+    const antes = estados().length
+    act(() => m.d.canal.definirEstado(m.estado(), 'reconectando'))
+    await esperar()
+    act(() => m.d.canal.definirEstado(m.estado(), 'conectado'))
+    await esperar()
+    expect(estados().length).toBe(antes + 1)
+    expect(m.criados(m.estado())).toBe(1)
+  })
+
+  test.each(['fechado', 'negado'] as const)('o `:estado` %s fecha os canais e reabre os três em 5 s', async (estado) => {
+    instalarObs()
+    const m = montar()
+    await esperar()
+    act(() => m.d.canal.definirEstado(m.estado(), estado))
+    await esperar()
+    expect(m.d.canal.abertos()).toEqual([])
+    await esperar(5000)
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle(), m.estado()])
+    expect(m.criados(m.controle())).toBe(2)
+    expect(m.criados(m.estado())).toBe(2)
+    expect(m.r.container.textContent).toBe('')
   })
 })

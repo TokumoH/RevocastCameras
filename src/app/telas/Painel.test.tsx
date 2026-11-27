@@ -147,16 +147,17 @@ describe('painel com abas (D8)', () => {
     expect(canal.realtime.contar('channel', 'estudio')).toBe(1)
     expect(alcas).toHaveLength(1)
     expect(canal.presencas('estudio')).toEqual([{ tipo: 'membro', papel: 'equipe' }])
-    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP}:controle`])
+    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP}:controle`, `episodio:${EP}:estado`]) // VER-047: o `:estado` também
     const estados: string[] = []
     alcas[0].aoMudarEstado((e) => estados.push(e))
     await esperar()
     expect(estados).toEqual(['conectado'])
 
-    // sair da aba: o `:controle` do `useAoVivo` sai; o `estudio` continua conectado, recebendo e enviando
+    // sair da aba: o `:controle` e o `:estado` do `useAoVivo` saem; o `estudio` continua conectado, recebendo e enviando
     fireEvent.click(screen.getByRole('tab', { name: 'Episódios' }))
     await esperar()
     expect(canal.realtime.contar('removeChannel', `episodio:${EP}:controle`)).toBe(1)
+    expect(canal.realtime.contar('removeChannel', `episodio:${EP}:estado`)).toBe(1)
     expect(canal.realtime.contar('removeChannel', 'estudio')).toBe(0)
     expect(canal.abertos()).toEqual(['estudio'])
     const recebidas: string[] = []
@@ -172,6 +173,7 @@ describe('painel com abas (D8)', () => {
     await esperar()
     expect(canal.realtime.contar('removeChannel', 'estudio')).toBe(1)
     expect(canal.realtime.contar('removeChannel', `episodio:${EP}:controle`)).toBe(1)
+    expect(canal.realtime.contar('removeChannel', `episodio:${EP}:estado`)).toBe(1)
     expect(canal.abertos()).toEqual([])
     expect(canal.realtime.contar('channel', 'estudio')).toBe(1)
   })
@@ -195,18 +197,21 @@ describe('painel com abas (D8)', () => {
     await esperar()
     fireEvent.click(screen.getByRole('tab', { name: 'Ao vivo' }))
     await esperar()
-    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP}:controle`])
-    for (const ordem of [['estudio', `episodio:${EP}:controle`], [`episodio:${EP}:controle`, 'estudio']]) {
+    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP}:controle`, `episodio:${EP}:estado`])
+    // VER-047: os três tópicos caem juntos na renovação do token; um `reavaliar()` só, em qualquer ordem
+    const CONTROLE = `episodio:${EP}:controle`
+    const ESTADO = `episodio:${EP}:estado`
+    for (const ordem of [['estudio', CONTROLE, ESTADO], [CONTROLE, ESTADO, 'estudio'], [ESTADO, 'estudio', CONTROLE]]) {
       const avaliacoes = f.chamadas.usuarioAtual
       act(() => {
         for (const topico of ordem) canal.definirEstado(topico, 'fechado')
       })
       await esperar()
       expect(f.chamadas.usuarioAtual, ordem.join(' + ')).toBe(avaliacoes + 1)
-      // os dois reabrem 5 s depois (a pessoa continua membro)
+      // os três reabrem 5 s depois (a pessoa continua membro)
       await esperar(REABRIR_CANAIS_MS)
       await esperar()
-      expect([...canal.abertos()].sort(), ordem.join(' + ')).toEqual([`episodio:${EP}:controle`, 'estudio'].sort())
+      expect([...canal.abertos()].sort(), ordem.join(' + ')).toEqual([CONTROLE, ESTADO, 'estudio'].sort())
       expect(f.chamadas.usuarioAtual, ordem.join(' + ')).toBe(avaliacoes + 1)
     }
   })

@@ -1,15 +1,20 @@
 import { describe, test, expect } from 'vitest'
 import {
   EVENTOS_DO_CONTROLE,
+  EVENTOS_DO_ESTADO,
   MOTIVOS_DO_RESULTADO,
   REVOGACAO_LEMBRADA_MS,
   Revogados,
   UUID,
   lerComando,
   lerEstadoNoAr,
+  lerMensagemDoControle,
+  lerMensagemDoEstado,
   lerMensagemDoEstudio,
   lerPresenca,
   lerRemetente,
+  topicoDoControle,
+  topicoDoEstado,
 } from './mensagens'
 import type { EstadoNoAr, SituacaoDoObs } from './mensagens'
 
@@ -48,7 +53,9 @@ describe('constantes das mensagens', () => {
     expect(UUID.test(ID)).toBe(true)
     expect(UUID.test(ID.toUpperCase())).toBe(false)
     expect(UUID.test(`${ID}0`)).toBe(false)
-    expect(EVENTOS_DO_CONTROLE).toEqual({ comando: 'comando', estado: 'estado' })
+    // VER-047: cada tópico do episódio tem o seu evento (o estado saiu de `:controle`)
+    expect(EVENTOS_DO_CONTROLE).toEqual({ comando: 'comando' })
+    expect(EVENTOS_DO_ESTADO).toEqual({ estado: 'estado' })
     expect(REVOGACAO_LEMBRADA_MS).toBe(900_000)
     expect(Object.isFrozen(MOTIVOS_DO_RESULTADO)).toBe(true)
     // os motivos de recusa de resolverComando (comandos.ts) estão todos na lista
@@ -285,5 +292,32 @@ describe('revogados-expiram', () => {
     expect(revogados.contem(REMETENTE)).toBe(true)
     agora = 1_500_000
     expect(revogados.contem(REMETENTE)).toBe(false)
+  })
+})
+
+describe('mensagens por tópico do episódio (VER-047)', () => {
+  const COMANDO = { id: OUTRO, acao: 'cena', cenaId: ID }
+
+  test('tópicos do episódio', () => {
+    expect(topicoDoControle(ID)).toBe(`episodio:${ID}:controle`)
+    expect(topicoDoEstado(ID)).toBe(`episodio:${ID}:estado`)
+  })
+
+  test('de `:controle` só sai comando', () => {
+    expect(lerMensagemDoControle('comando', comRemetente(COMANDO))).toEqual(COMANDO)
+    // um estado forjado em `:controle` (por quem pode enviar ali) é descartado, mesmo válido
+    expect(lerMensagemDoControle('estado', comRemetente(ESTADO))).toBeNull()
+    expect(lerMensagemDoControle('estado', comRemetente(COMANDO))).toBeNull()
+    expect(lerMensagemDoControle('comando', comRemetente(ESTADO))).toBeNull()
+    expect(lerMensagemDoControle('qualquer', comRemetente(COMANDO))).toBeNull()
+  })
+
+  test('de `:estado` só sai estado', () => {
+    expect(lerMensagemDoEstado('estado', comRemetente(ESTADO))).toEqual(ESTADO)
+    // um comando forjado em `:estado` é descartado, mesmo válido
+    expect(lerMensagemDoEstado('comando', comRemetente(COMANDO))).toBeNull()
+    expect(lerMensagemDoEstado('estado', comRemetente(COMANDO))).toBeNull()
+    expect(lerMensagemDoEstado('comando', comRemetente(ESTADO))).toBeNull()
+    expect(lerMensagemDoEstado('estado', comProto(comRemetente(ESTADO)))).toBeNull()
   })
 })

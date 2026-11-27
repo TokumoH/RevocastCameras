@@ -135,7 +135,7 @@ describe('mapa de gestos', () => {
 describe('dispositivos', () => {
   test('dispositivos-sem-sessao', async () => {
     await db.query(
-      `insert into public.dispositivos (tipo, rotulo, usuario_anonimo_id) values ('obs_palco', 'PC 2', null), ('obs_palco', 'PC 3', null)`,
+      `insert into public.dispositivos (tipo, rotulo, usuario_anonimo_id) values ('camera', 'Celular 2', null), ('camera', 'Celular 3', null)`,
     )
     const r = await db.query<{ n: number }>('select count(*)::int as n from public.dispositivos where usuario_anonimo_id is null')
     expect(r.rows[0].n).toBe(2)
@@ -154,6 +154,23 @@ describe('dispositivos', () => {
         UID_SESSAO_CAMERA,
       ]),
     ).toEqual({ code: DUPLICADO, constraint: 'dispositivos_usuario_anonimo_unico' })
+  })
+
+  test('um-palco-ativo (VER-047)', async () => {
+    // O índice parcial vale para qualquer papel, inclusive o dono: um segundo obs_palco não revogado é recusado.
+    expect(await recusa(`insert into public.dispositivos (tipo, rotulo) values ('obs_palco', 'PC 2')`)).toEqual({
+      code: DUPLICADO,
+      constraint: 'dispositivos_um_palco_ativo',
+    })
+    // Controle: revogados convivem com o ativo, e o índice é parcial (só obs_palco, só não revogado).
+    await db.query(`insert into public.dispositivos (tipo, rotulo, revogado_em) values ('obs_palco', 'PC velho 1', now()), ('obs_palco', 'PC velho 2', now())`)
+    const r = await db.query<{ n: number }>(`select count(*)::int as n from public.dispositivos where tipo = 'obs_palco'`)
+    expect(r.rows[0].n).toBe(3)
+    // Reativar um revogado com o semeado ativo também é recusado.
+    expect(await recusa(`update public.dispositivos set revogado_em = null where rotulo = 'PC velho 1'`)).toEqual({
+      code: DUPLICADO,
+      constraint: 'dispositivos_um_palco_ativo',
+    })
   })
 
   test('camera-sem-reconhecer-ok', async () => {

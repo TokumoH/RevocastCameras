@@ -266,7 +266,7 @@ export function AbaAoVivo({
   estudio: CanalDoEstudio | null
   /** O estado do `estudio` do painel (`useEstudio`), passado ao `useAoVivo` junto com a alça. */
   estadoDoEstudio: EstadoDoCanal
-  /** A fábrica de canais do cliente de membro (o `:controle` do episódio ativo). */
+  /** A fábrica de canais do cliente de membro (o `:controle` e o `:estado` do episódio ativo, VER-047). */
   canais: FabricaDeCanais
   preparacao: ServicosDePreparacao
   usuario: UsuarioDaSessao
