@@ -4,7 +4,7 @@
 // para que o teste não passe por uma recusa de outro motivo.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 import type { PGlite } from '@electric-sql/pglite'
-import { ID_CAMERA, ID_CENA, ID_EPISODIO, ID_PALCO, UID_ANA, UID_SESSAO_CAMERA, TEMPO_LIMITE_HOOK_MS, criarBanco, semearDados } from './banco'
+import { ID_CAMERA, ID_CENA, ID_EPISODIO, ID_OBS_CAMERA, ID_PALCO, UID_ANA, UID_SESSAO_CAMERA, TEMPO_LIMITE_HOOK_MS, criarBanco, semearDados } from './banco'
 
 let db: PGlite
 
@@ -194,9 +194,32 @@ describe('dispositivos', () => {
   })
 
   test('obs-camera-com-camera-ok', async () => {
+    // VER-050: no máximo um obs_camera não revogado (índice dispositivos_um_obs_camera_ativo); o semeado sai antes.
+    await db.query(`update public.dispositivos set revogado_em = now() where id = $1`, [ID_OBS_CAMERA])
     await db.query(`insert into public.dispositivos (tipo, rotulo, camera_id) values ('obs_camera', 'PC 2 (câmera)', $1)`, [ID_CAMERA])
     const r = await db.query<{ n: number }>(`select count(*)::int as n from public.dispositivos where tipo = 'obs_camera'`)
-    expect(r.rows[0].n).toBe(2)
+    expect(r.rows[0].n).toBe(2) // o novo e o semeado revogado
+  })
+
+  test('um-obs-camera-ativo (VER-050)', async () => {
+    // O índice parcial vale para qualquer papel, inclusive o dono: um segundo obs_camera não revogado é recusado, também
+    // ligado a outra câmera (o índice é por tipo, não por camera_id: um único par sinaliza no banco).
+    const segunda = (await db.query<{ id: string }>(`insert into public.dispositivos (tipo, rotulo) values ('camera', 'Celular 2') returning id`)).rows[0].id
+    for (const camera of [ID_CAMERA, segunda]) {
+      expect(await recusa(`insert into public.dispositivos (tipo, rotulo, camera_id) values ('obs_camera', 'PC 2', $1)`, [camera])).toEqual({
+        code: DUPLICADO,
+        constraint: 'dispositivos_um_obs_camera_ativo',
+      })
+    }
+    // Controle: revogados convivem com o ativo, e o índice é parcial (só obs_camera, só não revogado).
+    await db.query(`insert into public.dispositivos (tipo, rotulo, camera_id, revogado_em) values ('obs_camera', 'PC velho 1', $1, now()), ('obs_camera', 'PC velho 2', $2, now())`, [ID_CAMERA, segunda])
+    const r = await db.query<{ n: number }>(`select count(*)::int as n from public.dispositivos where tipo = 'obs_camera'`)
+    expect(r.rows[0].n).toBe(3)
+    // Reativar um revogado com o semeado ativo também é recusado.
+    expect(await recusa(`update public.dispositivos set revogado_em = null where rotulo = 'PC velho 1'`)).toEqual({
+      code: DUPLICADO,
+      constraint: 'dispositivos_um_obs_camera_ativo',
+    })
   })
 })
 

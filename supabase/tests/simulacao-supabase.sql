@@ -201,8 +201,9 @@ reset role;
 -- role_name e define realtime.topic, request.jwt.claims, request.jwt.claim.sub e request.headers (set_config local),
 -- lê de volta as sondas (receber = a sonda é visível pela RLS de select) e tenta inserir uma linha por extensão de
 -- escrita (enviar = o insert passou pela RLS de insert; 42501 = negado); no fim, o raise RTA01 desfaz tudo (sondas,
--- papel e parâmetros). O que fica de fora: os índices (só desempenho), as colunas não lidas pela autorização continuam
--- (com os tipos da fonte), as demais funções e tabelas de realtime (send, broadcast_changes, subscription, as do
+-- papel e parâmetros). O que fica de fora: os índices (só desempenho; desde a E4, messages_replay_index entra no bloco do
+-- fim), as colunas não lidas pela autorização continuam (com os tipos da fonte), as demais funções e tabelas de realtime
+-- (send até a E4, que entra no bloco do fim; broadcast_changes, subscription, as do
 -- Postgres Changes...), os privilégios do papel postgres e de dashboard_user (o postgres_sim é o dono via
 -- supabase_realtime_admin, dono-migracao.sql) e a publicação de mensagens.
 
@@ -309,3 +310,55 @@ begin
 end;
 $$;
 alter function realtime.authorize(text, text, text, text, text, text[], text[]) owner to supabase_realtime_admin;
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- realtime.send e o índice de replay (PLA-005, Tarefa 2, D2; fontes F15, F16, F19 e F20, lidas em 2026-11-27):
+-- - github.com/supabase/realtime (commit 9a2cfba), lib/realtime/tenants/repo/migrations/
+--   20261107120000_broadcast_send_non_object_payloads.ex: o corpo atual de realtime.send(payload jsonb, event text, topic
+--   text, private boolean default true) returns void, copiado abaixo sem os comentários: plpgsql, NÃO security definer
+--   (roda com o papel de quem chama, e por isso a política canal_envia vale para um cliente que o chame direto), acrescenta
+--   id ao payload de objeto, faz SET LOCAL realtime.topic, grava em realtime.messages com extension = 'broadcast' e engole
+--   qualquer erro como WARNING 'WarnSendingBroadcastMessage' (F19). 20260707120000_restrict_realtime_schema.ex (linha 48):
+--   dono supabase_realtime_admin. 20231204144023_set_required_grants.ex (linha 16): "GRANT EXECUTE ON ALL FUNCTIONS IN
+--   SCHEMA realtime TO postgres, anon, authenticated, service_role" (o postgres_sim executa pela participação no dono,
+--   dono-migracao.sql). No Supabase, o postgres grava em realtime.messages pelo INSERT (20260914120000) e pelo BYPASSRLS
+--   (F17); aqui, pela participação do postgres_sim no dono (a RLS não vale para o dono, sem FORCE): o mesmo efeito, pelo
+--   caminho que o teste e4-funcao-publica-pelo-dono mostra lado a lado com um papel que imita o postgres real.
+-- - 20261022120000_messages_replay_index.ex: o índice messages_replay_index (a contagem do limite de sinais de
+--   public.enviar_sinal_de_video repete o predicado dele; teste e4-limite-usa-o-indice). O drop de
+--   messages_inserted_at_topic_index da mesma migração não se aplica (a simulação nunca o criou).
+-- O que continua de fora: realtime.send_binary, broadcast_changes e a entrega pelo servidor (os testes leem a linha gravada,
+-- que é o que o servidor replica; F22).
+
+create index messages_replay_index on realtime.messages
+  (topic, inserted_at desc, (coalesce(expires_at, 'infinity'::timestamp)))
+  where extension = 'broadcast' and private = true;
+
+CREATE OR REPLACE FUNCTION realtime.send(payload jsonb, event text, topic text, private boolean DEFAULT true ) RETURNS void
+AS $$
+DECLARE
+  generated_id uuid;
+  final_payload jsonb;
+BEGIN
+  BEGIN
+    generated_id := gen_random_uuid();
+
+    IF jsonb_typeof(payload) <> 'object' OR payload ? 'id' THEN
+      final_payload := payload;
+    ELSE
+      final_payload := jsonb_set(payload, '{id}', to_jsonb(generated_id));
+    END IF;
+
+    EXECUTE format('SET LOCAL realtime.topic TO %L', topic);
+
+    INSERT INTO realtime.messages (id, payload, event, topic, private, extension)
+    VALUES (generated_id, final_payload, event, topic, private, 'broadcast');
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE WARNING 'WarnSendingBroadcastMessage: %', SQLERRM;
+  END;
+END;
+$$
+LANGUAGE plpgsql;
+alter function realtime.send(jsonb, text, text, boolean) owner to supabase_realtime_admin;
+grant execute on function realtime.send(jsonb, text, text, boolean) to anon, authenticated, service_role;

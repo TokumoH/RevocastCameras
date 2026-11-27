@@ -31,6 +31,7 @@ import {
   comoSessao,
   criarBanco,
   membroGoogle,
+  mensagensPublicadas,
   semearDados,
   sessaoAnonima,
   TEMPO_LIMITE_HOOK_MS,
@@ -849,15 +850,15 @@ describe('preparação, lista e registro (Correção 1)', () => {
          where n.nspname = 'public'`,
     )
     expect(donos.rows).toEqual([{ dono: DONO_MIGRACAO }])
-    // Controle: há as 13 tabelas (12 da E0 e tentativas_pareamento, da E3) e as 12 funções em public (a lista acima não
-    // veio de um schema vazio): as 3 da E0 (papel_atual, dispositivo_atual, criar_perfil_membro) e as 9 da E3
+    // Controle: há as 13 tabelas (12 da E0 e tentativas_pareamento, da E3) e as 13 funções em public (a lista acima não
+    // veio de um schema vazio): as 3 da E0 (papel_atual, dispositivo_atual, criar_perfil_membro), as 9 da E3
     // (criar_codigo_pareamento, parear_dispositivo, meu_dispositivo, revogar_dispositivo, episodio_ativo, iniciar_ao_vivo,
-    // encerrar_ao_vivo, definir_modo_teste, pode_usar_canal).
+    // encerrar_ao_vivo, definir_modo_teste, pode_usar_canal) e a da E4 (enviar_sinal_de_video, VER-050).
     const n = await db.query<{ n: number }>(
       `select (select count(*) from pg_class c join pg_namespace s on s.oid = c.relnamespace where s.nspname = 'public' and c.relkind = 'r')
             + (select count(*) from pg_proc p join pg_namespace s on s.oid = p.pronamespace where s.nspname = 'public') as n`,
     )
-    expect(Number(n.rows[0].n)).toBe(13 + 12)
+    expect(Number(n.rows[0].n)).toBe(13 + 13)
   })
 
   test('anon-nao-le-nem-escreve', async () => {
@@ -1498,6 +1499,8 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   test('e3-codigo-obs-camera-exige-camera', async () => {
     expect(codigoDoErro(erro(await comoSessao(db, ana, CRIA, ['obs_camera', 'PC câmera', null, null])))).toBe('22023')
     expect(codigoDoErro(erro(await comoSessao(db, ana, CRIA, ['obs_camera', 'PC câmera', null, ID_PALCO])))).toBe('22023')
+    // VER-050: no máximo um obs_camera não revogado (índice dispositivos_um_obs_camera_ativo); o semeado sai antes.
+    await db.query('update public.dispositivos set revogado_em = now() where id = $1', [ID_OBS_CAMERA])
     const { dispositivo } = await criarCodigo('obs_camera', 'PC câmera', null, ID_CAMERA)
     expect((await db.query('select tipo, camera_id, criado_por from public.dispositivos where id = $1', [dispositivo])).rows).toEqual([
       { tipo: 'obs_camera', camera_id: ID_CAMERA, criado_por: UID_ANA },
@@ -1974,8 +1977,8 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   })
 
   test('e3-funcoes-so-authenticated', async () => {
-    // As 9 funções da E3: SECURITY DEFINER, search_path vazio e EXECUTE só para authenticated (o rpc:grants-check confere o
-    // mesmo nas migrações; aqui, no banco dos testes).
+    // As 9 funções da E3 e a da E4 (enviar_sinal_de_video, VER-050): SECURITY DEFINER, search_path vazio e EXECUTE só para
+    // authenticated (o rpc:grants-check confere o mesmo nas migrações; aqui, no banco dos testes).
     const r = await db.query<{ f: string; definer: boolean; config: string[]; anon: boolean; service: boolean; auth: boolean; publico: boolean }>(
       `select p.oid::regprocedure::text as f, p.prosecdef as definer, p.proconfig as config,
               has_function_privilege('anon', p.oid, 'EXECUTE') as anon, has_function_privilege('service_role', p.oid, 'EXECUTE') as service,
@@ -1983,11 +1986,12 @@ describe('E3 — pareamento, ao vivo e canais', () => {
               exists (select 1 from aclexplode(p.proacl) a where a.grantee = 0) as publico
        from pg_proc p where p.pronamespace = 'public'::regnamespace
          and p.proname in ('criar_codigo_pareamento', 'parear_dispositivo', 'meu_dispositivo', 'revogar_dispositivo', 'episodio_ativo',
-                           'iniciar_ao_vivo', 'encerrar_ao_vivo', 'definir_modo_teste', 'pode_usar_canal')
+                           'iniciar_ao_vivo', 'encerrar_ao_vivo', 'definir_modo_teste', 'pode_usar_canal', 'enviar_sinal_de_video')
        order by 1`,
     )
     expect(r.rows.map((l) => l.f)).toEqual([
-      'criar_codigo_pareamento(tipo_dispositivo,text,uuid,uuid)', 'definir_modo_teste(uuid)', 'encerrar_ao_vivo(uuid)', 'episodio_ativo()',
+      'criar_codigo_pareamento(tipo_dispositivo,text,uuid,uuid)', 'definir_modo_teste(uuid)', 'encerrar_ao_vivo(uuid)',
+      'enviar_sinal_de_video(text,uuid,text)', 'episodio_ativo()',
       'iniciar_ao_vivo(uuid)', 'meu_dispositivo()', 'parear_dispositivo(text,tipo_dispositivo)', 'pode_usar_canal(text,text,boolean)',
       'revogar_dispositivo(uuid)',
     ])
@@ -2003,7 +2007,9 @@ describe('E3 — pareamento, ao vivo e canais', () => {
     ['rb', 'broadcast', 'receber'], ['rp', 'presence', 'receber'],
     ['eb', 'broadcast', 'enviar'], ['ep', 'presence', 'enviar'], ['es', 'persistence', 'enviar'],
   ]
-  const TOPICOS = (ativo: string, outro: string): [string, string][] => [
+  /** uid fixo para a coluna do tópico de vídeo da sessão anônima sem claims (anon não tem uid). */
+  const UID_DE_ANON = '00000000-0000-4000-8000-0000000000aa'
+  const TOPICOS = (ativo: string, outro: string, uid: string): [string, string][] => [
     ['estudio', 'estudio'], ['controle', `episodio:${ativo}:controle`], ['outro', `episodio:${outro}:controle`],
     ['video', `episodio:${ativo}:video`], ['x', 'x'],
     // VER-047: o estado no ar do palco num tópico próprio (o do episódio ativo e o de outro episódio).
@@ -2016,11 +2022,17 @@ describe('E3 — pareamento, ao vivo e canais', () => {
     ['controle_maiusculo', `EPISODIO:${ativo.toUpperCase()}:CONTROLE`],
     // Nit da rodada 2: espaço e tab no fim (uma comparação com btrim/trim os abriria).
     ['estado_espaco', `episodio:${ativo}:estado `], ['controle_tab', `episodio:${ativo}:controle\t`],
+    // VER-050 (D2 do PLA-005): o tópico de vídeo de cada sessão (o da sessão consultada, o da câmera e o do obs_camera
+    // semeados, e o id do dispositivo no lugar do uid) e os parecidos com o da sessão consultada (sufixo, subtópico,
+    // maiúsculas no prefixo, uid em maiúsculas, espaço no fim), que só a igualdade exata com auth.uid()::text nega.
+    ['video_proprio', `video:${uid}`], ['video_da_camera', `video:${UID_SESSAO_CAMERA}`], ['video_da_obs', `video:${UID_SESSAO_OBS_CAMERA}`],
+    ['video_do_dispositivo', `video:${ID_CAMERA}`], ['video_x', `video:${uid}x`], ['video_sub', `video:${uid}:x`],
+    ['video_maiusculo', `VIDEO:${uid}`], ['video_uid_maiusculo', `video:${uid.toUpperCase()}`], ['video_espaco', `video:${uid} `],
   ]
   /** O que cada sessão pode, por tópico (rb/rp receber broadcast/presence; eb/ep/es enviar broadcast/presence/persistence). */
   async function permissoesNoCanal(quem: Claims | null): Promise<Record<string, string>> {
     const r: Record<string, string> = {}
-    for (const [nome, topico] of TOPICOS(ID_EPISODIO, ID_OUTRO)) {
+    for (const [nome, topico] of TOPICOS(ID_EPISODIO, ID_OUTRO, quem?.sub ?? UID_DE_ANON)) {
       const pode: string[] = []
       for (const [sigla, ext, op] of COMBINACOES) if (await comoCanal(db, quem, topico, ext, op)) pode.push(sigla)
       r[nome] = pode.join(' ')
@@ -2030,6 +2042,7 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   const NADA = {
     estudio: '', controle: '', outro: '', video: '', x: '', estado: '', outro_estado: '',
     estado_x: '', estado_sub: '', estado_maiusculo: '', topico_estado_maiusculo: '', controle_x: '', controle_sub: '', controle_maiusculo: '', estado_espaco: '', controle_tab: '',
+    video_proprio: '', video_da_camera: '', video_da_obs: '', video_do_dispositivo: '', video_x: '', video_sub: '', video_maiusculo: '', video_uid_maiusculo: '', video_espaco: '',
   }
   /**
    * A matriz da D6: uma linha por sessão; persistence nunca; outro episódio, :video e qualquer outro tópico, nunca.
@@ -2038,6 +2051,10 @@ describe('E3 — pareamento, ao vivo e canais', () => {
    * coluna nova outro_estado: ninguém. Rodada 1 do VER-047: as 7 colunas de tópicos parecidos (estado_x, estado_sub,
    * estado_maiusculo, topico_estado_maiusculo, controle_x, controle_sub, controle_maiusculo): ninguém. Nit da rodada 2:
    * estado_espaco (`:estado ` com espaço no fim) e controle_tab (`:controle` com tab no fim): ninguém.
+   * VER-050 (D2 do PLA-005; células mudadas): camera × video_proprio e video_da_camera (o mesmo tópico, o da própria sessão)
+   * de '' para 'rb rp'; obs_camera × video_proprio e video_da_obs de '' para 'rb rp'. Todas as outras células das 9 colunas
+   * de vídeo: ninguém (inclusive membros, palco, solta e revogado). Ninguém envia (eb, ep, es) em tópico de vídeo: os sinais
+   * saem por public.enviar_sinal_de_video. A coluna video (episodio:<ativo>:video) continua fechada.
    */
   const MATRIZ_DO_CANAL: [string, Record<string, string>][] = [
     ['anon', NADA],
@@ -2045,9 +2062,9 @@ describe('E3 — pareamento, ao vivo e canais', () => {
     ['bia', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp eb ep', estado: 'rb rp' }],
     ['adm', { ...NADA, estudio: 'rb rp eb ep', controle: 'rb rp eb ep', estado: 'rb rp' }],
     ['estranho', NADA],
-    ['camera', { ...NADA, estudio: 'rb rp ep' }],
+    ['camera', { ...NADA, estudio: 'rb rp ep', video_proprio: 'rb rp', video_da_camera: 'rb rp' }],
     ['palco', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp', estado: 'rb rp eb' }],
-    ['obs_camera', { ...NADA, estudio: 'rb rp ep' }],
+    ['obs_camera', { ...NADA, estudio: 'rb rp ep', video_proprio: 'rb rp', video_da_obs: 'rb rp' }],
     ['solta', NADA],
     ['revogado', NADA],
   ]
@@ -2223,5 +2240,523 @@ describe('E3 — pareamento, ao vivo e canais', () => {
       { policyname: 'canal_envia', permissive: 'PERMISSIVE', roles: ['authenticated'], cmd: 'INSERT', qual: null, with_check: 'public.pode_usar_canal(realtime.topic(), extension, true)' },
       { policyname: 'canal_recebe', permissive: 'PERMISSIVE', roles: ['authenticated'], cmd: 'SELECT', qual: 'public.pode_usar_canal(realtime.topic(), extension, false)', with_check: null },
     ])
+  })
+
+  // ===== E4 (PLA-005, Tarefa 2; VER-050): vídeo da câmera =====
+  // Sinalização por public.enviar_sinal_de_video (D2): a sessão é conferida a cada chamada, o remetente é posto pelo
+  // servidor e o sinal sai por realtime.send (simulação, F15) para video:<uid da sessão do par>, em que só a própria sessão
+  // recebe e ninguém envia. "Publica" = uma linha em realtime.messages com event 'sinal', private e extension 'broadcast'
+  // (mensagensPublicadas; a entrega pelo servidor do Realtime não é simulada). Fica dentro do bloco da E3 para reusar as
+  // sessões, o pareamento e a matriz do canal. Episódio em modo teste (ID_EPISODIO), salvo dito.
+  describe('E4 — vídeo da câmera', () => {
+    const ENVIA = 'select public.enviar_sinal_de_video($1, $2, $3) as r'
+    const SESSAO_DE_VIDEO = '11111111-1111-4111-8111-111111111111'
+    const CRLF = '\r\n'
+    /** SDP de teste: a forma que a função aceita (começa com v=0\r\n, só ASCII imprimível, \r e \n). */
+    const SDP = `v=0${CRLF}o=- 4611731400430051336 2 IN IP4 127.0.0.1${CRLF}s=-${CRLF}t=0 0${CRLF}m=video 9 UDP/TLS/RTP/SAVPF 96${CRLF}`
+    const TOPICO_CAMERA = `video:${UID_SESSAO_CAMERA}`
+    const TOPICO_OBS = `video:${UID_SESSAO_OBS_CAMERA}`
+    const LIMITE = 'limite de sinais'
+    const UM_OBS_CAMERA = 'dispositivos_um_obs_camera_ativo'
+    /** Tipos que levam SDP (oferta, resposta); os outros vão sem. */
+    const sdpDe = (tipo: string | null) => (tipo === 'oferta' || tipo === 'resposta' ? SDP : null)
+    async function enviar(quem: Claims | null, tipo: string | null, sdp: string | null = sdpDe(tipo), sessaoDeVideo: string | null = SESSAO_DE_VIDEO) {
+      return comoSessao<{ r: string }>(db, quem, ENVIA, [tipo, sessaoDeVideo, sdp])
+    }
+    /** O resultado da função ('enviado' ou 'sem_par'), ou o código do erro. */
+    async function resultado(quem: Claims | null, tipo: string | null, sdp: string | null = sdpDe(tipo), sessaoDeVideo: string | null = SESSAO_DE_VIDEO): Promise<string> {
+      const r = await enviar(quem, tipo, sdp, sessaoDeVideo)
+      return r instanceof Error ? `erro ${codigoDoErro(r)}` : r[0].r
+    }
+    const totalDeMensagens = async () => (await db.query<{ n: number }>('select count(*)::int as n from realtime.messages')).rows[0].n
+    /** Recebe (broadcast) no tópico, pela autorização do canal. */
+    const recebe = (quem: Claims | null, topico: string) => comoCanal(db, quem, topico, 'broadcast', 'receber')
+    /** Todas as combinações (rb, rp, eb, ep, es) que a sessão tem no tópico. */
+    async function combinacoes(quem: Claims | null, topico: string): Promise<string> {
+      const pode: string[] = []
+      for (const [sigla, ext, op] of COMBINACOES) if (await comoCanal(db, quem, topico, ext, op)) pode.push(sigla)
+      return pode.join(' ')
+    }
+    /** Payload publicado esperado: exatamente estas chaves, com o id posto pelo realtime.send. */
+    const payload = (tipo: string, remetente: string, sdp: string | null = sdpDe(tipo)) => ({
+      tipo, sessao: SESSAO_DE_VIDEO, ...(sdp === null ? {} : { sdp }), remetente, id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    })
+    const publicada = (topico: string, p: Record<string, unknown>) => ({ topic: topico, event: 'sinal', private: true, extension: 'broadcast', payload: p })
+    /** Câmera nova com sessão anônima própria (criada como superusuário). */
+    async function novaCamera(rotulo: string): Promise<{ id: string; sessao: Claims }> {
+      const sessao = await novaAnonima()
+      const id = (await db.query<{ id: string }>(
+        `insert into public.dispositivos (tipo, rotulo, usuario_anonimo_id, pareado_em) values ('camera', $1, $2, now()) returning id`, [rotulo, sessao.sub],
+      )).rows[0].id
+      return { id, sessao }
+    }
+    /** Roda o comando como superusuário num savepoint e devolve o código e a restrição do erro. */
+    async function recusaComoDono(sql: string, params: unknown[] = []): Promise<[string | undefined, string | undefined]> {
+      await db.exec('savepoint recusa')
+      try {
+        await db.query(sql, params)
+      } catch (e) {
+        await db.exec('rollback to savepoint recusa')
+        return [codigoDoErro(e as Error), (e as { constraint?: string }).constraint]
+      }
+      await db.exec('release savepoint recusa')
+      return [undefined, undefined]
+    }
+    /** Papel de teste que imita o postgres real (F16, F17): BYPASSRLS, uso de realtime e auth, select/insert/update em
+     * realtime.messages, EXECUTE em realtime.send, sem participação em supabase_realtime_admin. Criado na transação. */
+    async function criarPapelQueImitaOPostgres(nome: string, bypassrls = true): Promise<void> {
+      await db.exec(`create role ${nome} nologin ${bypassrls ? 'bypassrls' : 'nobypassrls'};
+        grant usage on schema realtime, auth to ${nome};
+        grant select, insert, update on realtime.messages to ${nome};
+        grant execute on function realtime.send(jsonb, text, text, boolean) to ${nome};`)
+      const r = await db.query<{ dono: boolean; bypass: boolean }>(
+        `select pg_has_role($1, 'supabase_realtime_admin', 'USAGE') as dono, rolbypassrls as bypass from pg_roles where rolname = $1`, [nome])
+      expect(r.rows).toEqual([{ dono: false, bypass: bypassrls }])
+    }
+    const guia = () => Object.values(import.meta.glob('../README.md', { query: '?raw', import: 'default', eager: true }) as Record<string, string>)[0]
+    const normal = (t: string) => t.replace(/\s+/g, ' ').trim()
+
+    beforeEach(async () => {
+      await definirTeste(ID_EPISODIO)
+    })
+
+    test('e4-camera-envia-oferta-ao-obs', async () => {
+      expect(await resultado(camera, 'oferta')).toBe('enviado')
+      expect(await mensagensPublicadas(db, TOPICO_OBS)).toEqual([publicada(TOPICO_OBS, payload('oferta', UID_SESSAO_CAMERA))])
+      expect(Object.keys((await mensagensPublicadas(db, TOPICO_OBS))[0].payload!).sort()).toEqual(['id', 'remetente', 'sdp', 'sessao', 'tipo'])
+      expect(await totalDeMensagens()).toBe(1) // nada em outro tópico
+    })
+
+    test('e4-obs-envia-resposta-a-camera', async () => {
+      for (const tipo of ['resposta', 'pronto', 'encerrar']) expect([tipo, await resultado(obsCamera, tipo)]).toEqual([tipo, 'enviado'])
+      expect(await mensagensPublicadas(db, TOPICO_CAMERA)).toEqual(
+        ['resposta', 'pronto', 'encerrar'].map((tipo) => publicada(TOPICO_CAMERA, payload(tipo, UID_SESSAO_OBS_CAMERA))),
+      )
+      expect(await totalDeMensagens()).toBe(3)
+      // A câmera também encerra (a câmera oferece e encerra; o obs_camera responde, pede e encerra).
+      expect(await resultado(camera, 'encerrar')).toBe('enviado')
+      expect(await mensagensPublicadas(db, TOPICO_OBS)).toEqual([publicada(TOPICO_OBS, payload('encerrar', UID_SESSAO_CAMERA))])
+    })
+
+    test('e4-remetente-posto-pelo-servidor', async () => {
+      // O SDP traz o texto "remetente" com outro uid: vai como texto dentro de sdp; o remetente é o auth.uid() da chamada.
+      const sdp = `${SDP}a=x-teste:"remetente":"${UID_ANA}"${CRLF}`
+      expect(await resultado(camera, 'oferta', sdp)).toBe('enviado')
+      const [m] = await mensagensPublicadas(db, TOPICO_OBS)
+      expect(m.payload).toEqual(payload('oferta', UID_SESSAO_CAMERA, sdp))
+      // A assinatura só tem tipo, sessão e SDP: o cliente não tem como passar outro campo (nem um quarto parâmetro).
+      const r = await db.query<{ a: string }>(
+        `select pg_get_function_arguments(p.oid) as a from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'enviar_sinal_de_video'`)
+      expect(r.rows).toEqual([{ a: 'p_tipo text, p_sessao uuid, p_sdp text' }])
+      const quatro = erro(await comoSessao(db, camera, 'select public.enviar_sinal_de_video($1, $2, $3, $4)', ['oferta', SESSAO_DE_VIDEO, SDP, UID_ANA]))
+      expect(codigoDoErro(quatro)).toBe('42883')
+      expect(await totalDeMensagens()).toBe(1)
+    })
+
+    const TIPO_PELO_LADO: [string, 'camera' | 'obs_camera', string | null, string | null, string | null][] = [
+      ['camera manda resposta', 'camera', 'resposta', SDP, SESSAO_DE_VIDEO],
+      ['camera manda pronto', 'camera', 'pronto', null, SESSAO_DE_VIDEO],
+      ['obs_camera manda oferta', 'obs_camera', 'oferta', SDP, SESSAO_DE_VIDEO],
+      ['tipo desconhecido', 'camera', 'candidato', null, SESSAO_DE_VIDEO],
+      ['tipo nulo', 'camera', null, null, SESSAO_DE_VIDEO],
+      ['oferta sem SDP', 'camera', 'oferta', null, SESSAO_DE_VIDEO],
+      ['resposta sem SDP', 'obs_camera', 'resposta', null, SESSAO_DE_VIDEO],
+      ['pronto com SDP', 'obs_camera', 'pronto', SDP, SESSAO_DE_VIDEO],
+      ['encerrar com SDP', 'camera', 'encerrar', SDP, SESSAO_DE_VIDEO],
+      ['SDP de 12 001 caracteres', 'camera', 'oferta', `v=0${CRLF}${'a'.repeat(11_996)}`, SESSAO_DE_VIDEO],
+      ['SDP sem v=0\\r\\n', 'camera', 'oferta', `o=- 1 2 IN IP4 127.0.0.1${CRLF}`, SESSAO_DE_VIDEO],
+      ['SDP com v=0 e só \\n', 'camera', 'oferta', 'v=0\no=- 1 2 IN IP4 127.0.0.1\n', SESSAO_DE_VIDEO],
+      ['SDP com chr(1)', 'camera', 'oferta', `${SDP}a=x\u0001${CRLF}`, SESSAO_DE_VIDEO],
+      ['SDP com tab', 'camera', 'oferta', `${SDP}a=x\t${CRLF}`, SESSAO_DE_VIDEO],
+      ['SDP com caractere não ASCII', 'camera', 'oferta', `${SDP}s=câmera é${CRLF}`, SESSAO_DE_VIDEO],
+      ['sessão nula', 'camera', 'oferta', SDP, null],
+    ]
+    test.each(TIPO_PELO_LADO)('e4-tipo-pelo-lado: %s', async (_nome, lado, tipo, sdp, sessaoDeVideo) => {
+      expect(await resultado(lado === 'camera' ? camera : obsCamera, tipo, sdp, sessaoDeVideo)).toBe('erro 22023')
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e4-tipo-pelo-lado: SDP de 12 000 caracteres passa (a fronteira do leitor do domínio)', async () => {
+      const sdp = `v=0${CRLF}${'a'.repeat(11_995)}`
+      expect(sdp).toHaveLength(12_000)
+      expect(await resultado(camera, 'oferta', sdp)).toBe('enviado')
+      expect((await mensagensPublicadas(db, TOPICO_OBS)).map((m) => m.payload?.sdp)).toEqual([sdp])
+    })
+
+    test.each(['anon', 'ana', 'bia', 'adm', 'estranho', 'solta', 'palco', 'revogado'])('e4-so-dispositivo-de-video: %s', async (nome) => {
+      await cadastrarSessoesExtras()
+      const r = erro(await enviar(sessao(nome), 'oferta'))
+      if (nome === 'anon') expect(r.message).toBe('permission denied for function enviar_sinal_de_video')
+      else expect(codigoDoErro(r)).toBe('42501')
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e4-so-dispositivo-de-video: câmera revogada com sessão própria', async () => {
+      const c2 = await novaCamera('Celular revogado')
+      await db.query('update public.dispositivos set revogado_em = now() where id = $1', [c2.id])
+      expect(await resultado(c2.sessao, 'oferta')).toBe('erro 42501')
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e4-sinal-so-com-episodio-ativo', async () => {
+      const passos: [string, () => Promise<unknown>][] = [
+        ['sem episódio ativo', () => definirTeste(null)],
+        ['modo teste', () => definirTeste(ID_EPISODIO)],
+        ['ao vivo', async () => linhas(await comoSessao(db, ana, 'select public.iniciar_ao_vivo($1)', [ID_EPISODIO]))],
+        ['encerrado', async () => linhas(await comoSessao(db, ana, 'select public.encerrar_ao_vivo($1)', [ID_EPISODIO]))],
+      ]
+      const visto: [string, string, boolean, boolean][] = []
+      for (const [nome, passo] of passos) {
+        await passo()
+        visto.push([nome, await resultado(camera, 'oferta'), await recebe(camera, TOPICO_CAMERA), await recebe(obsCamera, TOPICO_OBS)])
+      }
+      expect(visto).toEqual([
+        ['sem episódio ativo', 'erro 55000', false, false],
+        ['modo teste', 'enviado', true, true],
+        ['ao vivo', 'enviado', true, true],
+        ['encerrado', 'erro 55000', false, false],
+      ])
+      expect(await totalDeMensagens()).toBe(2)
+    })
+
+    test('e4-sem-par', async () => {
+      await db.query('update public.dispositivos set revogado_em = now() where id = $1', [ID_OBS_CAMERA])
+      expect(await resultado(camera, 'oferta')).toBe('sem_par')
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e4-camera-revogada-fecha-o-video', async () => {
+      expect([await recebe(camera, TOPICO_CAMERA), await recebe(obsCamera, TOPICO_OBS)]).toEqual([true, true]) // controle
+      linhas(await comoSessao(db, ana, 'select public.revogar_dispositivo($1)', [ID_CAMERA]))
+      expect([await resultado(camera, 'oferta'), await recebe(camera, TOPICO_CAMERA)]).toEqual(['erro 42501', false])
+      // O obs_camera continua pareado, mas a câmera dele está revogada: nem envia nem recebe.
+      expect([await resultado(obsCamera, 'resposta'), await recebe(obsCamera, TOPICO_OBS)]).toEqual(['erro 55000', false])
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e4-obs-camera-revogada', async () => {
+      linhas(await comoSessao(db, ana, 'select public.revogar_dispositivo($1)', [ID_OBS_CAMERA]))
+      expect([await resultado(obsCamera, 'resposta'), await recebe(obsCamera, TOPICO_OBS)]).toEqual(['erro 42501', false])
+      expect(await recebe(camera, TOPICO_CAMERA)).toBe(true)
+      expect(await resultado(camera, 'oferta')).toBe('sem_par')
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e4-repareamento-reusa-a-camera (I6)', async () => {
+      const { dispositivo, codigo } = await criarCodigo('camera', null, ID_CAMERA)
+      expect(dispositivo).toBe(ID_CAMERA)
+      const nova = await novaAnonima()
+      expect((await parear(nova, codigo, 'camera')).dispositivo).toBe(ID_CAMERA)
+      const topicoNovo = `video:${nova.sub}`
+      expect(await resultado(nova, 'oferta')).toBe('enviado')
+      expect(await mensagensPublicadas(db, TOPICO_OBS)).toEqual([publicada(TOPICO_OBS, payload('oferta', nova.sub))])
+      expect(await combinacoes(nova, topicoNovo)).toBe('rb rp')
+      // A sessão antiga: a função recusa e o tópico antigo fica fechado (receber e enviar).
+      expect(await resultado(camera, 'oferta')).toBe('erro 42501')
+      expect(await combinacoes(camera, TOPICO_CAMERA)).toBe('')
+      expect(await combinacoes(nova, TOPICO_CAMERA)).toBe('') // nem a sessão nova entra no tópico antigo
+      // A resposta do obs_camera vai para a sessão nova, nunca para o tópico antigo.
+      expect(await resultado(obsCamera, 'resposta')).toBe('enviado')
+      expect(await mensagensPublicadas(db, topicoNovo)).toEqual([publicada(topicoNovo, payload('resposta', UID_SESSAO_OBS_CAMERA))])
+      expect(await mensagensPublicadas(db, TOPICO_CAMERA)).toEqual([])
+    })
+
+    test('e4-repareamento-reusa-o-obs-camera (I6)', async () => {
+      const { dispositivo, codigo } = await criarCodigo('obs_camera', null, ID_OBS_CAMERA)
+      expect(dispositivo).toBe(ID_OBS_CAMERA)
+      const nova = await novaAnonima()
+      expect((await parear(nova, codigo, 'obs_camera')).dispositivo).toBe(ID_OBS_CAMERA)
+      const topicoNovo = `video:${nova.sub}`
+      expect(await resultado(camera, 'oferta')).toBe('enviado')
+      expect(await mensagensPublicadas(db, topicoNovo)).toEqual([publicada(topicoNovo, payload('oferta', UID_SESSAO_CAMERA))])
+      expect(await combinacoes(nova, topicoNovo)).toBe('rb rp')
+      expect(await resultado(obsCamera, 'resposta')).toBe('erro 42501')
+      expect(await combinacoes(obsCamera, TOPICO_OBS)).toBe('')
+      expect(await mensagensPublicadas(db, TOPICO_OBS)).toEqual([])
+      expect(await resultado(nova, 'resposta')).toBe('enviado')
+      expect(await mensagensPublicadas(db, TOPICO_CAMERA)).toEqual([publicada(TOPICO_CAMERA, payload('resposta', nova.sub))])
+    })
+
+    test('e4-video-de-outra-camera', async () => {
+      const c2 = await novaCamera('Celular 2')
+      // C2 sem obs_camera: sem par (o obs_camera semeado é da câmera semeada).
+      expect(await resultado(c2.sessao, 'oferta')).toBe('sem_par')
+      expect(await totalDeMensagens()).toBe(0)
+      // Um obs_camera de C2 com o semeado ativo: o índice recusa (um obs_camera não revogado no banco).
+      const o2 = await novaAnonima()
+      const INSERE_O2 = `insert into public.dispositivos (tipo, rotulo, camera_id, usuario_anonimo_id, pareado_em) values ('obs_camera', 'PC 2', $1, $2, now())`
+      expect(await recusaComoDono(INSERE_O2, [c2.id, o2.sub])).toEqual(['23505', UM_OBS_CAMERA])
+      // Com o semeado revogado, O2 entra: a oferta de C2 vai só para O2; a câmera semeada fica sem par.
+      await db.query('update public.dispositivos set revogado_em = now() where id = $1', [ID_OBS_CAMERA])
+      await db.query(INSERE_O2, [c2.id, o2.sub])
+      expect(await resultado(c2.sessao, 'oferta')).toBe('enviado')
+      const topicoO2 = `video:${o2.sub}`
+      expect(await mensagensPublicadas(db, topicoO2)).toEqual([publicada(topicoO2, payload('oferta', c2.sessao.sub))])
+      expect(await totalDeMensagens()).toBe(1)
+      expect(await resultado(camera, 'oferta')).toBe('sem_par')
+      expect(await recebe(o2, topicoO2)).toBe(true)
+      expect(await recebe(o2, TOPICO_OBS)).toBe(false)
+      // A resposta de O2 vai para C2, não para a câmera semeada.
+      expect(await resultado(o2, 'resposta')).toBe('enviado')
+      expect(await mensagensPublicadas(db, `video:${c2.sessao.sub}`)).toHaveLength(1)
+      expect(await mensagensPublicadas(db, TOPICO_CAMERA)).toEqual([])
+    })
+
+    test('e4-realtime-send-direto-negado', async () => {
+      // Uma linha legítima no tópico da câmera, publicada pela função; a câmera consegue lê-la (a política de select vale).
+      expect(await resultado(obsCamera, 'resposta')).toBe('enviado')
+      await db.query(`select set_config('realtime.topic', $1, true)`, [TOPICO_CAMERA])
+      expect(linhas(await comoSessao<{ n: number }>(db, camera, 'select count(*)::int as n from realtime.messages where topic = $1', [TOPICO_CAMERA]))).toEqual([{ n: 1 }])
+      const antes = (await mensagensPublicadas(db, TOPICO_CAMERA)).map((m) => m.payload)
+      // realtime.send chamado direto como authenticated: a política de insert nega e o realtime.send só avisa (F19).
+      for (const topico of [TOPICO_OBS, TOPICO_CAMERA]) {
+        linhas(await comoSessao(db, camera, `select realtime.send('{"tipo":"oferta"}'::jsonb, 'sinal', $1, true)`, [topico]))
+      }
+      expect(await mensagensPublicadas(db, TOPICO_OBS)).toEqual([])
+      expect(await totalDeMensagens()).toBe(1)
+      // O motivo, sem o realtime.send no meio: o insert direto dá 42501; o update direto passa no privilégio (F16), mas
+      // nenhuma política de update deixa linha passar: 0 linhas, sem erro.
+      await db.query(`select set_config('realtime.topic', $1, true)`, [TOPICO_OBS])
+      const ins = erro(await comoSessao(db, camera,
+        `insert into realtime.messages (topic, extension, payload, event, private) values ($1, 'broadcast', '{}', 'sinal', true)`, [TOPICO_OBS]))
+      expect([codigoDoErro(ins), ins.message]).toEqual(['42501', violaRls('messages')])
+      await db.query(`select set_config('realtime.topic', $1, true)`, [TOPICO_CAMERA])
+      expect(linhas(await comoSessao(db, camera, `update realtime.messages set payload = '{}' where topic like 'video:%' returning id`))).toEqual([])
+      await db.query(`select set_config('realtime.topic', '', true)`)
+      expect((await mensagensPublicadas(db, TOPICO_CAMERA)).map((m) => m.payload)).toEqual(antes)
+      expect(await totalDeMensagens()).toBe(1)
+    })
+
+    /** Linhas gravadas pelo superusuário com o remetente e o tópico dados, n minutos atrás (fora da janela de 10 s). */
+    async function semearSinais(topico: string, remetente: string, quantas: number, sdp: string | null = null, minutosAtras = 30): Promise<void> {
+      await db.query(
+        `insert into realtime.messages (topic, extension, event, private, payload, inserted_at)
+         select $1, 'broadcast', 'sinal', true, jsonb_strip_nulls(jsonb_build_object('tipo', 'oferta', 'sessao', $2::text, 'sdp', $3::text, 'remetente', $4::text)),
+                timezone('utc', now()) - make_interval(mins => $6)
+         from generate_series(1, $5)`,
+        [topico, SESSAO_DE_VIDEO, sdp, remetente, quantas, minutosAtras],
+      )
+    }
+
+    test('e4-limite-de-sinais: 10 em 10 s e 600 por hora', async () => {
+      // Fuso da sessão fora de UTC (revisão, N3): inserted_at é UTC sem fuso, e a contagem compara com timezone('utc', now()).
+      await db.query(`select set_config('timezone', 'America/Sao_Paulo', true)`)
+      for (let i = 1; i <= 10; i += 1) expect([i, await resultado(camera, 'oferta')]).toEqual([i, 'enviado'])
+      const r = erro(await enviar(camera, 'oferta'))
+      expect([codigoDoErro(r), r.message]).toEqual(['54000', LIMITE])
+      expect(await mensagensPublicadas(db, TOPICO_OBS)).toHaveLength(10)
+      // Recuo das 10 linhas para 11 s antes do agora da transação: saem da janela de 10 s.
+      await db.query(`update realtime.messages set inserted_at = timezone('utc', now()) - interval '11 seconds' where topic = $1`, [TOPICO_OBS])
+      expect(await resultado(camera, 'oferta')).toBe('enviado')
+      // 600 na última hora (11 + 589 semeadas há 30 min): a próxima é recusada, oferta ou encerrar.
+      await semearSinais(TOPICO_OBS, UID_SESSAO_CAMERA, 589)
+      expect(await resultado(camera, 'oferta')).toBe('erro 54000')
+      expect(await resultado(camera, 'encerrar')).toBe('erro 54000')
+      expect(await mensagensPublicadas(db, TOPICO_OBS)).toHaveLength(600)
+      // Linhas com mais de 1 hora não contam.
+      await db.query(`update realtime.messages set inserted_at = timezone('utc', now()) - interval '61 minutes' where topic = $1`, [TOPICO_OBS])
+      expect(await resultado(camera, 'oferta')).toBe('enviado')
+    })
+
+    test('e4-limite-de-sinais: teto de 1 000 000 caracteres de SDP por hora', async () => {
+      await semearSinais(TOPICO_OBS, UID_SESSAO_CAMERA, 100, `v=0${CRLF}${'a'.repeat(9_995)}`) // 100 × 10 000 = 1 000 000
+      expect(await resultado(camera, 'oferta')).toBe('erro 54000')
+      expect(await resultado(camera, 'encerrar')).toBe('enviado') // sem SDP: 1 000 000 + 0 não passa do teto; 101 linhas < 600
+      // Controle da fronteira: com 1 caractere a menos no total, uma oferta que completa exatamente o teto passa.
+      await db.query(`delete from realtime.messages where topic = $1 and payload ->> 'tipo' = 'encerrar'`, [TOPICO_OBS])
+      await db.query(`update realtime.messages set payload = jsonb_set(payload, '{sdp}', to_jsonb(left(payload ->> 'sdp', 10000 - $2)))
+        where id = (select id from realtime.messages where topic = $1 limit 1)`, [TOPICO_OBS, SDP.length])
+      expect(await resultado(camera, 'oferta')).toBe('enviado')
+    })
+
+    test('e4-limite-de-sinais: outro remetente no mesmo tópico não conta (a sessão antiga)', async () => {
+      for (let i = 1; i <= 10; i += 1) expect(await resultado(camera, 'oferta')).toBe('enviado')
+      await semearSinais(TOPICO_OBS, UID_SESSAO_CAMERA, 600, `v=0${CRLF}${'a'.repeat(9_995)}`)
+      expect(await resultado(camera, 'oferta')).toBe('erro 54000') // controle: a sessão antiga está no limite
+      const { codigo } = await criarCodigo('camera', null, ID_CAMERA)
+      const nova = await novaAnonima()
+      expect((await parear(nova, codigo, 'camera')).resultado).toBe('pareado')
+      expect(await resultado(nova, 'oferta')).toBe('enviado')
+    })
+
+    test('e4-limite-usa-o-indice', async () => {
+      // A consulta da contagem, com os valores no lugar das variáveis (o mesmo texto da função).
+      const CONTA = `select count(*) filter (where m.inserted_at > timezone('utc', now()) - interval '10 seconds'),
+             count(*), coalesce(sum(length(m.payload ->> 'sdp')), 0)
+        from realtime.messages m
+        where m.topic = 'video:${UID_SESSAO_OBS_CAMERA}' and m.extension = 'broadcast' and m.private
+          and m.inserted_at > timezone('utc', now()) - interval '1 hour'
+          and m.payload ->> 'remetente' = '${UID_SESSAO_CAMERA}'`
+      // O índice da partição herdado de messages_replay_index (no Realtime, cada partição diária tem o seu).
+      const filho = (await db.query<{ n: string }>(
+        `select c.relname as n from pg_inherits i join pg_class c on c.oid = i.inhrelid where i.inhparent = 'realtime.messages_replay_index'::regclass`)).rows
+      expect(filho).toHaveLength(1)
+      await semearSinais(TOPICO_OBS, UID_SESSAO_CAMERA, 50)
+      await semearSinais('estudio', UID_SESSAO_CAMERA, 50)
+      const plano = async () => (await db.query<{ 'QUERY PLAN': string }>(`explain ${CONTA}`)).rows.map((l) => l['QUERY PLAN']).join('\n')
+      // Com poucas linhas o PGlite pode preferir a leitura sequencial (registrado no VER-050); sem ela, o índice serve.
+      await db.query(`select set_config('enable_seqscan', 'off', true)`)
+      const semSeq = await plano()
+      await db.query(`select set_config('enable_seqscan', 'on', true)`)
+      expect(semSeq).toContain(filho[0].n)
+      // E serve pelas duas primeiras colunas (tópico e inserted_at), não só pelo predicado parcial (revisão, N1).
+      expect(semSeq).toMatch(/Index Cond: \(\(topic = 'video:[^']+'::text\) AND \(inserted_at > /)
+    })
+
+    test('e4-funcao-publica-pelo-dono', async () => {
+      // Na simulação: a função (dona postgres_sim, SECURITY DEFINER) grava pela participação do postgres_sim no dono de
+      // realtime.messages (a RLS não vale para o dono), sem BYPASSRLS.
+      const sim = await db.query<{ dono: boolean; bypass: boolean }>(
+        `select pg_has_role('postgres_sim', 'supabase_realtime_admin', 'USAGE') as dono, rolbypassrls as bypass from pg_roles where rolname = 'postgres_sim'`)
+      expect(sim.rows).toEqual([{ dono: true, bypass: false }])
+      expect(await resultado(camera, 'oferta')).toBe('enviado')
+      expect(await mensagensPublicadas(db, TOPICO_OBS)).toHaveLength(1)
+      // O caminho real (F16, F17): o mesmo realtime.send rodado por um papel que imita o postgres (INSERT + BYPASSRLS, sem
+      // ser dono), com as claims de uma sessão de câmera, grava; o mesmo papel sem BYPASSRLS não grava (a política nega).
+      const ENVIO = `select realtime.send(jsonb_build_object('tipo', 'oferta', 'remetente', auth.uid()), 'sinal', $1, true)`
+      for (const [nome, bypass, esperado] of [['postgres_real_teste', true, 1], ['postgres_sem_bypass_teste', false, 0]] as const) {
+        await criarPapelQueImitaOPostgres(nome, bypass)
+        const topico = `video:${nome}`
+        await db.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify(camera)])
+        await db.exec(`set local role ${nome}`)
+        await db.query(ENVIO, [topico])
+        await db.exec('reset role')
+        await db.query(`select set_config('request.jwt.claims', '', true)`)
+        const m = await mensagensPublicadas(db, topico)
+        expect([nome, m.length]).toEqual([nome, esperado])
+        if (esperado) expect(m[0].payload).toMatchObject({ tipo: 'oferta', remetente: UID_SESSAO_CAMERA })
+      }
+    })
+
+    test('e4-par-de-um-nao-camera (N2)', async () => {
+      // Um obs_camera cujo camera_id aponta para um dispositivo que não é câmera (o palco), criado como dono (a função
+      // criar_codigo_pareamento recusa, mas o banco não): nem recebe no próprio tópico nem sinaliza (guarda c.tipo = 'camera').
+      await db.query('update public.dispositivos set revogado_em = now() where id = $1', [ID_OBS_CAMERA])
+      const o3 = await novaAnonima()
+      await db.query(
+        `insert into public.dispositivos (tipo, rotulo, camera_id, usuario_anonimo_id, pareado_em) values ('obs_camera', 'PC do palco', $1, $2, now())`,
+        [ID_PALCO, o3.sub])
+      expect(await dispositivoDe(o3)).toHaveLength(1) // controle: é um dispositivo ativo
+      expect(await combinacoes(o3, `video:${o3.sub}`)).toBe('')
+      for (const tipo of ['pronto', 'resposta', 'encerrar']) expect([tipo, await resultado(o3, tipo)]).toEqual([tipo, 'erro 55000'])
+      expect(await mensagensPublicadas(db, `video:${UID_SESSAO_PALCO}`)).toEqual([])
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e4-um-obs-camera-ativo (I6)', async () => {
+      const contagens = async () => [await contar('dispositivos'), await contar('codigos_pareamento')]
+      const antes = await contagens()
+      const r = erro(await comoSessao(db, adm, CRIA, ['obs_camera', 'PC 2', null, ID_CAMERA]))
+      expect([codigoDoErro(r), (r as { constraint?: string }).constraint]).toEqual(['23505', UM_OBS_CAMERA])
+      const c2 = await novaCamera('Celular 2')
+      const antesC2 = await contagens()
+      const r2 = erro(await comoSessao(db, adm, CRIA, ['obs_camera', 'PC 2', null, c2.id]))
+      expect([codigoDoErro(r2), (r2 as { constraint?: string }).constraint]).toEqual(['23505', UM_OBS_CAMERA])
+      expect(await contagens()).toEqual(antesC2)
+      expect(antesC2).toEqual([antes[0] + 1, antes[1]])
+      // Com o semeado revogado, um obs_camera novo entra (pendente também conta como ativo).
+      linhas(await comoSessao(db, ana, 'select public.revogar_dispositivo($1)', [ID_OBS_CAMERA]))
+      const novo = await criarCodigo('obs_camera', 'PC 3', null, ID_CAMERA, adm)
+      // Parear de novo o obs_camera revogado com outro ativo: 23505 no pareamento, e o código continua sem uso.
+      const antigo = await criarCodigo('obs_camera', null, ID_OBS_CAMERA)
+      const s = await novaAnonima()
+      const r3 = erro(await comoSessao(db, s, PAREIA, [antigo.codigo, 'obs_camera']))
+      expect([codigoDoErro(r3), (r3 as { constraint?: string }).constraint]).toEqual(['23505', UM_OBS_CAMERA])
+      expect(await usadoEm(ID_OBS_CAMERA)).toEqual([null])
+      expect(await dispositivoDe(s)).toEqual([])
+      const ativos = (await db.query<{ id: string }>(`select id from public.dispositivos where tipo = 'obs_camera' and revogado_em is null`)).rows
+      expect(ativos).toEqual([{ id: novo.dispositivo }])
+    })
+
+    test('e4-limite-com-trava (N10)', async () => {
+      const TRAVAS = `select count(*)::int as n from pg_locks where locktype = 'advisory' and pid = pg_backend_pid() and granted and mode = 'ExclusiveLock'
+        and ((classid::int8 << 32) | objid::int8) = hashtext('enviar_sinal_de_video:' || $1::text)::int8 and objsubid = 1`
+      const travas = async (uid: string) => (await db.query<{ n: number }>(TRAVAS, [uid])).rows[0].n
+      expect(await travas(UID_SESSAO_CAMERA)).toBe(0)
+      await db.exec('savepoint trava')
+      expect(await resultado(camera, 'oferta')).toBe('enviado')
+      // A trava de transação da câmera fica até o fim da transação (o comoSessao já liberou o próprio savepoint).
+      expect(await travas(UID_SESSAO_CAMERA)).toBe(1)
+      expect(await travas(UID_SESSAO_OBS_CAMERA)).toBe(0) // por remetente
+      await db.exec('rollback to savepoint trava')
+      expect(await travas(UID_SESSAO_CAMERA)).toBe(0)
+    })
+
+    /** Consulta de limpeza do guia (supabase/README.md, "Vídeo da câmera (E4)"): apaga só o conteúdo dos sinais antigos. */
+    const LIMPA_SINAIS_ANTIGOS = `update realtime.messages set payload = jsonb_build_object('tipo', 'apagado') where topic like 'video:%' and inserted_at < timezone('utc', now()) - interval '1 hour';`
+
+    test('e4-guia-limpa-sinais-antigos (I8)', async () => {
+      expect(normal(guia())).toContain(normal(LIMPA_SINAIS_ANTIGOS))
+      await criarPapelQueImitaOPostgres('postgres_real_teste')
+      for (const papelDoEditor of ['postgres_real_teste', DONO_MIGRACAO]) {
+        await db.query('delete from realtime.messages')
+        await semearSinais(TOPICO_OBS, UID_SESSAO_CAMERA, 1, SDP, 120) // sinal de 2 h
+        await semearSinais(TOPICO_CAMERA, UID_SESSAO_OBS_CAMERA, 1, SDP, 1) // sinal de 1 min
+        await semearSinais('estudio', UID_SESSAO_CAMERA, 1, SDP, 120) // outro tópico
+        const retrato = async () => (await db.query<{ topic: string; payload: Record<string, unknown>; t: number }>(
+          'select topic, payload, tableoid::int as t from realtime.messages order by topic')).rows
+        const antes = await retrato()
+        await db.exec(`set local role ${papelDoEditor}`)
+        await db.query(LIMPA_SINAIS_ANTIGOS)
+        await db.exec('reset role')
+        const depois = await retrato()
+        expect([papelDoEditor, depois.map((l) => l.topic)]).toEqual([papelDoEditor, antes.map((l) => l.topic)])
+        const linhaDe = (r: typeof antes, topico: string) => r.find((l) => l.topic === topico)!
+        expect(linhaDe(depois, TOPICO_OBS).payload).toEqual({ tipo: 'apagado' })
+        expect(linhaDe(depois, TOPICO_OBS).t).toBe(linhaDe(antes, TOPICO_OBS).t) // mesma partição
+        expect(linhaDe(depois, TOPICO_CAMERA)).toEqual(linhaDe(antes, TOPICO_CAMERA))
+        expect(linhaDe(depois, 'estudio')).toEqual(linhaDe(antes, 'estudio'))
+      }
+      // O delete com o mesmo filtro, pelo papel que imita o postgres real, dá 42501 (sem DELETE em realtime.messages: F17).
+      await db.exec('savepoint apaga')
+      await db.exec('set local role postgres_real_teste')
+      const apaga = await db.query(`delete from realtime.messages where topic like 'video:%' and inserted_at < timezone('utc', now()) - interval '1 hour'`)
+        .then(() => null, (e: Error) => e)
+      await db.exec('rollback to savepoint apaga')
+      expect(apaga && [codigoDoErro(apaga), apaga.message]).toEqual(['42501', 'permission denied for table messages'])
+    })
+
+    /** Passo 2 do guia "Vídeo da câmera (E4)": contagem de obs_camera não revogados antes de aplicar a migração. */
+    const CONTA_OBS_CAMERAS = `select count(*) from public.dispositivos where tipo = 'obs_camera' and revogado_em is null;`
+    /** Com dois ou mais, revoga todos menos o pareado por último. */
+    const REVOGA_OBS_CAMERAS_QUE_SOBRAM = `update public.dispositivos set revogado_em = now()
+  where tipo = 'obs_camera' and revogado_em is null
+    and id <> (select d.id from public.dispositivos d where d.tipo = 'obs_camera' and d.revogado_em is null order by d.pareado_em desc nulls last limit 1);`
+    /** E apaga os códigos pendentes dos revogados (parear com um deles limparia revogado_em). */
+    const APAGA_CODIGOS_DOS_OBS_CAMERAS_REVOGADOS = `delete from public.codigos_pareamento c using public.dispositivos d
+  where d.id = c.dispositivo_id and d.tipo = 'obs_camera' and d.revogado_em is not null and c.usado_em is null;`
+
+    test('e4-guia-conta-obs-cameras', async () => {
+      for (const sql of [CONTA_OBS_CAMERAS, REVOGA_OBS_CAMERAS_QUE_SOBRAM, APAGA_CODIGOS_DOS_OBS_CAMERAS_REVOGADOS]) {
+        expect(normal(guia())).toContain(normal(sql))
+      }
+      // O banco antes da migração (o índice tirado nesta transação): dois obs_camera ativos, um com código pendente.
+      await db.query(`drop index public.${UM_OBS_CAMERA}`)
+      const sobra = (await db.query<{ id: string }>(
+        `insert into public.dispositivos (tipo, rotulo, camera_id) values ('obs_camera', 'PC pendente', $1) returning id`, [ID_CAMERA])).rows[0].id
+      await db.query(`insert into public.codigos_pareamento (dispositivo_id, codigo_hash) values ($1, 'h')`, [sobra])
+      await db.exec('set local role postgres_sim')
+      expect((await db.query<{ count: number }>(CONTA_OBS_CAMERAS)).rows.map((l) => Number(l.count))).toEqual([2]) // a contagem acusa
+      await db.query(REVOGA_OBS_CAMERAS_QUE_SOBRAM)
+      await db.query(APAGA_CODIGOS_DOS_OBS_CAMERAS_REVOGADOS)
+      expect((await db.query<{ count: number }>(CONTA_OBS_CAMERAS)).rows.map((l) => Number(l.count))).toEqual([1])
+      await db.exec('reset role')
+      expect((await db.query<{ id: string }>(`select id from public.dispositivos where tipo = 'obs_camera' and revogado_em is null`)).rows)
+        .toEqual([{ id: ID_OBS_CAMERA }]) // o pareado fica
+      expect(await usadoEm(sobra)).toEqual([])
+      await db.query(`create unique index ${UM_OBS_CAMERA} on public.dispositivos (tipo) where tipo = 'obs_camera' and revogado_em is null`)
+    })
+
+    test('e4-funcao-que-libera-tudo-e-pega (N5)', async () => {
+      // Uma pode_usar_canal que devolva true passa nas duas checagens (mesmo oid); só os testes de banco a pegam.
+      const linhaDaCamera = MATRIZ_DO_CANAL.find(([n]) => n === 'camera')![1]
+      expect(await permissoesNoCanal(camera)).toEqual(linhaDaCamera) // controle
+      await db.query(`create or replace function public.pode_usar_canal(p_topico text, p_extensao text, p_enviar boolean)
+        returns boolean language sql stable security definer set search_path = '' as $$ select true $$`)
+      const solto = await permissoesNoCanal(camera)
+      expect(solto).not.toEqual(linhaDaCamera)
+      expect(solto.video_da_obs).toBe('rb rp eb ep es')
+      expect(await recebe(camera, TOPICO_OBS)).toBe(true) // a recepção que e4-repareamento e e4-video-de-outra-camera negam
+    })
   })
 })

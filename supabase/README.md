@@ -50,7 +50,7 @@ Criado na Tarefa 3 da etapa E0 ([PLA-001](../docs/planos/2026-11-17-e0-fundacao.
 | Arquivo ou subdiretório | O que contém |
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
-| [`migrations/`](migrations/README.md) | Migrações SQL versionadas, aplicadas em ordem de nome (hoje, em ordem: `20261117000000_fundacao.sql`, `20261126142500_membros_sem_autoalteracao.sql`, `20261126190407_biblioteca_storage.sql`, `20261127124303_ao_vivo_e_pareamento.sql`, `20261127200000_episodio_em_teste_nao_se_apaga.sql` e `20261127220000_estado_do_palco_em_topico_proprio.sql`) |
+| [`migrations/`](migrations/README.md) | Migrações SQL versionadas, aplicadas em ordem de nome (hoje, em ordem: `20261117000000_fundacao.sql`, `20261126142500_membros_sem_autoalteracao.sql`, `20261126190407_biblioteca_storage.sql`, `20261127124303_ao_vivo_e_pareamento.sql`, `20261127200000_episodio_em_teste_nao_se_apaga.sql`, `20261127220000_estado_do_palco_em_topico_proprio.sql` e `20261127230000_video_da_camera.sql`, da E4, cujo passo de aplicar fica para a Tarefa 7 do PLA-005) |
 | [`tests/`](tests/README.md) | Simulação do Supabase, `banco.ts`, testes de RLS e de restrições e a matriz de permissões papel × tabela × operação do DES-001 (seção 8) |
 
 ## Lógica
@@ -204,6 +204,34 @@ Passo do responsável para ligar o ao vivo por toque de verdade (Tarefa 10 do [P
 
     A sessão de um dispositivo (mesmo revogado, que guarda a sessão para o aviso e a auditoria) não é apagada; as tentativas de pareamento da sessão apagada saem junto (chave estrangeira com `on delete cascade`).
 
+### Vídeo da câmera (E4)
+
+Em construção: esta seção nasce na Tarefa 2 do [PLA-005](../docs/planos/2026-11-27-e4-celular-como-camera.md) ([VER-050](../docs/verificacoes/2026-11-27-050-e4-banco-video.md)) só com as consultas que os testes de banco leem daqui (`e4-guia-conta-obs-cameras` e `e4-guia-limpa-sinais-antigos`); o passo do responsável completo (quando aplicar, conferência real no celular e no OBS, explicação das decisões) entra na Tarefa 7. Até lá, **não aplicar** a sétima migração num Supabase real: o app que a usa ainda não existe, e o passo de aplicar é da Tarefa 7.
+
+1. **Antes de aplicar** [`migrations/20261127230000_video_da_camera.sql`](migrations/20261127230000_video_da_camera.sql) (depois da sexta), no editor SQL, contar os `obs_camera` não revogados; a migração cria o índice `dispositivos_um_obs_camera_ativo` (no máximo um no banco: um único par câmera ↔ `obs_camera` sinaliza) e para com `23505`, sem mudar nada, se houver dois ou mais:
+
+   ```sql
+   select count(*) from public.dispositivos where tipo = 'obs_camera' and revogado_em is null;
+   ```
+
+   Com 2 ou mais, rodar antes as duas consultas abaixo, no mesmo editor SQL, que roda como o dono `postgres` (como as do palco no guia da E3): deixam ativo só o `obs_camera` pareado por último e apagam os códigos pendentes dos revogados (parear com um deles limparia `revogado_em`):
+
+   ```sql
+   update public.dispositivos set revogado_em = now()
+     where tipo = 'obs_camera' and revogado_em is null
+       and id <> (select d.id from public.dispositivos d where d.tipo = 'obs_camera' and d.revogado_em is null order by d.pareado_em desc nulls last limit 1);
+   delete from public.codigos_pareamento c using public.dispositivos d
+     where d.id = c.dispositivo_id and d.tipo = 'obs_camera' and d.revogado_em is not null and c.usado_em is null;
+   ```
+
+2. **Limpeza opcional dos sinais antigos.** Os sinais de vídeo (SDP, com endereços IP de rede) ficam gravados em `realtime.messages` de 72 h a 4 dias (D2 e F18 do PLA-005). O `postgres` do editor SQL **não** é dono de `realtime.messages` nem tem `DELETE` nela (F17): um `delete` dá `42501`. Ele tem `UPDATE` e `BYPASSRLS`, e esta consulta apaga só o conteúdo dos sinais com mais de 1 hora (`inserted_at` é UTC sem fuso e não muda, então a linha fica na mesma partição e sai com ela na limpeza do Realtime; a publicação do Realtime só replica `insert`, F22, então o `update` não reenvia nada):
+
+   ```sql
+   update realtime.messages set payload = jsonb_build_object('tipo', 'apagado') where topic like 'video:%' and inserted_at < timezone('utc', now()) - interval '1 hour';
+   ```
+
+   Para conferir o espaço: `select count(*), pg_size_pretty(sum(pg_column_size(payload))) from realtime.messages where topic like 'video:%';`.
+
 ## Exemplo
 
 Alternativa pela **Supabase CLI** (quando ela passar a ser usada):
@@ -218,13 +246,14 @@ Alternativa pela **Supabase CLI** (quando ela passar a ser usada):
 ## Verificação
 
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`; os dois subdiretórios têm README próprio.
-- As migrações foram aplicadas em ordem e testadas em PGlite (Postgres 18.6) com a simulação: 593 testes desde o VER-047 (150 em `rls.test.ts`, 8 deles do bloco da E1, 22 do bloco da E2, 2 da simulação do Realtime e 63 do bloco da E3; 33 em `restricoes.test.ts`; e 410 em `matriz.test.ts`, que cobre as 396 células da matriz de permissões), com as migrações aplicadas por `postgres_sim`, um dono sem superusuário, como o `postgres` do Supabase; o que eles provam, o que só as checagens de banco cobrem e o que não tem teste está em [`migrations/README.md`](migrations/README.md), "Verificação"; detalhes e sabotagens nos registros VER-010 (fundação), VER-016 (segunda migração), VER-026 (terceira migração), VER-037 (quarta migração), VER-046 (quinta) e VER-047 (sexta).
+- As migrações foram aplicadas em ordem e testadas em PGlite (Postgres 18.6) com a simulação: 642 testes desde o VER-050 (198 em `rls.test.ts`, 8 deles do bloco da E1, 22 do bloco da E2, 2 da simulação do Realtime, 63 do bloco da E3 e 48 do bloco da E4, dentro do da E3; 34 em `restricoes.test.ts`; e 410 em `matriz.test.ts`, que cobre as 396 células da matriz de permissões), com as migrações aplicadas por `postgres_sim`, um dono sem superusuário, como o `postgres` do Supabase; o que eles provam, o que só as checagens de banco cobrem e o que não tem teste está em [`migrations/README.md`](migrations/README.md), "Verificação"; detalhes e sabotagens nos registros VER-010 (fundação), VER-016 (segunda migração), VER-026 (terceira migração), VER-037 (quarta migração), VER-046 (quinta), VER-047 (sexta) e VER-050 (sétima).
 
 ## Riscos
 
 - A segunda migração (`20261126142500_membros_sem_autoalteracao.sql`) também **não foi aplicada num Supabase real**: aplicá-la depois da de fundação é passo do responsável (Tarefa 6 do PLA-002, passo 1 de "Login Google (E1)"); até lá, no banco real um `admin` ainda consegue remover a própria linha. O limite da corrida de dois admins e a recuperação estão acima (passo 2 de "Lógica") e em [`migrations/README.md`](migrations/README.md).
 - A terceira migração (`20261126190407_biblioteca_storage.sql`, E2) também **não foi aplicada num Supabase real**: aplicá-la depois das duas anteriores é passo do responsável (passo 1 de "Lógica"; guia "Biblioteca no Storage (E2)"). Até lá, o bucket `midias` não existe no projeto e os envios da Biblioteca falham. Se o bucket já tiver sido criado à mão pelo painel, o `on conflict` da migração o deixa privado e com os limites. A simulação do Storage, os limites que sobram (`Content-Type` declarado, objetos órfãos) e o que só o servidor do Storage aplica estão em [`migrations/README.md`](migrations/README.md) e [`tests/README.md`](tests/README.md).
 - A sexta migração (`20261127220000_estado_do_palco_em_topico_proprio.sql`, VER-047) também não foi aplicada num Supabase real: aplicá-la depois da quinta é passo do responsável (passo 2 do guia "Ao vivo e pareamento (E3)"), antes de publicar o app desta versão. Até lá, no banco real o `obs_palco` ainda envia em `:controle` (o furo I4) e não envia em `:estado`, e o app desta versão fica sem estado no `/controle` e na aba Ao vivo. Aplicá-la com o palco conectado deixa uma janela: o Realtime guarda no socket do palco o envio em `:controle` obtido antes, e ele pode publicar comando ali até a renovação do token (até 10 min); por isso o guia manda aplicar com o palco fechado. Residual depois de aplicada: a sessão antiga de um palco re-pareado continua com o envio em `:estado` guardado pelo Realtime até a renovação do token (até 10 min); o `/controle` aceita o estado dela nesse tempo, exceto depois do aviso `revogacao` (descarte por 15 min).
+- A sétima migração (`20261127230000_video_da_camera.sql`, VER-050) não foi aplicada num Supabase real e **não deve ser aplicada antes da Tarefa 7 do PLA-005**, que traz o passo do responsável completo (o app que a usa nasce nas Tarefas 3 a 6). A seção "Vídeo da câmera (E4)" tem por enquanto só as consultas que os testes leem. Os sinais de vídeo, com endereços IP de rede, ficarão em `realtime.messages` de 72 h a 4 dias; a simulação dá ao `postgres_sim` o efeito do `BYPASSRLS` do `postgres` real por outro caminho (participação no dono de `realtime.messages`), e só a conferência real mostra o `realtime.send` gravando no projeto.
 - A quinta migração (`20261127200000_episodio_em_teste_nao_se_apaga.sql`, VER-046) também não foi aplicada num Supabase real: aplicá-la depois da quarta é passo do responsável (passo 2 do guia "Ao vivo e pareamento (E3)"). Até lá, apagar na aba Episódios o rascunho do modo teste é recusado pela própria aba (consulta antes), mas não pela API, e o `on delete set null` ainda desliga o teste em silêncio.
 - A quarta migração (`20261127124303_ao_vivo_e_pareamento.sql`, E3) também **não foi aplicada num Supabase real**: aplicá-la depois das três anteriores é passo do responsável (passo 1 de "Lógica"; guia "Ao vivo e pareamento (E3)"). Até lá, nenhum dispositivo pareia, o `/controle` não entra em canal nenhum e, no banco real, a equipe ainda muda `estado` e o modo teste pela API. Ela cria políticas em `realtime.messages`, que no Supabase são aceitas para o `postgres` pela `supautils` (simulada nos testes pela participação em `supabase_realtime_admin`, [`tests/dono-migracao.sql`](tests/dono-migracao.sql)); se o editor recusar com `must be owner of table messages`, parar e anotar a mensagem, sem criar as políticas pelo painel.
 - A migração **não foi aplicada num Supabase real** nesta tarefa: a simulação reproduz só o que a migração usa (papéis `anon`, `authenticated`, `service_role` e `supabase_auth_admin`, privilégios padrão no padrão vigente desde 2026-10-30, nas variantes com a exposição automática de tabelas desligada e ligada, `auth.users` com seis colunas, `auth.jwt()` e `auth.uid()`). Diferenças de versão do Postgres do projeto (por exemplo, `on delete set null (coluna)` exige Postgres 15 ou mais novo) só aparecem ao aplicar.

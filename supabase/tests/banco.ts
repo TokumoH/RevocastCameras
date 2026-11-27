@@ -269,3 +269,19 @@ export async function comoCanal(
     await db.exec('release savepoint canal')
   }
 }
+
+/** Linha gravada em `realtime.messages` (o que o servidor do Realtime replicaria aos inscritos do tópico; F22). */
+export type MensagemPublicada = { topic: string; event: string | null; private: boolean | null; extension: string; payload: Record<string, unknown> | null }
+
+/**
+ * Mensagens gravadas em `realtime.messages` com o tópico dado (PLA-005, Tarefa 2): lidas como superusuário, na transação
+ * do teste (desfeita no fim), em ordem de gravação. É o que `realtime.send` (simulação, F15) grava quando
+ * `public.enviar_sinal_de_video` publica um sinal; a entrega pelo servidor do Realtime não é simulada.
+ */
+export async function mensagensPublicadas(db: PGlite, topico: string): Promise<MensagemPublicada[]> {
+  const r = await db.query<MensagemPublicada>(
+    `select topic, event, private, extension, payload from realtime.messages where topic = $1 order by inserted_at, id`,
+    [topico],
+  )
+  return r.rows
+}
