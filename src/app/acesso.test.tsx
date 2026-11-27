@@ -59,10 +59,12 @@ describe('entrada e guarda', () => {
   })
 
   test('dispositivo-nao-cria-cliente-de-membro', async () => {
+    // desde a Tarefa 6 da E3, as rotas de dispositivo pareiam (sem sessão nem fragmento: "não está pareado")
+    const semLink = 'Este aparelho não está pareado (ou foi revogado). Abra o link ou o QR gerado na aba Ao vivo do painel.'
     const casos: [string, string][] = [
-      ['/camera', 'Em construção — etapa E4'],
-      ['/obs/palco', 'Em construção — etapa E3'],
-      ['/obs/camera', 'Em construção — etapa E4'],
+      ['/camera', semLink],
+      ['/obs/palco', semLink],
+      ['/obs/camera', semLink],
       ['/xyz', 'Esse endereço não existe.'],
     ]
     for (const [caminho, frase] of casos) {
@@ -71,7 +73,7 @@ describe('entrada e guarda', () => {
       await act(async () => {
         await new Promise((r) => setTimeout(r, 0))
       })
-      expect(screen.getByText(frase)).toBeTruthy()
+      expect(await screen.findByText(frase)).toBeTruthy()
       expect(f.chamadas.obterServicos).toBe(0)
       expect(f.chamadas.usuarioAtual).toBe(0)
       cleanup()

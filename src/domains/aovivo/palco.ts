@@ -42,9 +42,11 @@ function copiar(e: EstadoNoAr): EstadoNoAr {
  * 5. atualiza o estado (cena do OBS, aviso no ar e o prazo dele, último resultado) e o publica;
  * 6. com `ok`, grava `registro_acoes` (`linhaDoRegistro`); a falha ao gravar não desfaz nem bloqueia nada.
  * Comandos diferentes não esperam um pelo outro (um clipe pendente não segura uma troca de cena).
- * O estado também é publicado ao começar, a cada 30 s e quando alguém entra no `:controle`.
+ * O estado também é publicado ao começar, a cada 30 s, quando alguém entra no `:controle` e quando a
+ * rota pede (`republicar`, ao voltar a `conectado`: a publicação do começo pode ter saído com o canal
+ * ainda conectando, e a reconexão do próprio palco não gera entrada na presença; Tarefa 6).
  */
-export function criarPalco(d: DependenciasDoPalco): { estado(): EstadoNoAr; aoMudar(f: (e: EstadoNoAr) => void): () => void; parar(): void } {
+export function criarPalco(d: DependenciasDoPalco): { estado(): EstadoNoAr; aoMudar(f: (e: EstadoNoAr) => void): () => void; republicar(): void; parar(): void } {
   const agora = d.agora ?? (() => Date.now())
   const ouvintes = new Set<(e: EstadoNoAr) => void>()
   const vistos = new Set<string>()
@@ -178,6 +180,9 @@ export function criarPalco(d: DependenciasDoPalco): { estado(): EstadoNoAr; aoMu
       return () => {
         ouvintes.delete(f)
       }
+    },
+    republicar() {
+      publicar(false)
     },
     parar() {
       if (parado) return

@@ -346,3 +346,65 @@ img.previa { width: auto; height: auto; max-height: 240px; object-fit: contain; 
 .aviso-formulario__linha { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; min-width: 0; }
 .aviso-formulario .campo--curto { flex: 0 1 170px; }
 .campo textarea { resize: vertical; } /* o resto vem da regra de `.campo input` */
+
+/* Rotas de dispositivo (E3, Tarefa 6): o rótulo e as mensagens fixas quebram em vez de alargar o cartão em 320 px */
+.tela-de-dispositivo .cartao > p { overflow-wrap: anywhere; }
+
+/* /obs/palco (Fonte de navegador do OBS, D16): a classe `palco` vem do script do index.html antes da primeira pintura (N2);
+   fundo transparente (inclusive o pontilhado do body) e esquema claro, para o navegador não pintar o fundo escuro padrão */
+html.palco, html.palco body { background: transparent; }
+html.palco { color-scheme: light; }
+.palco-no-ar { position: fixed; inset: 0; pointer-events: none; }
+.palco-no-ar > * { pointer-events: auto; }
+/* Aviso no ar: cartão do RevoCast no canto inferior esquerdo; título, texto (com as quebras de linha) e link como texto */
+.aviso-no-ar {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+  display: grid;
+  gap: 8px;
+  max-width: min(640px, calc(100% - 48px));
+  padding: 18px 22px;
+  background: var(--card);
+  border: var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.aviso-no-ar__titulo { min-width: 0; font-size: clamp(26px, 4vw, 44px); overflow-wrap: anywhere; }
+.aviso-no-ar__texto { min-width: 0; font-size: clamp(18px, 2.4vw, 26px); white-space: pre-line; overflow-wrap: anywhere; }
+.aviso-no-ar__link { min-width: 0; font-weight: 800; overflow-wrap: anywhere; }
+.aviso-no-ar__imagem { max-height: 40vh; justify-self: start; border: var(--border); border-radius: 12px; }
+/* Selo de estado (tecla `s`, 5 s) e painel do obs-websocket (tecla `c`, 2 min): só com a saída parada (D10, D16) */
+.selo-do-palco {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: grid;
+  max-width: calc(100% - 32px);
+  padding: 8px 16px;
+  font: 400 20px/1.3 var(--font-display);
+  background: var(--sand-soft);
+  border: var(--border);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+.config-do-palco {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  gap: 10px;
+  width: min(420px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  overflow: auto;
+  padding: 20px;
+  background: var(--card);
+  border: var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  transform: translate(-50%, -50%);
+}
+.config-do-palco h2 { font-size: 28px; }
+.config-do-palco .campo span { font-weight: 700; }
+.config-do-palco__aviso { padding: 8px 12px; font-weight: 800; background: var(--pink-soft); border: var(--border); border-radius: 12px; }
+.config-do-palco__dica { font-size: 15px; color: var(--gray); }

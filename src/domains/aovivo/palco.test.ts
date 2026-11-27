@@ -332,6 +332,24 @@ describe('serviço do palco (D9)', () => {
     expect(m.canal.publicados.at(-1)).toEqual(m.palco.estado())
   })
 
+  test('republicar', async () => {
+    // a rota chama ao voltar a `conectado` (Tarefa 6): o estado sai de novo, com a situação do OBS lida agora
+    let situacao: SituacaoDoObs = { ...SITUACAO, gravando: false }
+    const m = montar({ executor: { situacao } })
+    const inicial = m.canal.publicados.length
+    const mudancas: EstadoNoAr[] = []
+    m.palco.aoMudar((e) => mudancas.push(e))
+    situacao = { ...SITUACAO, gravando: true }
+    m.exec.executor.situacao = () => ({ ...situacao })
+    m.palco.republicar()
+    expect(m.canal.publicados.length).toBe(inicial + 1)
+    expect(m.canal.publicados.at(-1)?.obs.gravando).toBe(true)
+    expect(mudancas).toEqual([]) // só o canal: a tela não muda
+    m.palco.parar()
+    m.palco.republicar()
+    expect(m.canal.publicados.length).toBe(inicial + 1)
+  })
+
   test('registro-com-teste', async () => {
     const m = montar({ modo: 'teste' })
     m.canal.comando({ id: novoId(), acao: 'proxima_cena' }, ANA)

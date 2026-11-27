@@ -312,4 +312,25 @@ describe('executor do OBS (Integração OBS, D1, D9, D10)', () => {
     expect(semWs.situacao().websocket).toBe('senha_errada')
     expect((await semWs.atualizarSituacao()).versaoObs).toBeNull()
   })
+
+  test('estado-do-websocket-por-funcao', async () => {
+    // a rota troca o estado do websocket sem recriar o executor (Tarefa 6, rodada 1): a função é lida a cada situação
+    const ws = wsFalso()
+    ws.estado.conectado = false
+    let fora: 'desligado' | 'senha_errada' | 'sem_conexao' = 'desligado'
+    const executor = criarExecutorObs({ obs: obsFalso().obs, ws: ws.ws, estadoDoWebsocket: () => fora, tocarSom: async () => true, mostrarAviso: () => {}, ocultarAviso: () => {}, agendar: () => {} })
+    expect(executor.situacao().websocket).toBe('desligado')
+    fora = 'senha_errada'
+    expect(executor.situacao().websocket).toBe('senha_errada')
+    expect(await executor.executar({ tipo: 'marcar', nome: 'x' })).toEqual({ resultado: 'falhou', motivo: 'sem_websocket' })
+    // conectado vence a função; a versão volta
+    ws.estado.conectado = true
+    expect((await executor.atualizarSituacao()).websocket).toBe('conectado')
+    expect(executor.situacao().versaoObs).toBe('31.0.1')
+    expect(await executor.executar({ tipo: 'marcar', nome: 'x' })).toEqual({ resultado: 'ok', motivo: null })
+    // caiu de novo: a função decide (aqui, sem conexão)
+    ws.estado.conectado = false
+    fora = 'sem_conexao'
+    expect(executor.situacao()).toMatchObject({ websocket: 'sem_conexao', versaoObs: null })
+  })
 })

@@ -19,6 +19,9 @@ export interface ExecutorObs extends ExecutorDeAcoes {
   parar(): void
 }
 
+/** Estados do websocket sem conexão identificada. */
+type EstadoForaDoAr = 'desligado' | 'senha_errada' | 'sem_conexao'
+
 export interface DependenciasDoExecutor {
   obs: ObsNoNavegador
   /** obs-websocket conectado, ou `null` (sem senha configurada, senha errada, sem conexão). Se cair depois, `conectado()` passa a falso e o executor o trata como ausente. */
@@ -28,8 +31,13 @@ export interface DependenciasDoExecutor {
   mostrarAviso(id: string, duracaoS: number): void
   ocultarAviso(): void
   agendar(f: () => void, ms: number): void
-  /** Com `ws` nulo, o que a situação diz do websocket (padrão `desligado`). Nunca a senha. */
-  estadoDoWebsocket?: 'desligado' | 'senha_errada' | 'sem_conexao'
+  /**
+   * O que a situação diz do websocket quando ele não está conectado. Valor fixo: vale só com `ws` nulo
+   * (padrão `desligado`; com objeto caído, `sem_conexao`). Função: lida a cada situação, com ou sem objeto,
+   * para a rota mudar o estado (desligado, senha recusada, sem conexão) sem recriar o executor (Tarefa 6).
+   * Nunca a senha.
+   */
+  estadoDoWebsocket?: EstadoForaDoAr | (() => EstadoForaDoAr)
 }
 
 const ok = (): Resposta => ({ resultado: 'ok', motivo: null })
@@ -117,8 +125,9 @@ export function criarExecutorObs(d: DependenciasDoExecutor): ExecutorObs {
   }
 
   function estadoDoWebsocket(): SituacaoDoObs['websocket'] {
-    if (d.ws === null) return d.estadoDoWebsocket ?? 'desligado'
-    return d.ws.conectado() ? 'conectado' : 'sem_conexao'
+    if (wsConectado()) return 'conectado'
+    if (typeof d.estadoDoWebsocket === 'function') return d.estadoDoWebsocket()
+    return d.ws === null ? (d.estadoDoWebsocket ?? 'desligado') : 'sem_conexao'
   }
 
   function situacao(): SituacaoDoObs {

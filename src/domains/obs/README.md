@@ -50,7 +50,7 @@ O OBS tem dois caminhos com regras diferentes (a Fonte de navegador com níveis 
 | [`versao.ts`](versao.ts) | `VERSAO_MINIMA_DO_OBS` (`'30.2.0'`), `versaoAtende` |
 | [`versao.test.ts`](versao.test.ts) | 1 teste: `versao-minima` (os casos da interface, pré-lançamento — inclusive `30.2.0-rc1` —, forma errada e tamanho) |
 | [`executor.ts`](executor.ts) | `ESPERA_DO_CLIPE_MS`, `ExecutorObs`, `DependenciasDoExecutor`, `criarExecutorObs` |
-| [`executor.test.ts`](executor.test.ts) | 16 testes: constante, `trocar-cena-existente`, `cena-inexistente-no-obs`, `sem-permissao`, `clipe-espera-5s`, `clipe-repetido-ignorado`, `clipe-sem-replay-buffer`, `marcador-sem-websocket`, `marcador-sem-gravacao`, `marcador-ok`, `obs-ausente`, `websocket-cai-depois`, `websocket-cai-durante-o-pedido`, `parar-cancela-o-clipe-pendente`, `som-que-nao-toca-falha-sem-motivo`, `situacao` |
+| [`executor.test.ts`](executor.test.ts) | 17 testes: constante, `trocar-cena-existente`, `cena-inexistente-no-obs`, `sem-permissao`, `clipe-espera-5s`, `clipe-repetido-ignorado`, `clipe-sem-replay-buffer`, `marcador-sem-websocket`, `marcador-sem-gravacao`, `marcador-ok`, `obs-ausente`, `websocket-cai-depois`, `websocket-cai-durante-o-pedido`, `parar-cancela-o-clipe-pendente`, `som-que-nao-toca-falha-sem-motivo`, `situacao`, `estado-do-websocket-por-funcao` (Tarefa 6, rodada 1) |
 
 ## Lógica
 
@@ -64,7 +64,7 @@ Ação do palco → chamada do OBS → nível exigido (níveis do README do obs-
 | `tocar_som` | — | `tocarSom` da página | — | `ok`, ou `falhou` sem motivo |
 | `mostrar_aviso`, `ocultar_aviso` | — | `mostrarAviso`/`ocultarAviso` da página | — | `ok` |
 
-Sem `window.obsstudio`, cena, clipe e marcador → `falhou`/`obs_ausente` (som e aviso continuam). A situação (`situacao()`, para o estado no ar e a presença, D13) junta o que é lido na hora (`navegador`, `versaoDoPlugin`) com a última leitura de nível, saídas e versão do OBS (`atualizarSituacao()` e cada execução); o websocket aparece como `conectado` enquanto `conectado()` for verdadeiro, `sem_conexao` depois de cair, ou, sem objeto, o estado informado pela rota (`desligado`, `senha_errada`, `sem_conexao`), nunca a senha. Depois de `parar()`, toda ação responde `falhou` sem chamar nada, e o clipe que esperava não é salvo.
+Sem `window.obsstudio`, cena, clipe e marcador → `falhou`/`obs_ausente` (som e aviso continuam). A situação (`situacao()`, para o estado no ar e a presença, D13) junta o que é lido na hora (`navegador`, `versaoDoPlugin`) com a última leitura de nível, saídas e versão do OBS (`atualizarSituacao()` e cada execução); o websocket aparece como `conectado` enquanto `conectado()` for verdadeiro, `sem_conexao` depois de cair, ou, sem objeto, o estado informado pela rota (`desligado`, `senha_errada`, `sem_conexao`), nunca a senha. Desde a Tarefa 6 (rodada 1, registro [VER-040](../../../docs/verificacoes/2026-11-27-040-e3-telas-de-dispositivo.md)), `estadoDoWebsocket` também aceita uma **função**, lida a cada situação com ou sem objeto, enquanto o websocket não está conectado: a rota do palco muda o estado (desligado, senha recusada, sem conexão) sem recriar o executor. Depois de `parar()`, toda ação responde `falhou` sem chamar nada, e o clipe que esperava não é salvo.
 
 ```mermaid
 flowchart LR
@@ -85,7 +85,7 @@ versaoAtende('30.1.2') // false — o checklist mostra "versão do OBS abaixo de
 
 ## Verificação
 
-- `npx vitest run src/domains/obs`: 2 arquivos, 17 testes (mais 3 de `../arquitetura.test.ts`, que cobre esta pasta sem configuração).
+- `npx vitest run src/domains/obs`: 2 arquivos, 18 testes desde o VER-040 (17 até então) (mais 3 de `../arquitetura.test.ts`, que cobre esta pasta sem configuração).
 - Sabotagens em memória, uma de cada vez, cada uma derrubando o teste citado (tabela no VER-039).
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`. Não há subdiretórios.
 
