@@ -2,6 +2,7 @@
 import { afterEach, describe, test, expect, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Papel } from '../../domains/acesso/papeis'
+import type { CanalDoEstudio } from '../../domains/aovivo/portas'
 import { App } from '../App'
 import type { Dependencias } from '../dependencias'
 import type { ServicosDeAoVivo } from '../servicos'
@@ -112,6 +113,137 @@ describe('painel com abas (D8)', () => {
     }
   })
 
+  test('painel-e-ao-vivo-no-mesmo-cliente', async () => {
+    // I3 com o adaptador real sobre o Realtime falso (que imita o realtime-js 2.119.0: `channel()` devolve o canal
+    // existente e `on('presence')` depois do `subscribe()` lança): o `estudio` do painel e o do `useAoVivo` da aba
+    // são o mesmo; sair da aba não derruba o `estudio`; sair do painel fecha tudo, um `removeChannel` por tópico
+    const EU = 'a1b2c3d4-0000-4000-8000-000000000001'
+    const OUTRO = 'a1b2c3d4-0000-4000-8000-000000000002'
+    const EP = 'e0000000-0000-4000-8000-000000000001'
+    const canal = criarCanalFalso()
+    const fabrica = canal.canais(EU)
+    const alcas: CanalDoEstudio[] = []
+    const estudioOriginal = fabrica.estudio.bind(fabrica)
+    fabrica.estudio = () => {
+      const alca = estudioOriginal()
+      alcas.push(alca)
+      return alca
+    }
+    const repo = { ...aoVivoVazio().repo, episodioAtivo: async () => ({ id: EP, modo: 'teste' as const }) }
+    const preparacao = criarFalsosDePreparacao({ episodios: [{ id: EP, titulo: 'Ensaio geral', data: '2026-11-27', estado: 'rascunho' }] })
+    const f = criarFalsos({
+      usuario: usuarioGoogle('adm@revocast.test', EU),
+      papel: 'equipe',
+      permitidos: [{ email: 'adm@revocast.test', papel: 'equipe', criadoPor: null }],
+    })
+    const tela = render(<App caminho="/painel" dependencias={f.dependencias({ obterAoVivo: () => ({ repo, canais: canal.canais }), obterPreparacao: () => preparacao.servicos })} />)
+    await screen.findByRole('tablist')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await esperar()
+    fireEvent.click(screen.getByRole('tab', { name: 'Ao vivo' }))
+    await esperar()
+    expect(within(screen.getByRole('region', { name: 'Comandos' })).getByRole('button', { name: '✂️ CLIPE' })).toBeTruthy()
+    // um canal `estudio`, uma alça (a do painel, passada ao `useAoVivo`), presença marcada uma vez, nenhuma exceção
+    expect(canal.realtime.contar('channel', 'estudio')).toBe(1)
+    expect(alcas).toHaveLength(1)
+    expect(canal.presencas('estudio')).toEqual([{ tipo: 'membro', papel: 'equipe' }])
+    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP}:controle`])
+    const estados: string[] = []
+    alcas[0].aoMudarEstado((e) => estados.push(e))
+    await esperar()
+    expect(estados).toEqual(['conectado'])
+
+    // sair da aba: o `:controle` do `useAoVivo` sai; o `estudio` continua conectado, recebendo e enviando
+    fireEvent.click(screen.getByRole('tab', { name: 'Episódios' }))
+    await esperar()
+    expect(canal.realtime.contar('removeChannel', `episodio:${EP}:controle`)).toBe(1)
+    expect(canal.realtime.contar('removeChannel', 'estudio')).toBe(0)
+    expect(canal.abertos()).toEqual(['estudio'])
+    const recebidas: string[] = []
+    alcas[0].aoReceber((m) => recebidas.push(m.evento))
+    act(() => canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: OUTRO }))
+    await esperar()
+    expect(recebidas).toEqual(['episodio_ativo_mudou'])
+    expect(await alcas[0].enviar({ evento: 'episodio_ativo_mudou' })).toBe('ok')
+    expect(estados).toEqual(['conectado'])
+
+    // sair do painel fecha tudo: um `removeChannel` por tópico
+    tela.unmount()
+    await esperar()
+    expect(canal.realtime.contar('removeChannel', 'estudio')).toBe(1)
+    expect(canal.realtime.contar('removeChannel', `episodio:${EP}:controle`)).toBe(1)
+    expect(canal.abertos()).toEqual([])
+    expect(canal.realtime.contar('channel', 'estudio')).toBe(1)
+  })
+
+  test('uma-reavaliacao-na-renovacao', async () => {
+    // numa renovação do token, o `estudio` do painel e o `:controle` do `useAoVivo` da aba caem juntos: um
+    // `reavaliar()` só (janela de 5 s do painel, compartilhada com o hook; VER-041 e VER-042, Riscos)
+    const EU = 'a1b2c3d4-0000-4000-8000-000000000001'
+    const EP = 'e0000000-0000-4000-8000-000000000001'
+    const canal = criarCanalFalso()
+    const repo = { ...aoVivoVazio().repo, episodioAtivo: async () => ({ id: EP, modo: 'teste' as const }) }
+    const preparacao = criarFalsosDePreparacao({ episodios: [{ id: EP, titulo: 'Ensaio geral', data: '2026-11-27', estado: 'rascunho' }] })
+    const f = criarFalsos({
+      usuario: usuarioGoogle('adm@revocast.test', EU),
+      papel: 'equipe',
+      permitidos: [{ email: 'adm@revocast.test', papel: 'equipe', criadoPor: null }],
+    })
+    render(<App caminho="/painel" dependencias={f.dependencias({ obterAoVivo: () => ({ repo, canais: canal.canais }), obterPreparacao: () => preparacao.servicos })} />)
+    await screen.findByRole('tablist')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await esperar()
+    fireEvent.click(screen.getByRole('tab', { name: 'Ao vivo' }))
+    await esperar()
+    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP}:controle`])
+    for (const ordem of [['estudio', `episodio:${EP}:controle`], [`episodio:${EP}:controle`, 'estudio']]) {
+      const avaliacoes = f.chamadas.usuarioAtual
+      act(() => {
+        for (const topico of ordem) canal.definirEstado(topico, 'fechado')
+      })
+      await esperar()
+      expect(f.chamadas.usuarioAtual, ordem.join(' + ')).toBe(avaliacoes + 1)
+      // os dois reabrem 5 s depois (a pessoa continua membro)
+      await esperar(REABRIR_CANAIS_MS)
+      await esperar()
+      expect([...canal.abertos()].sort(), ordem.join(' + ')).toEqual([`episodio:${EP}:controle`, 'estudio'].sort())
+      expect(f.chamadas.usuarioAtual, ordem.join(' + ')).toBe(avaliacoes + 1)
+    }
+  })
+
+  test('painel-reavalia-na-revogacao-propria', async () => {
+    // D5 (Tarefa 9, rodada 1): a `revogacao` com o id do próprio membro reavalia o acesso em qualquer aba, uma vez
+    // só (com a aba Ao vivo aberta, o `useAoVivo` não ouve: o `estudio` é o do painel); com o id de outra pessoa, nada
+    const EU = 'a1b2c3d4-0000-4000-8000-000000000001'
+    const OUTRO = 'a1b2c3d4-0000-4000-8000-000000000002'
+    const EP = 'e0000000-0000-4000-8000-000000000001'
+    const canal = criarCanalFalso()
+    const repo = { ...aoVivoVazio().repo, episodioAtivo: async () => ({ id: EP, modo: 'teste' as const }) }
+    const preparacao = criarFalsosDePreparacao({ episodios: [{ id: EP, titulo: 'Ensaio geral', data: '2026-11-27', estado: 'rascunho' }] })
+    const f = criarFalsos({
+      usuario: usuarioGoogle('adm@revocast.test', EU),
+      papel: 'admin',
+      permitidos: [{ email: 'adm@revocast.test', papel: 'admin', criadoPor: null }],
+    })
+    render(<App caminho="/painel" dependencias={f.dependencias({ obterAoVivo: () => ({ repo, canais: canal.canais }), obterPreparacao: () => preparacao.servicos })} />)
+    await screen.findByRole('tablist')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    await esperar()
+    const revogar = async (usuario: string) => {
+      act(() => canal.entregar('estudio', 'revogacao', { usuario, remetente: OUTRO }))
+      await esperar()
+    }
+    for (const aba of ['Episódios', 'Membros', 'Ao vivo']) {
+      fireEvent.click(screen.getByRole('tab', { name: aba }))
+      await esperar()
+      const antes = f.chamadas.usuarioAtual
+      await revogar(OUTRO)
+      expect(f.chamadas.usuarioAtual, `${aba}: outra pessoa`).toBe(antes)
+      await revogar(EU)
+      expect(f.chamadas.usuarioAtual, `${aba}: o próprio`).toBe(antes + 1)
+    }
+  })
+
   test('painel-avisa-revogacao-de-membro', async () => {
     // a remoção na aba Membros publica `revogacao` no `estudio` do painel com o id do perfil removido (nunca o do
     // admin) e, depois de uma reabertura do canal, pela alça nova (D5; VER-042, rodada 1)
@@ -205,7 +337,7 @@ describe('painel com abas (D8)', () => {
     const painel = screen.getByRole('tabpanel')
     expect(await within(painel).findByText('Episódio de teste')).toBeTruthy()
     expect(within(painel).getByRole('button', { name: 'Criar episódio' })).toBeTruthy()
-    expect(within(painel).getByText('Iniciar e encerrar o ao vivo chegam na etapa E3.')).toBeTruthy()
+    expect(within(painel).getByText('Iniciar e encerrar o ao vivo ficam na aba Ao vivo.')).toBeTruthy()
     expect(painel.textContent).not.toContain('Em construção')
     expect(obterPreparacao).toHaveBeenCalledTimes(1)
   })

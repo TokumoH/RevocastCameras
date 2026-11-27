@@ -223,6 +223,14 @@ describe('/controle por toque (Tarefa 7)', () => {
     expect(screen.getByRole('button', { name: 'Aviso da sexta ▶' })).toBeTruthy()
   })
 
+  test('controle-titulos-h2', async () => {
+    // Tarefa 9, rodada 1 (N1): no `/controle`, os grupos continuam `h2`, logo abaixo do `h1`
+    await pronto()
+    expect(screen.getByRole('heading', { level: 1 })).toBeTruthy()
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Avisos', 'Sons', 'Cenas'])
+    expect(screen.queryAllByRole('heading', { level: 3 })).toEqual([])
+  })
+
   test('toque-envia-comando', async () => {
     const m = await pronto()
     for (const nome of ['👏 aplauso', 'Close', 'Festa Revoada ▶', 'Próximo aviso', 'Ocultar aviso', '✂️ CLIPE', '🔖 MARCAR']) {
@@ -504,6 +512,31 @@ describe('/controle por toque (Tarefa 7)', () => {
     expect(screen.getByRole('button', { name: '✂️ CLIPE' })).toBeTruthy()
   })
 
+  test('controle-desabilitado-com-consulta-falha', async () => {
+    // Tarefa 9, rodada 2: outro painel troca o episódio (EP → EP2) e a consulta falha; a tela ainda mostra EP,
+    // então os botões ficam desabilitados com a frase de falha e nenhum toque vai ao `:controle` de EP
+    const m = await pronto()
+    expect(botao('✂️ CLIPE').disabled).toBe(false)
+    m.definirAtivo({ id: EP2, modo: 'ao_vivo' })
+    m.episodioAtivo.mockRejectedValueOnce(new ErroDoAoVivo('rede'))
+    act(() => m.canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: OUTRO }))
+    await esperar()
+    expect(screen.getByText(TEXTO_DO_CONTROLE.falhaAoCarregar)).toBeTruthy()
+    expect(botao('✂️ CLIPE').disabled).toBe(true)
+    fireEvent.click(botao('✂️ CLIPE'))
+    await esperar()
+    expect(comandosEnviados(m)).toHaveLength(0)
+    // a nova consulta (5 s depois) dá certo: EP2 na tela, o toque vai para EP2
+    await esperar(REABRIR_CANAIS_MS)
+    await esperar()
+    expect(screen.queryByText(TEXTO_DO_CONTROLE.falhaAoCarregar)).toBeNull()
+    expect(botao('✂️ CLIPE').disabled).toBe(false)
+    fireEvent.click(botao('✂️ CLIPE'))
+    await esperar()
+    expect(comandosEnviados(m, EP2)).toHaveLength(1)
+    expect(comandosEnviados(m)).toHaveLength(0)
+  })
+
   test('acesso-negado-ao-carregar-reavalia', async () => {
     const m = montar({ antes: (s) => s.prep.falharProxima('cenas.listar', new ErroDePreparacao('negado')) })
     await esperar()
@@ -629,6 +662,27 @@ describe('/controle por toque (Tarefa 7)', () => {
     })
     expect(resposta).toBe('ok')
     expect(m.canal.enviados(controle())).toHaveLength(1)
+  })
+
+  test('enviar-bloqueado-depois-de-consulta-falha (sem depender do botão)', async () => {
+    // Tarefa 9, rodada 3 (R3-1): a trava do `enviar` também olha a última consulta. Outro painel troca o episódio
+    // (EP → EP2) e a consulta falha: com os dois canais conectados, o `enviar` do hook devolve `falhou` e nada sai
+    const m = montarSonda()
+    await esperar()
+    m.definirAtivo({ id: EP2, modo: 'ao_vivo' })
+    m.episodioAtivo.mockRejectedValueOnce(new ErroDoAoVivo('rede'))
+    act(() => m.canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: OUTRO }))
+    await esperar()
+    expect(m.av().canal).toBe('conectado')
+    expect(m.av().falhaAoCarregar).toBe(true)
+    expect(m.av().podeComandar).toBe(false)
+    let resposta: string | null = null
+    await act(async () => {
+      resposta = await m.av().enviar({ acao: 'clipe' })
+    })
+    expect(resposta).toBe('falhou')
+    expect(m.canal.enviados(controle())).toEqual([])
+    expect(m.canal.enviados(controle(EP2))).toEqual([])
   })
 
   test('estudio-de-fora (painel, Tarefas 8 e 9)', async () => {

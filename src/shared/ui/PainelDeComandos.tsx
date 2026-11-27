@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ListasDoAoVivo } from '../../domains/aovivo/comandos'
 import type { EstadoNoAr, MotivoDoResultado, PedidoDeComando } from '../../domains/aovivo/mensagens'
-import type { RespostaDoEnvio } from '../../domains/aovivo/portas'
+import type { EstadoDoCanal, RespostaDoEnvio } from '../../domains/aovivo/portas'
 import { Mensagem } from './Mensagem'
 
 /** Frases fixas dos comandos: a resposta do envio (D15, N3) e os motivos de recusa ou falha do palco (lista fechada, D9). */
@@ -30,6 +30,25 @@ export const TEXTO_DOS_COMANDOS = Object.freeze({
   recusado: 'O palco recusou o comando.',
   falhaNoPalco: 'O palco não conseguiu executar o comando.',
 } as const)
+
+/** Frases fixas do estado do canal (D15, N3), as mesmas no `/controle` e na aba Ao vivo do painel. */
+export const TEXTO_DO_CANAL = Object.freeze({
+  conectando: 'Conectando…',
+  reconectando: 'Reconectando…',
+  semAcesso: 'Sem acesso ao canal; conferindo o seu acesso.',
+} as const)
+
+/**
+ * O aviso de uma tela de comandos para o estado do canal: `fechado`/`negado` → "Sem acesso…" (erro; quem usa
+ * o `useAoVivo` já chamou `reavaliar()`), `reconectando` e `conectando` (info); `conectado` → nenhum.
+ * Usado pelo `/controle` e pela aba Ao vivo (Tarefa 9, rodada 1, N2).
+ */
+export function avisoDoCanal(canal: EstadoDoCanal): { tom: 'info' | 'erro'; texto: string } | null {
+  if (canal === 'fechado' || canal === 'negado') return { tom: 'erro', texto: TEXTO_DO_CANAL.semAcesso }
+  if (canal === 'reconectando') return { tom: 'info', texto: TEXTO_DO_CANAL.reconectando }
+  if (canal === 'conectando') return { tom: 'info', texto: TEXTO_DO_CANAL.conectando }
+  return null
+}
 
 /** Um motivo da lista fechada → uma frase fixa; nunca texto do OBS nem do servidor. */
 export const TEXTO_DO_MOTIVO: Readonly<Record<MotivoDoResultado, string>> = Object.freeze({
@@ -100,6 +119,7 @@ export function PainelDeComandos({
   pedidoDoUltimo = null,
   habilitado,
   enviar,
+  nivelDoTitulo = 2,
 }: {
   episodio: { modo: 'ao_vivo' | 'teste'; titulo: string }
   listas: ListasDoAoVivo
@@ -108,7 +128,10 @@ export function PainelDeComandos({
   pedidoDoUltimo?: PedidoDeComando | null
   habilitado: boolean
   enviar: (c: PedidoDeComando) => Promise<RespostaDoEnvio>
+  /** Nível dos títulos dos grupos: `h2` no `/controle` (abaixo do `h1`), `h3` dentro de uma seção com `h2` (aba Ao vivo; rodada 1, N1). */
+  nivelDoTitulo?: 2 | 3
 }): ReactNode {
+  const Titulo = nivelDoTitulo === 3 ? 'h3' : 'h2'
   const [aviso, setAviso] = useState<string | null>(null)
   const montado = useRef(true)
   useEffect(() => {
@@ -158,7 +181,7 @@ export function PainelDeComandos({
       </section>
       {aviso !== null && <Mensagem tom="erro">{aviso}</Mensagem>}
       <section className="comandos__grupo" aria-label={TEXTO_DOS_COMANDOS.avisos}>
-        <h2>{TEXTO_DOS_COMANDOS.avisos}</h2>
+        <Titulo>{TEXTO_DOS_COMANDOS.avisos}</Titulo>
         {listas.avisos.length === 0 ? (
           <p>{TEXTO_DOS_COMANDOS.semAvisos}</p>
         ) : (
@@ -170,7 +193,7 @@ export function PainelDeComandos({
         </div>
       </section>
       <section className="comandos__grupo" aria-label={TEXTO_DOS_COMANDOS.sons}>
-        <h2>{TEXTO_DOS_COMANDOS.sons}</h2>
+        <Titulo>{TEXTO_DOS_COMANDOS.sons}</Titulo>
         {listas.sons.length === 0 ? (
           <p>{TEXTO_DOS_COMANDOS.semSons}</p>
         ) : (
@@ -178,7 +201,7 @@ export function PainelDeComandos({
         )}
       </section>
       <section className="comandos__grupo" aria-label={TEXTO_DOS_COMANDOS.cenas}>
-        <h2>{TEXTO_DOS_COMANDOS.cenas}</h2>
+        <Titulo>{TEXTO_DOS_COMANDOS.cenas}</Titulo>
         {listas.cenas.length === 0 ? (
           <p>{TEXTO_DOS_COMANDOS.semCenas}</p>
         ) : (

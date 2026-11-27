@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Papel } from '../domains/acesso/papeis'
 import type { CanalDoEstudio, EstadoDoCanal, FabricaDeCanais } from '../domains/aovivo/portas'
 import { REABRIR_CANAIS_MS } from './useDispositivo'
@@ -102,4 +102,32 @@ export function useEstudio(d: { canais: FabricaDeCanais | null; papel: Papel; re
   }, [canal, papel])
 
   return { estudio: canal, estado }
+}
+
+/**
+ * Um `reavaliar()` por janela de `REABRIR_CANAIS_MS` (5 s) para as perdas de canal (`fechado`/`negado`) de
+ * uma tela de membro: numa renovação de token, o `estudio` e o `:controle` caem juntos e o acesso é
+ * reavaliado uma vez só (VER-041, Riscos; PLA-004, Tarefa 9). Devolve uma função estável; `reavaliar` é
+ * lido na hora. O painel cria uma e a divide entre o próprio `estudio` e o `useAoVivo` da aba Ao vivo.
+ */
+export function useUmaReavaliacaoPorPerda(reavaliar: () => void): () => void {
+  const atual = useRef(reavaliar)
+  useEffect(() => {
+    atual.current = reavaliar
+  })
+  const bloqueio = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (bloqueio.current !== null) clearTimeout(bloqueio.current)
+      bloqueio.current = null
+    },
+    [],
+  )
+  return useCallback(() => {
+    if (bloqueio.current !== null) return
+    atual.current()
+    bloqueio.current = setTimeout(() => {
+      bloqueio.current = null
+    }, REABRIR_CANAIS_MS)
+  }, [])
 }

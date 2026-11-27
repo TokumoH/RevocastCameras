@@ -1,15 +1,24 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, test, expect, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import type { ComponentProps } from 'react'
 import type { Dispositivo, TipoDeDispositivo } from '../../domains/acesso/dispositivos'
+import type { Papel } from '../../domains/acesso/papeis'
+import type { SituacaoDoObs } from '../../domains/aovivo/mensagens'
 import { ErroDoAoVivo } from '../../domains/aovivo/portas'
-import type { CanalDoEstudio, RepositorioDoAoVivo } from '../../domains/aovivo/portas'
+import type { FabricaDeCanais, RepositorioDoAoVivo } from '../../domains/aovivo/portas'
+import type { Cena } from '../../domains/preparacao/cenas'
+import type { Episodio } from '../../domains/preparacao/episodios'
+import type { Som } from '../../domains/preparacao/midia'
+import type { ServicosDePreparacao } from '../../domains/preparacao/portas'
 import { matrizDoQr } from '../../shared/infra/qr'
 import { CodigoQr } from '../../shared/ui/CodigoQr'
 import { App } from '../App'
 import type { ServicosDeAoVivo } from '../servicos'
-import { aoVivoVazio, criarCanalFalso, criarFalsos, usuarioGoogle } from '../servicosFalsos'
-import { AbaAoVivo, INTERVALO_DA_CONSULTA_MS, TEXTO_DA_ABA_AO_VIVO } from './AbaAoVivo'
+import { aoVivoVazio, criarCanalFalso, criarFalsos, criarFalsosDePreparacao, preparacaoVazia, usuarioGoogle } from '../servicosFalsos'
+import { REABRIR_CANAIS_MS } from '../useDispositivo'
+import { useEstudio } from '../useEstudio'
+import { AbaAoVivo, INTERVALO_DA_CONSULTA_MS, TEXTO_DA_ABA_AO_VIVO, TEXTO_DO_CHECKLIST, TEXTO_DO_EPISODIO } from './AbaAoVivo'
 
 /*
  * Aba Ao vivo, parte 1 (PLA-004, Tarefa 8; D3, D5, D11): dispositivos, pareamento com QR e revogação.
@@ -80,14 +89,35 @@ function repoDeTeste(inicial: Dispositivo[]) {
   }
 }
 
+const USUARIO = usuarioGoogle('equipe@revocast.test', EU)
+const SEM_VOLTA = () => () => {}
+
+type PropsDaAba = ComponentProps<typeof AbaAoVivo>
+
+/**
+ * A aba como o painel a desenha (Tarefa 9): o `estudio` aberto **fora** dela pelo `useEstudio` (presença de
+ * membro, reabertura) e passado com o estado; `semCanal` → nenhum `estudio`.
+ */
+function AbaComEstudio(p: Omit<PropsDaAba, 'estudio' | 'estadoDoEstudio'> & { semCanal?: boolean }) {
+  const { semCanal, ...resto } = p
+  const { estudio, estado } = useEstudio({ canais: semCanal ? null : p.canais, papel: p.papel, reavaliar: p.reavaliar })
+  return <AbaAoVivo {...resto} estudio={estudio} estadoDoEstudio={estado} />
+}
+
+/** Props da aba que a parte 1 (dispositivos) não usa: ao vivo sem episódio, Preparação vazia. */
+function propsDoAoVivo(canais: FabricaDeCanais, o: { preparacao?: ServicosDePreparacao; papel?: Papel } = {}) {
+  return { canais, preparacao: o.preparacao ?? preparacaoVazia(), usuario: USUARIO, papel: o.papel ?? ('equipe' as Papel), aoVoltarAVer: SEM_VOLTA }
+}
+
 function montar(o: { dispositivos?: Dispositivo[]; copiar?: ((t: string) => Promise<void>) | null; semCanal?: boolean } = {}) {
   const r = repoDeTeste(o.dispositivos ?? [])
   const canal = criarCanalFalso()
-  const estudio: CanalDoEstudio | null = o.semCanal ? null : canal.canais(EU).estudio()
   const reavaliar = vi.fn()
-  const tela = render(<AbaAoVivo repo={r.repo} estudio={estudio} origem={ORIGEM} reavaliar={reavaliar} copiar={o.copiar ?? null} />)
+  const tela = render(
+    <AbaComEstudio repo={r.repo} {...propsDoAoVivo(canal.canais(EU))} semCanal={o.semCanal} origem={ORIGEM} reavaliar={reavaliar} copiar={o.copiar ?? null} />,
+  )
   const enviados = () => canal.enviados('estudio').map((e) => ({ evento: e.event, ...(e.payload as Record<string, unknown>) }))
-  return { ...r, canal, estudio, reavaliar, tela, enviados }
+  return { ...r, canal, reavaliar, tela, enviados }
 }
 
 const botao = (nome: string) => screen.getByRole('button', { name: nome }) as HTMLButtonElement
@@ -371,24 +401,40 @@ describe('aba Ao vivo — dispositivos (Tarefa 8)', () => {
   })
 
   test('solta-a-presenca-ao-desmontar', async () => {
-    // o ouvinte de presença do `estudio` (que é do painel e continua aberto) é solto quando a aba desmonta
+    // os ouvintes de presença e de mensagens do `estudio` (que é do painel e continua aberto) são soltos quando a
+    // aba desmonta: a aba e o `useAoVivo` dela (Tarefa 9) ouvem a mesma alça, e cada inscrição é solta uma vez
     const r = repoDeTeste([CAMERA_PAREADA])
     const canal = criarCanalFalso()
     const estudio = canal.canais(EU).estudio()
-    const soltar = vi.fn()
-    const original = estudio.aoMudarPresenca.bind(estudio)
+    const inscritos = { presenca: 0, mensagens: 0 }
+    const soltos = { presenca: 0, mensagens: 0 }
+    const presenca = estudio.aoMudarPresenca.bind(estudio)
     estudio.aoMudarPresenca = (f) => {
-      const desfazer = original(f)
+      inscritos.presenca++
+      const desfazer = presenca(f)
       return () => {
-        soltar()
+        soltos.presenca++
         desfazer()
       }
     }
-    const tela = render(<AbaAoVivo repo={r.repo} estudio={estudio} origem={ORIGEM} reavaliar={vi.fn()} copiar={null} />)
+    const mensagens = estudio.aoReceber.bind(estudio)
+    estudio.aoReceber = (f) => {
+      inscritos.mensagens++
+      const desfazer = mensagens(f)
+      return () => {
+        soltos.mensagens++
+        desfazer()
+      }
+    }
+    const tela = render(
+      <AbaAoVivo repo={r.repo} estudio={estudio} estadoDoEstudio="conectado" {...propsDoAoVivo(canal.canais(EU))} origem={ORIGEM} reavaliar={vi.fn()} copiar={null} />,
+    )
     await esperar()
-    expect(soltar).not.toHaveBeenCalled()
+    expect(inscritos.presenca).toBeGreaterThan(0)
+    expect(inscritos.mensagens).toBeGreaterThan(0)
+    expect(soltos).toEqual({ presenca: 0, mensagens: 0 })
     tela.unmount()
-    expect(soltar).toHaveBeenCalledTimes(1)
+    expect(soltos).toEqual(inscritos)
   })
 
   test('aviso-da-sessao-antiga-sem-canal', async () => {
@@ -465,7 +511,9 @@ describe('aba Ao vivo — dispositivos (Tarefa 8)', () => {
     const r = repoDeTeste([CAMERA_PAREADA])
     r.listarDispositivos.mockRejectedValueOnce(new ErroDoAoVivo('negado'))
     const reavaliar = vi.fn()
-    render(<AbaAoVivo repo={r.repo} estudio={null} origem={ORIGEM} reavaliar={reavaliar} copiar={null} />)
+    render(
+      <AbaAoVivo repo={r.repo} estudio={null} estadoDoEstudio="conectando" {...propsDoAoVivo(criarCanalFalso().canais(EU))} origem={ORIGEM} reavaliar={reavaliar} copiar={null} />,
+    )
     await esperar()
     expect(screen.getByText(TEXTO_DA_ABA_AO_VIVO.naoCarregou)).toBeTruthy()
     expect(reavaliar).toHaveBeenCalledTimes(1)
@@ -509,5 +557,578 @@ describe('aba Ao vivo — dispositivos (Tarefa 8)', () => {
     const consultas = r.listarDispositivos.mock.calls.length
     await esperar(INTERVALO_DA_CONSULTA_MS * 2)
     expect(r.listarDispositivos.mock.calls.length).toBe(consultas)
+  })
+})
+
+/* ---------------------------------------------------------------------------------------------- */
+/* Parte 2 (PLA-004, Tarefa 9; D7, D12, D13): episódio (modo teste, iniciar, encerrar), checklist e comandos. */
+
+const EP_A = 'e0000000-0000-4000-8000-00000000000a'
+const EP_B = 'e0000000-0000-4000-8000-00000000000b'
+const EP_C = 'e0000000-0000-4000-8000-00000000000c'
+const EP_D = 'e0000000-0000-4000-8000-00000000000d'
+const CENA = 'c0000000-0000-4000-8000-00000000000a'
+const SOM = '50000000-0000-4000-8000-000000000001'
+
+const EPISODIOS: Episodio[] = [
+  { id: EP_A, titulo: 'Ensaio geral', data: '2026-11-27', estado: 'rascunho' },
+  { id: EP_B, titulo: '<b>Programa</b> de sexta', data: '2026-11-28', estado: 'rascunho' },
+  { id: EP_C, titulo: 'Programa antigo', data: '2026-11-20', estado: 'encerrado' },
+]
+const CENAS: Cena[] = [{ id: CENA, nomeExibicao: 'Geral', nomeObs: 'Cena Geral', ordem: 0 }]
+const SONS: Som[] = [{ id: SOM, midiaId: '60000000-0000-4000-8000-000000000001', rotulo: 'aplauso', emoji: '👏', volume: 1, ordem: 0 }]
+
+/**
+ * O banco do ao vivo em memória, com as regras das funções da D7: `iniciar_ao_vivo` (rascunho → ao vivo;
+ * outro ao vivo → `duplicado`; fora de rascunho → `estado_invalido`; limpa o teste), `encerrar_ao_vivo`
+ * (ao vivo → encerrado; limpa o teste) e `definir_modo_teste` (só rascunho; com ao vivo → `estado_invalido`).
+ * A Preparação lê os mesmos episódios.
+ */
+function bancoDeTeste(o: { episodios?: Episodio[]; teste?: string | null; dispositivos?: Dispositivo[] } = {}) {
+  let episodios = (o.episodios ?? EPISODIOS).map((e) => ({ ...e }))
+  let teste: string | null = o.teste ?? null
+  const ativo = (): { id: string; modo: 'ao_vivo' | 'teste' } | null => {
+    const noAr = episodios.find((e) => e.estado === 'ao_vivo')
+    if (noAr) return { id: noAr.id, modo: 'ao_vivo' }
+    return teste === null ? null : { id: teste, modo: 'teste' }
+  }
+  const estadoDe = (id: string) => episodios.find((e) => e.id === id)?.estado
+  const mudar = (id: string, estado: Episodio['estado']) => {
+    episodios = episodios.map((e) => (e.id === id ? { ...e, estado } : e))
+  }
+  const episodioAtivo = vi.fn(async () => ativo())
+  const definirModoTeste = vi.fn(async (id: string | null) => {
+    if (episodios.some((e) => e.estado === 'ao_vivo')) throw new ErroDoAoVivo('estado_invalido')
+    if (id !== null && estadoDe(id) !== 'rascunho') throw new ErroDoAoVivo('estado_invalido')
+    teste = id
+  })
+  const iniciar = vi.fn(async (id: string) => {
+    if (episodios.some((e) => e.estado === 'ao_vivo')) throw new ErroDoAoVivo('duplicado')
+    if (estadoDe(id) !== 'rascunho') throw new ErroDoAoVivo('estado_invalido')
+    mudar(id, 'ao_vivo')
+    teste = null
+  })
+  const encerrar = vi.fn(async (id: string) => {
+    if (estadoDe(id) !== 'ao_vivo') throw new ErroDoAoVivo('estado_invalido')
+    mudar(id, 'encerrado')
+    teste = null
+  })
+  const dispositivos = repoDeTeste(o.dispositivos ?? [])
+  const repo: RepositorioDoAoVivo = { ...dispositivos.repo, episodioAtivo, definirModoTeste, iniciar, encerrar }
+  const prep = criarFalsosDePreparacao({ episodios, cenas: CENAS, sons: SONS })
+  const listarEpisodios = vi.fn(async () => episodios.map((e) => ({ ...e })))
+  const preparacao: ServicosDePreparacao = { ...prep.servicos, episodios: { ...prep.servicos.episodios, listar: listarEpisodios } }
+  return {
+    repo,
+    preparacao,
+    episodioAtivo,
+    definirModoTeste,
+    iniciar,
+    encerrar,
+    listarEpisodios,
+    dispositivos,
+    /** Muda o banco por fora da aba (outro painel). */
+    alterar(id: string, estado: Episodio['estado']) {
+      mudar(id, estado)
+    },
+    definirTeste(id: string | null) {
+      teste = id
+    },
+  }
+}
+
+function montarEpisodio(o: { episodios?: Episodio[]; teste?: string | null; dispositivos?: Dispositivo[]; semCanal?: boolean } = {}) {
+  const b = bancoDeTeste(o)
+  const canal = criarCanalFalso()
+  const reavaliar = vi.fn()
+  const tela = render(
+    <AbaComEstudio
+      repo={b.repo}
+      {...propsDoAoVivo(canal.canais(EU), { preparacao: b.preparacao })}
+      semCanal={o.semCanal}
+      origem={ORIGEM}
+      reavaliar={reavaliar}
+      copiar={null}
+    />,
+  )
+  const avisos = () => canal.enviados('estudio').filter((e) => e.event === 'episodio_ativo_mudou').length
+  return { ...b, canal, reavaliar, tela, avisos }
+}
+
+const secao = (nome: string) => screen.getByRole('region', { name: nome })
+const seletor = () => within(secao('Episódio')).getByLabelText(TEXTO_DO_EPISODIO.escolha) as HTMLSelectElement
+const opcoes = () => Array.from(seletor().options, (op) => op.textContent)
+
+describe('aba Ao vivo — episódio (Tarefa 9; D7, D12)', () => {
+  test('modo-teste-so-rascunho', async () => {
+    const m = montarEpisodio({ episodios: [...EPISODIOS, { id: EP_D, titulo: 'No ar agora', data: '2026-11-26', estado: 'encerrado' }] })
+    await esperar()
+    // só rascunhos (o encerrado e qualquer outro estado ficam fora), mais recente primeiro, título como texto
+    expect(opcoes()).toEqual(['<b>Programa</b> de sexta · 28/11/2026', 'Ensaio geral · 27/11/2026'])
+    expect(secao('Episódio').querySelector('b')).toBeNull()
+    expect(screen.getByText(TEXTO_DO_EPISODIO.nenhum)).toBeTruthy()
+    expect(m.definirModoTeste).not.toHaveBeenCalled()
+    // sem rascunho nenhum: nada para escolher
+    cleanup()
+    montarEpisodio({ episodios: [EPISODIOS[2]] })
+    await esperar()
+    expect(within(secao('Episódio')).queryByLabelText(TEXTO_DO_EPISODIO.escolha)).toBeNull()
+    expect(screen.getByText(TEXTO_DO_EPISODIO.semRascunho)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Usar no modo teste' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Iniciar o ao vivo' })).toBeNull()
+  })
+
+  test('define-modo-teste-e-avisa', async () => {
+    const m = montarEpisodio()
+    await esperar()
+    // a função do banco demora: enquanto ela não responde, nenhum aviso sai e os botões ficam ocupados
+    let responder: () => void = () => {}
+    const original = m.definirModoTeste.getMockImplementation() as (id: string | null) => Promise<void>
+    m.definirModoTeste.mockImplementationOnce((id) => new Promise<void>((ok) => (responder = () => void original(id).then(ok))))
+    fireEvent.change(seletor(), { target: { value: EP_A } })
+    fireEvent.click(botao('Usar no modo teste'))
+    await esperar()
+    expect(m.definirModoTeste).toHaveBeenCalledWith(EP_A)
+    expect(m.avisos()).toBe(0)
+    expect(botao('Usar no modo teste').disabled).toBe(true)
+    responder()
+    await esperar()
+    // o aviso sai depois da função do banco, com o remetente
+    expect(m.canal.enviados('estudio').filter((e) => e.event === 'episodio_ativo_mudou')).toEqual([{ event: 'episodio_ativo_mudou', payload: { remetente: EU } }])
+    expect(screen.getByText(TEXTO_DO_EPISODIO.testeLigado)).toBeTruthy()
+    // o estado atual vem do `episodio_ativo()` consultado de novo
+    expect(within(secao('Episódio')).getByText('Ensaio geral')).toBeTruthy()
+    expect(within(secao('Episódio')).getByText(TEXTO_DO_EPISODIO.modoTeste)).toBeTruthy()
+    // com o canal fora: feito no banco, e a tela diz que o aviso não saiu
+    m.canal.definirEstado('estudio', 'reconectando')
+    await esperar()
+    fireEvent.change(seletor(), { target: { value: EP_B } })
+    fireEvent.click(botao('Usar no modo teste'))
+    await esperar()
+    expect(m.definirModoTeste).toHaveBeenLastCalledWith(EP_B)
+    expect(screen.getByText(TEXTO_DO_EPISODIO.semAviso)).toBeTruthy()
+    expect(m.avisos()).toBe(1)
+  })
+
+  test('sair-do-modo-teste', async () => {
+    const m = montarEpisodio({ teste: EP_A })
+    await esperar()
+    expect(within(secao('Episódio')).getByText('Ensaio geral')).toBeTruthy()
+    // o seletor começa no episódio em teste
+    expect(seletor().value).toBe(EP_A)
+    fireEvent.click(botao('Sair do modo teste'))
+    await esperar()
+    expect(m.definirModoTeste).toHaveBeenCalledWith(null)
+    expect(m.avisos()).toBe(1)
+    expect(screen.getByText(TEXTO_DO_EPISODIO.testeDesligado)).toBeTruthy()
+    expect(screen.getByText(TEXTO_DO_EPISODIO.nenhum)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Sair do modo teste' })).toBeNull()
+  })
+
+  test('iniciar-confirma', async () => {
+    const m = montarEpisodio({ teste: EP_A })
+    await esperar()
+    fireEvent.change(seletor(), { target: { value: EP_B } })
+    fireEvent.click(botao('Iniciar o ao vivo'))
+    // sem confirmar, nada: a confirmação cita o título (como texto)
+    expect(m.iniciar).not.toHaveBeenCalled()
+    expect(screen.getByText('Iniciar o ao vivo de “<b>Programa</b> de sexta”?')).toBeTruthy()
+    fireEvent.click(botao('Cancelar'))
+    await esperar()
+    expect(m.iniciar).not.toHaveBeenCalled()
+    expect(m.avisos()).toBe(0)
+    expect(screen.queryByRole('button', { name: 'Confirmar início' })).toBeNull()
+    // confirmado → iniciar(id) e depois o aviso
+    fireEvent.click(botao('Iniciar o ao vivo'))
+    fireEvent.click(botao('Confirmar início'))
+    await esperar()
+    expect(m.iniciar).toHaveBeenCalledTimes(1)
+    expect(m.iniciar).toHaveBeenCalledWith(EP_B)
+    expect(m.avisos()).toBe(1)
+    expect(screen.getByText(TEXTO_DO_EPISODIO.iniciado)).toBeTruthy()
+    const estado = within(secao('Episódio')).getByText(TEXTO_DO_EPISODIO.aoVivo)
+    expect(estado.closest('.episodio-no-ar')).toBeTruthy()
+    expect(within(secao('Episódio')).getByText('<b>Programa</b> de sexta')).toBeTruthy()
+    expect(secao('Episódio').querySelector('b')).toBeNull()
+    // com o ao vivo no ar: só "Encerrar"; nem modo teste nem outro início
+    expect(screen.queryByRole('button', { name: 'Iniciar o ao vivo' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Usar no modo teste' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Sair do modo teste' })).toBeNull()
+    expect(botao('Encerrar o ao vivo')).toBeTruthy()
+  })
+
+  test('iniciar-com-outro-ao-vivo', async () => {
+    // outro painel iniciou um ao vivo e o aviso ainda não chegou aqui: o banco recusa (`duplicado`)
+    const m = montarEpisodio()
+    await esperar()
+    m.alterar(EP_A, 'ao_vivo')
+    fireEvent.change(seletor(), { target: { value: EP_B } })
+    fireEvent.click(botao('Iniciar o ao vivo'))
+    fireEvent.click(botao('Confirmar início'))
+    await esperar()
+    expect(m.iniciar).toHaveBeenCalledWith(EP_B)
+    expect(screen.getByText('Já existe um episódio ao vivo.')).toBeTruthy()
+    expect(m.avisos()).toBe(0)
+    // a tela se acerta: consulta de novo e mostra o que está no ar
+    expect(within(secao('Episódio')).getByText('Ensaio geral')).toBeTruthy()
+    expect(within(secao('Episódio')).getByText(TEXTO_DO_EPISODIO.aoVivo)).toBeTruthy()
+    expect(m.reavaliar).not.toHaveBeenCalled()
+    // os comandos (do ao vivo de A, que a consulta trouxe) voltam habilitados depois da falha
+    expect((within(secao('Comandos')).getByRole('button', { name: '✂️ CLIPE' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  test('encerrar-confirma', async () => {
+    const m = montarEpisodio({ episodios: [{ ...EPISODIOS[0], estado: 'ao_vivo' }, EPISODIOS[1]] })
+    await esperar()
+    fireEvent.click(botao('Encerrar o ao vivo'))
+    expect(m.encerrar).not.toHaveBeenCalled()
+    expect(screen.getByText('Encerrar o ao vivo de “Ensaio geral”?')).toBeTruthy()
+    fireEvent.click(botao('Cancelar'))
+    await esperar()
+    expect(m.encerrar).not.toHaveBeenCalled()
+    fireEvent.click(botao('Encerrar o ao vivo'))
+    fireEvent.click(botao('Confirmar encerramento'))
+    await esperar()
+    expect(m.encerrar).toHaveBeenCalledWith(EP_A)
+    expect(m.avisos()).toBe(1)
+    expect(screen.getByText(TEXTO_DO_EPISODIO.encerrado)).toBeTruthy()
+    expect(screen.getByText(TEXTO_DO_EPISODIO.nenhum)).toBeTruthy()
+    // o encerrado sai do seletor (só rascunhos)
+    expect(opcoes()).toEqual(['<b>Programa</b> de sexta · 28/11/2026'])
+  })
+
+  test('estado-invalido-recarrega', async () => {
+    // outro painel encerrou o episódio em teste... e o iniciou: a aba ainda mostra o rascunho
+    const m = montarEpisodio({ teste: EP_A })
+    await esperar()
+    const leituras = m.listarEpisodios.mock.calls.length
+    const consultas = m.episodioAtivo.mock.calls.length
+    m.alterar(EP_A, 'encerrado')
+    m.definirTeste(null)
+    fireEvent.change(seletor(), { target: { value: EP_A } })
+    fireEvent.click(botao('Iniciar o ao vivo'))
+    fireEvent.click(botao('Confirmar início'))
+    await esperar()
+    expect(screen.getByText('O episódio mudou de estado; a lista foi recarregada.')).toBeTruthy()
+    expect(m.listarEpisodios.mock.calls.length).toBeGreaterThan(leituras)
+    expect(m.episodioAtivo.mock.calls.length).toBeGreaterThan(consultas)
+    expect(opcoes()).toEqual(['<b>Programa</b> de sexta · 28/11/2026'])
+    expect(screen.getByText(TEXTO_DO_EPISODIO.nenhum)).toBeTruthy()
+    expect(m.avisos()).toBe(0)
+  })
+
+  test('acao-negada-reavalia', async () => {
+    const m = montarEpisodio()
+    await esperar()
+    m.definirModoTeste.mockRejectedValueOnce(new ErroDoAoVivo('negado'))
+    fireEvent.change(seletor(), { target: { value: EP_A } })
+    fireEvent.click(botao('Usar no modo teste'))
+    await esperar()
+    expect(m.reavaliar).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(TEXTO_DO_EPISODIO.mudou)).toBeTruthy()
+    expect(m.avisos()).toBe(0)
+    // sessão vencida: só reavaliar, sem frase; erro de rede: frase fixa, sem reavaliar
+    m.iniciar.mockRejectedValueOnce(new ErroDoAoVivo('sessao_expirada'))
+    fireEvent.click(botao('Iniciar o ao vivo'))
+    fireEvent.click(botao('Confirmar início'))
+    await esperar()
+    expect(m.reavaliar).toHaveBeenCalledTimes(2)
+    m.iniciar.mockRejectedValueOnce(new ErroDoAoVivo('rede'))
+    fireEvent.click(botao('Iniciar o ao vivo'))
+    fireEvent.click(botao('Confirmar início'))
+    await esperar()
+    expect(m.reavaliar).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(TEXTO_DO_EPISODIO.naoConcluiu)).toBeTruthy()
+    expect(m.avisos()).toBe(0)
+  })
+
+  test('aviso-de-outro-painel-recarrega', async () => {
+    // `episodio_ativo_mudou` de outro painel: o `useAoVivo` consulta de novo e a lista de episódios acompanha
+    const m = montarEpisodio()
+    await esperar()
+    m.alterar(EP_B, 'ao_vivo')
+    act(() => m.canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: 'a1b2c3d4-0000-4000-8000-000000000002' }))
+    await esperar()
+    expect(within(secao('Episódio')).getByText(TEXTO_DO_EPISODIO.aoVivo)).toBeTruthy()
+    expect(within(secao('Episódio')).getByText('<b>Programa</b> de sexta')).toBeTruthy()
+    expect(botao('Encerrar o ao vivo')).toBeTruthy()
+  })
+
+  test('confirmacao-some-se-o-ativo-muda', async () => {
+    // a confirmação de "Encerrar" de A fica aberta; outro painel encerra A e inicia B: a confirmação some
+    // (confirmar encerraria A, que já não está no ar)
+    const m = montarEpisodio({ episodios: [{ ...EPISODIOS[0], estado: 'ao_vivo' }, EPISODIOS[1]] })
+    await esperar()
+    fireEvent.click(botao('Encerrar o ao vivo'))
+    expect(screen.getByText('Encerrar o ao vivo de “Ensaio geral”?')).toBeTruthy()
+    m.alterar(EP_A, 'encerrado')
+    m.alterar(EP_B, 'ao_vivo')
+    act(() => m.canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: 'a1b2c3d4-0000-4000-8000-000000000002' }))
+    await esperar()
+    expect(within(secao('Episódio')).getByText('<b>Programa</b> de sexta')).toBeTruthy()
+    expect(screen.queryByText('Encerrar o ao vivo de “Ensaio geral”?')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Confirmar encerramento' })).toBeNull()
+    expect(m.encerrar).not.toHaveBeenCalled()
+  })
+
+  test('dispositivo-mudou-recarrega', async () => {
+    // VER-042 (Riscos): `dispositivo_mudou` de outro painel recarrega a lista de dispositivos
+    const m = montarEpisodio({ dispositivos: [CAMERA_PAREADA] })
+    await esperar()
+    expect(within(screen.getAllByRole('row')[1]).getByRole('button', { name: 'Revogar' })).toBeTruthy()
+    const antes = m.dispositivos.listarDispositivos.mock.calls.length
+    m.dispositivos.alterar(CAMERA, { revogadoEm: new Date().toISOString() })
+    act(() => m.canal.entregar('estudio', 'dispositivo_mudou', { dispositivoId: CAMERA, remetente: 'a1b2c3d4-0000-4000-8000-000000000002' }))
+    await esperar()
+    expect(m.dispositivos.listarDispositivos.mock.calls.length).toBe(antes + 1)
+    expect(within(screen.getAllByRole('row')[1]).getAllByRole('cell')[2].textContent).toBe('Revogado')
+    // a revogação feita nesta aba não volta a ela pelo canal (o eco local não chega a quem enviou): uma leitura só, a do fim da revogação
+    cleanup()
+    const n = montarEpisodio({ dispositivos: [CAMERA_PAREADA] })
+    await esperar()
+    const antesDeRevogar = n.dispositivos.listarDispositivos.mock.calls.length
+    fireEvent.click(within(screen.getAllByRole('row')[1]).getByRole('button', { name: 'Revogar' }))
+    fireEvent.click(within(screen.getAllByRole('row')[1]).getByRole('button', { name: 'Confirmar revogação' }))
+    await esperar()
+    expect(n.dispositivos.listarDispositivos.mock.calls.length).toBe(antesDeRevogar + 1)
+  })
+})
+
+/** Situação do OBS na presença do palco (D13, D14), tudo certo; cada caso muda um campo. */
+const OBS_OK: SituacaoDoObs = { navegador: true, versaoDoPlugin: '2.24.0', nivel: 4, websocket: 'conectado', versaoObs: '31.0.1', replayBuffer: true, gravando: true }
+
+describe('aba Ao vivo — checklist (Tarefa 9; D13)', () => {
+  const automaticos = () => within(screen.getByRole('list', { name: TEXTO_DO_CHECKLIST.automatico })).getAllByRole('listitem')
+  const textoDe = (li: HTMLElement) => li.querySelector('.checklist__texto')?.textContent
+  const textos = () => automaticos().map(textoDe)
+  const situacoes = () => automaticos().map((li) => li.getAttribute('data-situacao'))
+  const item = (texto: string) => automaticos().find((li) => textoDe(li) === texto)
+  const comPalco = async (m: ReturnType<typeof montarEpisodio>, obs: SituacaoDoObs | null, camera = true) => {
+    const presenca: Record<string, unknown[]> = { [SESSAO_PALCO]: [{ tipo: 'obs_palco', dispositivoId: PALCO, obs }] }
+    if (camera) presenca[SESSAO_ANTIGA] = [{ tipo: 'camera', dispositivoId: CAMERA, obs: null }]
+    act(() => m.canal.sincronizarPresenca('estudio', presenca))
+    await esperar()
+  }
+
+  test('checklist-itens', async () => {
+    const m = montarEpisodio({ dispositivos: [CAMERA_PAREADA, PALCO_PAREADO] })
+    await esperar()
+    // a lista fixa do DES-001 §10.4
+    const fixa = within(screen.getByRole('list', { name: TEXTO_DO_CHECKLIST.fixo })).getAllByRole('listitem')
+    expect(fixa.map((li) => li.textContent)).toEqual([...TEXTO_DO_CHECKLIST.itensFixos])
+    // palco ausente
+    expect(textos()).toContain('Palco não conectado')
+    expect(item('Palco não conectado')?.getAttribute('data-situacao')).toBe('pendente')
+    expect(textos()).toContain(TEXTO_DO_CHECKLIST.obsDesconhecido)
+    // OBS sem navegador (palco aberto fora do OBS)
+    await comPalco(m, { ...OBS_OK, navegador: false, versaoDoPlugin: null, nivel: null })
+    expect(textos()).toContain('Palco conectado')
+    expect(textos()).toContain('OBS não detectado')
+    // nível 3 (BASIC) não basta: Avançado é 4
+    await comPalco(m, { ...OBS_OK, nivel: 3 })
+    expect(textos()).toContain('Dê acesso Avançado à Fonte do palco')
+    expect(item('Dê acesso Avançado à Fonte do palco')?.getAttribute('data-situacao')).toBe('pendente')
+    // websocket com senha errada: a versão fica desconhecida, com a do plugin como indicação
+    await comPalco(m, { ...OBS_OK, websocket: 'senha_errada', versaoObs: null })
+    expect(textos()).toContain(TEXTO_DO_CHECKLIST.websocket.senha_errada)
+    expect(textos()).toContain('Versão do OBS desconhecida (plugin do navegador 2.24.0)')
+    // versão 30.1
+    await comPalco(m, { ...OBS_OK, versaoObs: '30.1.2' })
+    expect(textos()).toContain('OBS abaixo de 30.2')
+    // Replay Buffer parado
+    await comPalco(m, { ...OBS_OK, replayBuffer: false })
+    expect(textos()).toContain('Replay Buffer parado')
+    expect(item('Replay Buffer parado')?.getAttribute('data-situacao')).toBe('pendente')
+    // tudo certo → todos marcados
+    await comPalco(m, OBS_OK)
+    expect(textos()).toEqual([
+      'Palco conectado',
+      'OBS detectado',
+      'Nível de controle Avançado ou mais',
+      'obs-websocket conectado',
+      'OBS 31.0.1',
+      'Replay Buffer ativo',
+      'Gravação em andamento',
+      'Câmera conectada',
+    ])
+    expect(situacoes().every((s) => s === 'pronto')).toBe(true)
+    // o leitor de tela ouve a situação (o sinal é só visual)
+    expect(automaticos()[0].textContent).toBe('✓Palco conectado (pronto)')
+    expect(automaticos()[0].querySelector('.checklist__sinal')?.getAttribute('aria-hidden')).toBe('true')
+    // câmera fora: só informativo (a câmera é da E4)
+    await comPalco(m, OBS_OK, false)
+    expect(item(TEXTO_DO_CHECKLIST.cameraAusente)?.getAttribute('data-situacao')).toBe('info')
+    // palco de outra sessão (a antiga, antes do corte) não conta
+    act(() => m.canal.sincronizarPresenca('estudio', { [SESSAO_NOVA]: [{ tipo: 'obs_palco', dispositivoId: PALCO, obs: OBS_OK }] }))
+    await esperar()
+    expect(textos()).toContain('Palco não conectado')
+  })
+})
+
+describe('aba Ao vivo — comandos (Tarefa 9)', () => {
+  test('comandos-no-painel', async () => {
+    const m = montarEpisodio()
+    await esperar()
+    expect(screen.queryByRole('button', { name: '✂️ CLIPE' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Comandos' })).toBeNull()
+    fireEvent.change(seletor(), { target: { value: EP_A } })
+    fireEvent.click(botao('Usar no modo teste'))
+    await esperar()
+    const comandos = secao('Comandos')
+    expect(within(comandos).getByRole('button', { name: '✂️ CLIPE' })).toBeTruthy()
+    expect(within(comandos).getByRole('button', { name: '👏 aplauso' })).toBeTruthy()
+    fireEvent.click(within(comandos).getByRole('button', { name: '👏 aplauso' }))
+    await esperar()
+    expect(m.canal.enviados(`episodio:${EP_A}:controle`).map((e) => (e.payload as { acao: string }).acao)).toEqual(['som'])
+    // sem episódio, os comandos somem
+    fireEvent.click(botao('Sair do modo teste'))
+    await esperar()
+    expect(screen.queryByRole('region', { name: 'Comandos' })).toBeNull()
+  })
+
+  test('comandos-bloqueados-durante-a-acao', async () => {
+    // rodada 1, I1: do clique em "Confirmar início" até a nova consulta terminar, os comandos ficam desabilitados
+    // (um toque nessa janela iria ao `:controle` de A); na falha, voltam
+    const m = montarEpisodio({ teste: EP_A })
+    await esperar()
+    const clipe = () => within(secao('Comandos')).getByRole('button', { name: '✂️ CLIPE' }) as HTMLButtonElement
+    const clipes = (ep: string) => m.canal.enviados(`episodio:${ep}:controle`).filter((e) => (e.payload as { acao?: string }).acao === 'clipe').length
+    expect(clipe().disabled).toBe(false)
+    // a função do banco e a consulta seguinte demoram
+    let responderInicio: () => void = () => {}
+    const iniciarDeVerdade = m.iniciar.getMockImplementation() as (id: string) => Promise<void>
+    m.iniciar.mockImplementationOnce((id) => new Promise<void>((ok) => (responderInicio = () => void iniciarDeVerdade(id).then(ok))))
+    let responderConsulta: () => void = () => {}
+    const consultarDeVerdade = m.episodioAtivo.getMockImplementation() as () => Promise<{ id: string; modo: 'ao_vivo' | 'teste' } | null>
+    m.episodioAtivo.mockImplementationOnce(() => new Promise((ok) => (responderConsulta = () => void consultarDeVerdade().then(ok))))
+    fireEvent.change(seletor(), { target: { value: EP_B } })
+    fireEvent.click(botao('Iniciar o ao vivo'))
+    fireEvent.click(botao('Confirmar início'))
+    await esperar()
+    expect(clipe().disabled).toBe(true)
+    fireEvent.click(clipe())
+    responderInicio()
+    await esperar()
+    // o banco já aceitou, o aviso saiu, a consulta ainda não voltou: o painel ainda mostra A, desabilitado
+    expect(m.iniciar).toHaveBeenCalledWith(EP_B)
+    expect(m.avisos()).toBe(1)
+    expect(within(secao('Comandos')).getByText('Ensaio geral')).toBeTruthy()
+    expect(clipe().disabled).toBe(true)
+    fireEvent.click(clipe())
+    await esperar()
+    expect(clipes(EP_A)).toBe(0)
+    responderConsulta()
+    await esperar()
+    // depois da consulta: o `:controle` de B conectado, o CLIPE vai para B
+    expect(clipe().disabled).toBe(false)
+    fireEvent.click(clipe())
+    await esperar()
+    expect(clipes(EP_B)).toBe(1)
+    expect(clipes(EP_A)).toBe(0)
+    // na falha, os comandos voltam
+    m.encerrar.mockRejectedValueOnce(new ErroDoAoVivo('rede'))
+    fireEvent.click(botao('Encerrar o ao vivo'))
+    fireEvent.click(botao('Confirmar encerramento'))
+    await esperar()
+    expect(screen.getByText(TEXTO_DO_EPISODIO.naoConcluiu)).toBeTruthy()
+    expect(clipe().disabled).toBe(false)
+  })
+
+  test('comandos-desabilitados-com-consulta-falha', async () => {
+    // rodada 2: a ação vale no banco, mas a consulta seguinte falha; a tela ainda mostra A, então os comandos
+    // ficam desabilitados com a frase de falha até a próxima consulta dar certo (5 s depois)
+    const m = montarEpisodio({ teste: EP_A })
+    await esperar()
+    const clipe = () => within(secao('Comandos')).getByRole('button', { name: '✂️ CLIPE' }) as HTMLButtonElement
+    const clipes = (ep: string) => m.canal.enviados(`episodio:${ep}:controle`).filter((e) => (e.payload as { acao?: string }).acao === 'clipe').length
+    m.episodioAtivo.mockRejectedValueOnce(new ErroDoAoVivo('rede'))
+    fireEvent.change(seletor(), { target: { value: EP_B } })
+    fireEvent.click(botao('Iniciar o ao vivo'))
+    fireEvent.click(botao('Confirmar início'))
+    await esperar()
+    expect(m.iniciar).toHaveBeenCalledWith(EP_B)
+    expect(screen.getByText(TEXTO_DO_EPISODIO.falhaAoCarregar)).toBeTruthy()
+    expect(within(secao('Comandos')).getByText('Ensaio geral')).toBeTruthy()
+    expect(clipe().disabled).toBe(true)
+    fireEvent.click(clipe())
+    await esperar()
+    expect(clipes(EP_A)).toBe(0)
+    // a próxima consulta dá certo: B na tela, o CLIPE vai para B
+    await esperar(REABRIR_CANAIS_MS)
+    await esperar()
+    expect(screen.queryByText(TEXTO_DO_EPISODIO.falhaAoCarregar)).toBeNull()
+    expect(clipe().disabled).toBe(false)
+    fireEvent.click(clipe())
+    await esperar()
+    expect(clipes(EP_B)).toBe(1)
+    expect(clipes(EP_A)).toBe(0)
+  })
+
+  test('comandos-com-titulos-h3-na-aba', async () => {
+    // rodada 1, N1: dentro do `h2` "Comandos", os grupos (Avisos, Sons, Cenas) são `h3`
+    const m = montarEpisodio({ teste: EP_A })
+    await esperar()
+    const comandos = secao('Comandos')
+    expect(within(comandos).getByRole('heading', { level: 2 }).textContent).toBe('Comandos')
+    expect(within(comandos).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Avisos', 'Sons', 'Cenas'])
+    void m
+  })
+
+  test('comando-vai-ao-episodio-novo', async () => {
+    // o painel inteiro com o adaptador real sobre o Realtime falso: modo teste em A, aba Ao vivo aberta;
+    // "Iniciar o ao vivo" de B → o `useAoVivo` da mesma aba consulta de novo e o CLIPE vai para B, nunca para A
+    const b = bancoDeTeste({ teste: EP_A })
+    const canal = criarCanalFalso()
+    const aoVivo: ServicosDeAoVivo = { repo: b.repo, canais: canal.canais }
+    const f = criarFalsos({
+      usuario: usuarioGoogle('equipe@revocast.test', EU),
+      papel: 'equipe',
+      permitidos: [{ email: 'equipe@revocast.test', papel: 'equipe', criadoPor: null }],
+    })
+    render(<App caminho="/painel" dependencias={f.dependencias({ obterAoVivo: () => aoVivo, obterPreparacao: () => b.preparacao, origem: ORIGEM })} />)
+    await esperar()
+    fireEvent.click(screen.getByRole('tab', { name: 'Ao vivo' }))
+    await esperar()
+    expect(within(secao('Episódio')).getByText('Ensaio geral')).toBeTruthy()
+    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP_A}:controle`])
+    fireEvent.change(seletor(), { target: { value: EP_B } })
+    fireEvent.click(botao('Iniciar o ao vivo'))
+    fireEvent.click(botao('Confirmar início'))
+    await esperar()
+    expect(b.iniciar).toHaveBeenCalledWith(EP_B)
+    expect(canal.abertos()).toEqual(['estudio', `episodio:${EP_B}:controle`])
+    fireEvent.click(within(secao('Comandos')).getByRole('button', { name: '✂️ CLIPE' }))
+    await esperar()
+    const clipes = (topico: string) => canal.enviados(topico).filter((e) => (e.payload as { acao?: string }).acao === 'clipe').length
+    expect(clipes(`episodio:${EP_B}:controle`)).toBe(1)
+    expect(clipes(`episodio:${EP_A}:controle`)).toBe(0)
+    // um canal `estudio` só no cliente (o do painel)
+    expect(canal.realtime.contar('channel', 'estudio')).toBe(1)
+  })
+
+  test('comando-vai-ao-episodio-novo-sem-canal', async () => {
+    // o mesmo com o `estudio` fora (o aviso não sai): a aba consulta de novo por conta própria
+    const b = bancoDeTeste({ teste: EP_A })
+    const canal = criarCanalFalso()
+    const aoVivo: ServicosDeAoVivo = { repo: b.repo, canais: canal.canais }
+    const f = criarFalsos({
+      usuario: usuarioGoogle('equipe@revocast.test', EU),
+      papel: 'equipe',
+      permitidos: [{ email: 'equipe@revocast.test', papel: 'equipe', criadoPor: null }],
+    })
+    render(<App caminho="/painel" dependencias={f.dependencias({ obterAoVivo: () => aoVivo, obterPreparacao: () => b.preparacao, origem: ORIGEM })} />)
+    await esperar()
+    fireEvent.click(screen.getByRole('tab', { name: 'Ao vivo' }))
+    await esperar()
+    canal.definirEstado('estudio', 'reconectando')
+    await esperar()
+    fireEvent.change(seletor(), { target: { value: EP_B } })
+    fireEvent.click(botao('Iniciar o ao vivo'))
+    fireEvent.click(botao('Confirmar início'))
+    await esperar()
+    expect(screen.getByText(TEXTO_DO_EPISODIO.semAviso)).toBeTruthy()
+    expect(canal.abertos()).toContain(`episodio:${EP_B}:controle`)
+    expect(canal.abertos()).not.toContain(`episodio:${EP_A}:controle`)
+    expect(within(secao('Episódio')).getByText('<b>Programa</b> de sexta')).toBeTruthy()
   })
 })

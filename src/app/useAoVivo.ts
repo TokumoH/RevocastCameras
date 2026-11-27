@@ -9,7 +9,7 @@ import { ErroDePreparacao } from '../domains/preparacao/portas'
 import type { ServicosDePreparacao } from '../domains/preparacao/portas'
 import type { Dependencias } from './dependencias'
 import { REABRIR_CANAIS_MS } from './useDispositivo'
-import { useCanalReaberto, useEstudio } from './useEstudio'
+import { useCanalReaberto, useEstudio, useUmaReavaliacaoPorPerda } from './useEstudio'
 
 /** Numa sequência de leituras negadas (ou com sessão vencida) seguidas, no máximo 3 `reavaliar()`; depois só a frase de falha e as novas tentativas. */
 export const REAVALIACOES_DA_LEITURA = 3
@@ -42,8 +42,16 @@ export interface AoVivo {
   estudio: CanalDoEstudio | null
   /** O pedido desta tela que gerou o `ultimo` do estado no ar, se foi daqui. */
   pedidoDoUltimo: PedidoDeComando | null
-  /** Envia com `id` de `crypto.randomUUID()`; nada é reenviado sozinho (D15). */
+  /**
+   * Os comandos podem sair: canal `conectado` **e** a última consulta do episódio ativo deu certo. Depois de
+   * uma falha, o episódio na tela pode ser o anterior (outro painel trocou e a consulta caiu), e um toque iria
+   * ao `:controle` errado (Tarefa 9, rodada 2). A regra é a mesma no `/controle` e na aba Ao vivo.
+   */
+  podeComandar: boolean
+  /** Envia com `id` de `crypto.randomUUID()`; nada é reenviado sozinho (D15); sem `podeComandar`, `falhou`. */
   enviar(c: PedidoDeComando): Promise<RespostaDoEnvio>
+  /** Consulta o episódio ativo de novo agora (a aba Ao vivo, depois de mudar o episódio; Tarefa 9). */
+  recarregar(): Promise<void>
 }
 
 /** Sem episódio: listas vazias (nunca alteradas; cada carga troca o objeto inteiro). */
@@ -82,12 +90,15 @@ interface Carga {
  *   `useCanalReaberto` (presença marcada: o palco republica o estado); trocar de episódio fecha o tópico
  *   antigo e abre o novo; `fechado`/`negado` em qualquer um → um `reavaliar()` só (os dois juntos, numa
  *   renovação de token, contam uma vez) e reabertura em 5 s se a tela continuar montada;
- * - `revogacao` do próprio `usuario.id` → `reavaliar()` (D5); de outro, nada;
+ * - `revogacao` do próprio `usuario.id` → `reavaliar()` (D5); de outro, nada. Com o `estudio` de fora, quem
+ *   ouve a revogação é quem o abriu (o painel, Tarefa 9, rodada 1): o hook não ouve, para sair um `reavaliar()` só;
  * - `enviar`: duas respostas `sem_resposta` seguidas com o canal `conectado` → `reavaliar()` (um envio sem
  *   permissão volta como `timed out`, igual a rede ruim, N3); um `ok`, a troca de episódio e a volta do
  *   canal a `conectado` depois de uma queda zeram a contagem (a contagem é de respostas seguidas no mesmo
  *   canal e no mesmo episódio);
- * - trocar de episódio limpa o estado no ar (o do episódio anterior não volta a aparecer).
+ * - trocar de episódio limpa o estado no ar (o do episódio anterior não volta a aparecer);
+ * - `recarregar()`: quem mudou o episódio nesta tela (a aba Ao vivo, Tarefa 9) consulta na hora, sem
+ *   depender do aviso em `estudio` (que não volta à alça que o enviou, nem sai com o canal fora).
  */
 export function useAoVivo(d: {
   repo: RepositorioDoAoVivo
@@ -99,6 +110,12 @@ export function useAoVivo(d: {
   aoVoltarAVer: Dependencias['aoVoltarAVer']
   /** O `estudio` de quem já o abriu (o `useEstudio` do painel); sem ele, o hook abre o próprio. */
   estudio?: { estudio: CanalDoEstudio | null; estado: EstadoDoCanal }
+  /**
+   * A janela de perda de quem abriu o `estudio` (`useUmaReavaliacaoPorPerda` do painel): a perda do
+   * `:controle` deste hook e a do `estudio` de fora contam juntas, um `reavaliar()` só. Sem ela, o hook
+   * usa uma janela própria.
+   */
+  aoPerderCanal?: () => void
 }): AoVivo {
   const { repo, preparacao, canais, papel, aoVoltarAVer } = d
   const usuarioId = d.usuario.id
@@ -114,22 +131,11 @@ export function useAoVivo(d: {
 
   const semRespostaSeguidas = useRef(0)
 
-  // --- perda de canal: um reavaliar() por janela de 5 s, para `estudio` e `:controle` caírem juntos ---
-  const bloqueioDaPerda = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const perdeuCanal = useCallback(() => {
-    if (bloqueioDaPerda.current !== null) return
-    reavaliar.current()
-    bloqueioDaPerda.current = setTimeout(() => {
-      bloqueioDaPerda.current = null
-    }, REABRIR_CANAIS_MS)
-  }, [])
-  useEffect(
-    () => () => {
-      if (bloqueioDaPerda.current !== null) clearTimeout(bloqueioDaPerda.current)
-      bloqueioDaPerda.current = null
-    },
-    [],
-  )
+  // --- perda de canal: um reavaliar() por janela de 5 s, para `estudio` e `:controle` caírem juntos;
+  // com `aoPerderCanal` (o painel), a janela é a de quem abriu o `estudio`, dividida com ele ---
+  const janelaPropria = useUmaReavaliacaoPorPerda(d.reavaliar)
+  const deFora = d.aoPerderCanal
+  const perdeuCanal = useCallback(() => (deFora ?? janelaPropria)(), [deFora, janelaPropria])
 
   // --- consulta do episódio ativo ---
   const vivo = useRef(false)
@@ -192,15 +198,16 @@ export function useAoVivo(d: {
   }, [consultar, aoVoltarAVer])
 
   // --- estudio ---
-  const deFora = d.estudio
-  const proprio = useEstudio({ canais: deFora === undefined ? canais : null, papel, reavaliar: perdeuCanal })
-  const { estudio, estado: estadoDoEstudio } = deFora ?? proprio
+  const estudioDeFora = d.estudio
+  const proprio = useEstudio({ canais: estudioDeFora === undefined ? canais : null, papel, reavaliar: perdeuCanal })
+  const { estudio, estado: estadoDoEstudio } = estudioDeFora ?? proprio
 
+  const ouveRevogacao = estudioDeFora === undefined
   useEffect(() => {
     if (estudio === null) return
     const soltarMensagens = estudio.aoReceber((m) => {
       if (m.evento === 'episodio_ativo_mudou') void consultar()
-      else if (m.evento === 'revogacao' && m.usuario === usuarioId) reavaliar.current()
+      else if (ouveRevogacao && m.evento === 'revogacao' && m.usuario === usuarioId) reavaliar.current()
     })
     const soltarPresenca = estudio.aoMudarPresenca((presentes) => {
       setPresenca({ alca: estudio, palco: presentes.some((p) => p.presenca.tipo === 'obs_palco') })
@@ -209,7 +216,7 @@ export function useAoVivo(d: {
       soltarMensagens()
       soltarPresenca()
     }
-  }, [estudio, usuarioId, consultar])
+  }, [estudio, usuarioId, consultar, ouveRevogacao])
 
   // Cada volta do `estudio` a `conectado` (depois da primeira) consulta de novo (D15).
   const jaConectou = useRef(false)
@@ -239,9 +246,10 @@ export function useAoVivo(d: {
 
   // --- envio ---
   const canal = episodioId === null ? estadoDoEstudio : pior(estadoDoEstudio, estadoDoControle)
-  const vistaDoEnvio = useRef<{ controle: CanalDoControle | null; canal: EstadoDoCanal }>({ controle: null, canal: 'conectando' })
+  const podeComandar = canal === 'conectado' && !carga.falhou
+  const vistaDoEnvio = useRef<{ controle: CanalDoControle | null; podeComandar: boolean }>({ controle: null, podeComandar: false })
   useEffect(() => {
-    vistaDoEnvio.current = { controle, canal }
+    vistaDoEnvio.current = { controle, podeComandar }
   })
 
   // A volta do canal a `conectado` depois de uma queda zera a contagem (`canal` só é `conectado` com tudo conectado).
@@ -251,8 +259,8 @@ export function useAoVivo(d: {
   }, [canal])
 
   const enviar = useCallback(async (pedido: PedidoDeComando): Promise<RespostaDoEnvio> => {
-    const { controle: alca, canal: estadoAoEnviar } = vistaDoEnvio.current
-    if (alca === null || estadoAoEnviar !== 'conectado') return 'falhou'
+    const { controle: alca, podeComandar: pode } = vistaDoEnvio.current
+    if (alca === null || !pode) return 'falhou'
     const comando: Comando = { ...pedido, id: crypto.randomUUID() }
     setPedidos((antes) => {
       const depois = new Map(antes)
@@ -280,10 +288,12 @@ export function useAoVivo(d: {
     episodio: carga.episodio,
     estadoNoAr: estadoDoEpisodio,
     canal,
+    podeComandar,
     palcoPresente: presenca.alca !== null && presenca.alca === estudio && presenca.palco,
     listas: carga.listas,
     estudio,
     pedidoDoUltimo: ultimoId === undefined ? null : (pedidos.get(ultimoId) ?? null),
     enviar,
+    recarregar: consultar,
   }
 }

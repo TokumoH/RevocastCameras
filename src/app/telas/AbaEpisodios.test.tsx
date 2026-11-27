@@ -19,7 +19,7 @@ const IMAGEM_INEXISTENTE = 'Essa imagem não está mais na Biblioteca.'
 const AO_VIVO_DUPLICADO = 'Já existe um episódio ao vivo.'
 const MUDOU = 'Os episódios ou o seu papel mudaram; conferindo de novo.'
 const NAO_CONCLUIU = 'Não foi possível concluir. Tente de novo.'
-const NOTA_E3 = 'Iniciar e encerrar o ao vivo chegam na etapa E3.'
+const NOTA_DO_AO_VIVO = 'Iniciar e encerrar o ao vivo ficam na aba Ao vivo.'
 const SO_RASCUNHO = 'Só rascunhos podem ser excluídos.'
 const CRIADO = 'Episódio criado.'
 const SALVO = 'Episódio salvo.'
@@ -222,10 +222,20 @@ describe('aba Episódios', () => {
     expect(document.activeElement).toBe(status())
   })
 
+  test('episodios-nota-aponta-ao-vivo', async () => {
+    // D12: iniciar e encerrar ficam na aba Ao vivo; a nota diz onde, e a aba Episódios não tem botão para isso
+    abrir({ episodios: [RASCUNHO, AO_VIVO] })
+    await linhaDe('Episódio 1')
+    expect(screen.getByText('Iniciar e encerrar o ao vivo ficam na aba Ao vivo.')).toBeTruthy()
+    expect(screen.queryByText(/etapa E3/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /^iniciar/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^encerrar/i })).toBeNull()
+  })
+
   test('ao-vivo-fica-para-e3', async () => {
     const { f } = abrir({ episodios: [RASCUNHO, AO_VIVO] })
     await linhaDe('Episódio 1')
-    expect(screen.getByText(NOTA_E3)).toBeTruthy()
+    expect(screen.getByText(NOTA_DO_AO_VIVO)).toBeTruthy()
     const semAoVivo = () => {
       expect(screen.queryByRole('button', { name: /iniciar/i })).toBeNull()
       expect(screen.queryByRole('button', { name: /encerrar/i })).toBeNull()
@@ -236,7 +246,7 @@ describe('aba Episódios', () => {
     semAoVivo()
     await abrirEpisodio('Episódio 1')
     semAoVivo()
-    expect(screen.getByText(NOTA_E3)).toBeTruthy()
+    expect(screen.getByText(NOTA_DO_AO_VIVO)).toBeTruthy()
     expect(screen.getByText('Rascunho')).toBeTruthy()
     // salvar o rascunho não leva estado (dois `ao_vivo` ao mesmo tempo seriam recusados pelo banco; a aba nem tenta)
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))

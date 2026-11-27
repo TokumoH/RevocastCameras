@@ -413,7 +413,7 @@ html.palco { color-scheme: light; }
    (o toque é sinalizado pelo `:active` e o foco pelo `:focus-visible`; desabilitado = opacidade e cursor) */
 .tela.controle { place-items: start center; }
 .comandos { display: grid; gap: 14px; width: 100%; min-width: 0; }
-.comandos h2 { font-size: 24px; }
+.comandos h2, .comandos h3 { font-size: 24px; }
 .comandos__estado { display: grid; gap: 6px; min-width: 0; padding: 10px 14px; background: var(--sand-soft); border: var(--border); border-radius: 12px; overflow-wrap: anywhere; }
 .comandos__cabeca { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; min-width: 0; }
 .comandos__titulo { min-width: 0; font: 400 20px/1.2 var(--font-display); overflow-wrap: anywhere; }
@@ -442,3 +442,32 @@ html.palco { color-scheme: light; }
 /* QR: escuro sobre claro nos dois modos (é o que os leitores esperam); quadrado, até 280 px, sem passar da coluna */
 .qr { display: block; width: 280px; max-width: 100%; height: auto; aspect-ratio: 1; background: var(--qr-fundo); border: var(--border); border-radius: 12px; }
 .qr__modulos { fill: var(--qr-modulo); }
+
+/* Aba Ao vivo, parte 2 (E3, Tarefa 9): seções em coluna; episódio no ar, confirmações, checklist e comandos; nada estoura em 320 px */
+.ao-vivo { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; min-width: 0; }
+.episodio-ao-vivo, .checklist, .comandos-do-painel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.episodio-ao-vivo h2, .checklist h2, .comandos-do-painel > h2 { font-size: 28px; }
+.episodio-ao-vivo select { max-width: 100%; }
+.episodio-ao-vivo__acoes { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; min-width: 0; }
+.episodio-ao-vivo__acoes .botao { max-width: 100%; overflow-wrap: anywhere; }
+.episodio-ao-vivo__confirmacao { display: grid; gap: 10px; min-width: 0; padding: 12px 14px; background: var(--pink-soft); border: var(--border); border-radius: 12px; overflow-wrap: anywhere; }
+.episodio-no-ar { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; min-width: 0; padding: 10px 14px; background: var(--sand-soft); border: var(--border); border-radius: 12px; }
+.episodio-no-ar__titulo { min-width: 0; font: 400 20px/1.2 var(--font-display); overflow-wrap: anywhere; }
+.checklist h3 { margin: 0; font: 400 20px/1.2 var(--font-display); }
+.checklist__fixo { display: grid; gap: 6px; min-width: 0; margin: 0; padding-left: 1.4em; overflow-wrap: anywhere; }
+.checklist__automatico { display: grid; gap: 6px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.checklist__item { position: relative; display: flex; gap: 10px; align-items: baseline; min-width: 0; overflow-wrap: anywhere; }
+.checklist__texto { min-width: 0; }
+.checklist__sinal {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  font-weight: 800;
+  background: var(--sand-soft);
+  border: var(--border);
+  border-radius: 999px;
+}
+.checklist__item--pronto .checklist__sinal { background: var(--cyan-soft); }
+.checklist__item--pendente .checklist__sinal { background: var(--pink-soft); }

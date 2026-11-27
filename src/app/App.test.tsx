@@ -44,7 +44,7 @@ describe('App', () => {
 
   test.each([
     ['/entrar', 'Abrindo a sua área…'],
-    ['/painel', 'Iniciar e encerrar o ao vivo chegam na etapa E3.'],
+    ['/painel', 'Iniciar e encerrar o ao vivo ficam na aba Ao vivo.'],
     ['/controle', 'Nenhum episódio no ar nem em teste.'],
     ['/camera', SEM_LINK],
     ['/obs/palco', SEM_LINK],

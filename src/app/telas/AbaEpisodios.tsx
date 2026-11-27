@@ -21,7 +21,7 @@ export const TEXTO_DOS_EPISODIOS = {
   mudou: 'Os episódios ou o seu papel mudaram; conferindo de novo.',
   naoConcluiu: 'Não foi possível concluir. Tente de novo.',
   naoCarregou: 'Não foi possível carregar os episódios.',
-  notaE3: 'Iniciar e encerrar o ao vivo chegam na etapa E3.',
+  notaDoAoVivo: 'Iniciar e encerrar o ao vivo ficam na aba Ao vivo.',
   soRascunho: 'Só rascunhos podem ser excluídos.',
   semImagem: 'Sem imagem',
   criado: 'Episódio criado.',
@@ -111,7 +111,7 @@ function textoDaExclusao(quantos: number): string {
  * os avisos em ordem (cartões com título, texto literal com as quebras de linha, link só depois de
  * `normalizarLink`, imagem da Biblioteca com miniatura pedida no clique, duração; subir, descer,
  * editar, excluir) com o formulário de aviso. A aba **nunca escreve `estado` nem `gestos_ligados`**:
- * iniciar e encerrar o ao vivo são da E3. Quem nega é a RLS: escrita negada mostra a mensagem fixa,
+ * iniciar e encerrar o ao vivo ficam na aba Ao vivo (E3, D12). Quem nega é a RLS: escrita negada mostra a mensagem fixa,
  * pede `reavaliar()` e recarrega.
  */
 export function AbaEpisodios({ servicos, usuario, reavaliar }: { servicos: ServicosDePreparacao; usuario: UsuarioDaSessao; reavaliar: () => void }): ReactNode {
@@ -816,7 +816,7 @@ export function AbaEpisodios({ servicos, usuario, reavaliar }: { servicos: Servi
   return (
     <div className="episodios">
       <h2>Episódios</h2>
-      <p className="episodios__nota">{TEXTO_DOS_EPISODIOS.notaE3}</p>
+      <p className="episodios__nota">{TEXTO_DOS_EPISODIOS.notaDoAoVivo}</p>
       {/* Regiões de aviso sempre montadas (o texto entra depois, para o leitor de tela anunciar); vazias, ficam
           fora do fluxo (.so-leitor). `tabIndex={-1}` deixa o foco ir para elas depois de uma ação. */}
       <div ref={statusRef} role="status" tabIndex={-1} className={recado?.tom === 'info' ? 'mensagem' : 'so-leitor'}>

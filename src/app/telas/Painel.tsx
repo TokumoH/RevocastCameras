@@ -12,7 +12,7 @@ import { Logo } from '../../shared/ui/Logo'
 import type { Dependencias } from '../dependencias'
 import { GuardaDeMembro } from '../GuardaDeMembro'
 import type { ServicosDeAoVivo } from '../servicos'
-import { useEstudio } from '../useEstudio'
+import { useEstudio, useUmaReavaliacaoPorPerda } from '../useEstudio'
 import { AbaAoVivo } from './AbaAoVivo'
 import { AbaBiblioteca } from './AbaBiblioteca'
 import { AbaCenas } from './AbaCenas'
@@ -20,7 +20,7 @@ import { AbaEpisodios } from './AbaEpisodios'
 import { AbaGestos } from './AbaGestos'
 import { AbaMembros } from './AbaMembros'
 
-/** Abas do DES-001 §9, nesta ordem; todas reais desde a Tarefa 8 da E3 (a Ao vivo ganha o resto na Tarefa 9). */
+/** Abas do DES-001 §9, nesta ordem; todas reais desde a Tarefa 8 da E3 (a Ao vivo completa desde a Tarefa 9). */
 const ABAS_DO_PAINEL: readonly Aba[] = [
   { id: 'episodios', rotulo: 'Episódios' },
   { id: 'biblioteca', rotulo: 'Biblioteca' },
@@ -46,6 +46,7 @@ function ConteudoDoPainel({
   obterPreparacao,
   obterAoVivo,
   origem,
+  aoVoltarAVer,
 }: {
   titulo: string
   usuario: UsuarioDaSessao
@@ -55,6 +56,7 @@ function ConteudoDoPainel({
   obterPreparacao: () => ServicosDePreparacao
   obterAoVivo: () => ServicosDeAoVivo
   origem: string
+  aoVoltarAVer: Dependencias['aoVoltarAVer']
 }) {
   const [escolhida, setEscolhida] = useState(ABA_INICIAL)
   // Serviços da Preparação e do ao vivo obtidos uma vez, já dentro da guarda (o mesmo cliente de membro; E2, Tarefa 4; E3, D5).
@@ -63,12 +65,27 @@ function ConteudoDoPainel({
   // O `estudio` é aberto uma vez aqui, para todas as abas (presença de membro, avisos de revogação), e
   // reaberto 5 s depois de `fechado`/`negado`, com um `reavaliar()` (D15, N3, I-A). As abas não abrem outro.
   const canais = useMemo(() => aoVivo.canais(usuario.id), [aoVivo, usuario.id])
-  const { estudio } = useEstudio({ canais, papel, reavaliar })
+  // Uma janela de perda para o `estudio` daqui e o `:controle` do `useAoVivo` da aba Ao vivo: numa renovação
+  // do token os dois caem juntos e o acesso é reavaliado uma vez só (Tarefa 9; VER-041, Riscos).
+  const perdeuCanal = useUmaReavaliacaoPorPerda(reavaliar)
+  const { estudio, estado: estadoDoEstudio } = useEstudio({ canais, papel, reavaliar: perdeuCanal })
   // Lido na hora do envio: uma remoção que termina depois de uma reabertura usa a alça nova, não a fechada.
   const estudioAtual = useRef(estudio)
   useEffect(() => {
     estudioAtual.current = estudio
   })
+  // D5: a `revogacao` do próprio membro reavalia o acesso em qualquer aba (Tarefa 9, rodada 1). O `useAoVivo` da
+  // aba Ao vivo recebe este `estudio` de fora e não ouve a revogação: um `reavaliar()` só.
+  const reavaliarAtual = useRef(reavaliar)
+  useEffect(() => {
+    reavaliarAtual.current = reavaliar
+  })
+  useEffect(() => {
+    if (estudio === null) return
+    return estudio.aoReceber((m) => {
+      if (m.evento === 'revogacao' && m.usuario === usuario.id) reavaliarAtual.current()
+    })
+  }, [estudio, usuario.id])
   const avisarRevogacao = useCallback(async (usuarioRevogado: string): Promise<RespostaDoEnvio> => {
     const alca = estudioAtual.current
     return alca === null ? 'falhou' : alca.enviar({ evento: 'revogacao', usuario: usuarioRevogado })
@@ -101,7 +118,20 @@ function ConteudoDoPainel({
           ) : ativa.id === 'gestos' ? (
             <AbaGestos servicos={preparacao} reavaliar={reavaliar} />
           ) : (
-            <AbaAoVivo repo={aoVivo.repo} estudio={estudio} origem={origem} reavaliar={reavaliar} copiar={copiar} />
+            <AbaAoVivo
+              repo={aoVivo.repo}
+              estudio={estudio}
+              estadoDoEstudio={estadoDoEstudio}
+              canais={canais}
+              preparacao={preparacao}
+              usuario={usuario}
+              papel={papel}
+              aoVoltarAVer={aoVoltarAVer}
+              aoPerderCanal={perdeuCanal}
+              origem={origem}
+              reavaliar={reavaliar}
+              copiar={copiar}
+            />
           )}
         </Abas>
       </Cartao>
@@ -109,12 +139,19 @@ function ConteudoDoPainel({
   )
 }
 
-/** `/painel` (equipe e admin): guardado desde a Tarefa 4 da E1; abas por estado desde a Tarefa 5 (D8); Biblioteca real desde a Tarefa 5 da E2; Cenas e Gestos desde a Tarefa 6; Episódios desde a Tarefa 7; Ao vivo (dispositivos) e o `estudio` do painel desde a Tarefa 8 da E3. */
+/** `/painel` (equipe e admin): guardado desde a Tarefa 4 da E1; abas por estado desde a Tarefa 5 (D8); Biblioteca real desde a Tarefa 5 da E2; Cenas e Gestos desde a Tarefa 6; Episódios desde a Tarefa 7; Ao vivo (dispositivos) e o `estudio` do painel desde a Tarefa 8 da E3; episódio, checklist e comandos na Ao vivo desde a Tarefa 9. */
 export function Painel({ titulo, dependencias }: { titulo: string; dependencias: Dependencias }) {
   return (
     <GuardaDeMembro area="painel" titulo={titulo} dependencias={dependencias}>
       {(membro) => (
-        <ConteudoDoPainel titulo={titulo} {...membro} obterPreparacao={dependencias.obterPreparacao} obterAoVivo={dependencias.obterAoVivo} origem={dependencias.origem} />
+        <ConteudoDoPainel
+          titulo={titulo}
+          {...membro}
+          obterPreparacao={dependencias.obterPreparacao}
+          obterAoVivo={dependencias.obterAoVivo}
+          origem={dependencias.origem}
+          aoVoltarAVer={dependencias.aoVoltarAVer}
+        />
       )}
     </GuardaDeMembro>
   )
