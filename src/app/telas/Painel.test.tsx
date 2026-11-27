@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { Papel } from '../../domains/acesso/papeis'
 import { App } from '../App'
 import type { Dependencias } from '../dependencias'
-import { criarFalsos, preparacaoVazia, usuarioGoogle } from '../servicosFalsos'
+import { criarFalsos, criarFalsosDePreparacao, preparacaoVazia, usuarioGoogle } from '../servicosFalsos'
 
 afterEach(cleanup)
 
@@ -48,7 +48,7 @@ describe('painel com abas (D8)', () => {
     expect(episodios.getAttribute('aria-selected')).toBe('false')
     expect(within(screen.getByRole('tabpanel')).getByText('Em construção — etapa E3')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Cenas' }))
+    fireEvent.click(episodios)
     expect(within(screen.getByRole('tabpanel')).getByText('Em construção — etapa E2')).toBeTruthy()
   })
 
@@ -64,6 +64,24 @@ describe('painel com abas (D8)', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Episódios' }))
     fireEvent.click(screen.getByRole('tab', { name: 'Biblioteca' }))
     await within(screen.getByRole('tabpanel')).findByText('0,0 MB de 1 GB')
+    expect(obterPreparacao).toHaveBeenCalledTimes(1)
+  })
+
+  test('cenas-e-gestos-no-painel', async () => {
+    const preparacao = criarFalsosDePreparacao()
+    const obterPreparacao = vi.fn(() => preparacao.servicos)
+    await abrirPainel('equipe', { obterPreparacao })
+    fireEvent.click(screen.getByRole('tab', { name: 'Cenas' }))
+    let painel = screen.getByRole('tabpanel')
+    expect(await within(painel).findByRole('button', { name: 'Incluir' })).toBeTruthy()
+    expect(within(painel).getByLabelText('Nome no OBS')).toBeTruthy()
+    expect(painel.textContent).not.toContain('Em construção')
+    fireEvent.click(screen.getByRole('tab', { name: 'Gestos' }))
+    painel = screen.getByRole('tabpanel')
+    const lista = await within(painel).findByRole('list', { name: 'Mapa de gestos' })
+    expect(within(lista).getAllByRole('listitem')).toHaveLength(7)
+    expect(painel.textContent).not.toContain('Em construção')
+    // os serviços da Preparação continuam obtidos uma vez só
     expect(obterPreparacao).toHaveBeenCalledTimes(1)
   })
 

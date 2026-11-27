@@ -237,3 +237,65 @@ img { max-width: 100%; height: auto; }
 .previa { display: block; max-width: min(360px, 100%); }
 audio.previa { width: 100%; }
 img.previa { width: auto; height: auto; max-height: 240px; object-fit: contain; background: var(--paper); border: var(--border); border-radius: 12px; }
+
+/* Abas Cenas e Gestos (E2, Tarefa 6): formulário em linha com dica, tabela de cenas com edição e confirmação na linha, mapa de gestos */
+.cenas,
+.gestos-aba { position: relative; display: grid; gap: 14px; min-width: 0; } /* relative: segura as regiões de aviso vazias (.so-leitor) */
+.cenas h2,
+.gestos-aba h2 { font-size: 28px; }
+.cenas h3 { font-size: 22px; }
+.formulario-em-linha { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; min-width: 0; }
+.formulario-em-linha__dica { flex: 1 1 100%; font-size: 15px; line-height: 1.4; }
+.tabela__nome { min-width: 12ch; overflow-wrap: anywhere; }
+.tabela__obs { font-weight: 700; white-space: pre-wrap; }
+.tabela input {
+  width: 100%;
+  min-width: 10ch;
+  padding: 6px 10px;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 400;
+  background: var(--card);
+  border: var(--border);
+  border-radius: 12px;
+}
+.confirmacao-na-linha {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  min-width: 18ch;
+  padding: 8px 12px;
+  font-size: 15px;
+  line-height: 1.4;
+  background: var(--pink-soft);
+  border: var(--border);
+  border-radius: 12px;
+}
+.sugestoes {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-width: 0;
+  padding: 10px 14px;
+  background: var(--sand-soft);
+  border: var(--border);
+  border-radius: 12px;
+}
+.sugestoes__titulo { font-weight: 700; }
+.gestos__dica { font-size: 15px; font-weight: 700; line-height: 1.4; }
+.gestos { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.gestos li {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 14px;
+  background: var(--card);
+  border: var(--border);
+  border-radius: 12px;
+}
+.gestos__cabeca { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.gestos__emoji { font-size: 28px; line-height: 1; }
+.gestos__nome { min-width: 0; font: 400 20px/1.2 var(--font-display); overflow-wrap: anywhere; }
+.gestos__campos { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: end; min-width: 0; }
+.gestos__campos .campo { flex-basis: 180px; }
+.gestos__campos select { width: 100%; }

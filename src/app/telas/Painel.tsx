@@ -11,6 +11,8 @@ import { Logo } from '../../shared/ui/Logo'
 import type { Dependencias } from '../dependencias'
 import { GuardaDeMembro } from '../GuardaDeMembro'
 import { AbaBiblioteca } from './AbaBiblioteca'
+import { AbaCenas } from './AbaCenas'
+import { AbaGestos } from './AbaGestos'
 import { AbaMembros } from './AbaMembros'
 
 /** Abas do DES-001 §9, nesta ordem; a etapa em que cada provisória fica pronta (DES-001 §14). */
@@ -64,6 +66,10 @@ function ConteudoDoPainel({
             <AbaMembros repo={servicos.repo} usuario={usuario} reavaliar={reavaliar} />
           ) : ativa.id === 'biblioteca' ? (
             <AbaBiblioteca servicos={preparacao} usuario={usuario} reavaliar={reavaliar} />
+          ) : ativa.id === 'cenas' ? (
+            <AbaCenas servicos={preparacao} reavaliar={reavaliar} />
+          ) : ativa.id === 'gestos' ? (
+            <AbaGestos servicos={preparacao} reavaliar={reavaliar} />
           ) : (
             <p>Em construção — etapa {ativa.etapa}</p>
           )}
@@ -73,7 +79,7 @@ function ConteudoDoPainel({
   )
 }
 
-/** `/painel` (equipe e admin): guardado desde a Tarefa 4 da E1; abas por estado desde a Tarefa 5 (D8); Biblioteca real desde a Tarefa 5 da E2. */
+/** `/painel` (equipe e admin): guardado desde a Tarefa 4 da E1; abas por estado desde a Tarefa 5 (D8); Biblioteca real desde a Tarefa 5 da E2; Cenas e Gestos desde a Tarefa 6. */
 export function Painel({ titulo, dependencias }: { titulo: string; dependencias: Dependencias }) {
   return (
     <GuardaDeMembro area="painel" titulo={titulo} dependencias={dependencias}>
