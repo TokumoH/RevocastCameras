@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | ativo |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- docs/verificacoes/README.md` |
-| Arquivos | `README.md`, `_modelo-registro-de-correcao.md`, `2026-11-16-001-core-e-estrutura-docs.md`, `2026-11-16-002-autorizacao-git-e-branch-trabalho.md`, `2026-11-16-003-devsecops-checagens-e-ci.md`, `2026-11-16-004-readme-raiz.md`, `2026-11-16-005-desenho-recomeco.md`, `2026-11-16-006-desenho-verificado.md`, `2026-11-17-007-plano-e0.md`, `2026-11-17-008-e0-limpeza-e-esqueleto.md`, `2026-11-17-009-e0-supabase-cliente.md`, `2026-11-22-010-e0-banco.md`, `2026-11-22-011-e0-checagens-banco.md`, `2026-11-18-012-audit-excecao-com-prazo.md`, `2026-11-22-013-commits-locais-pelo-agente.md`, `2026-11-26-014-plano-e1.md`, `2026-11-26-015-e1-dominio-acesso.md`, `2026-11-26-016-e1-banco-membros.md`, `2026-11-26-017-e1-adaptadores-acesso.md`, `2026-11-26-018-e1-entrada-e-guarda.md`, `2026-11-26-019-e1-painel-e-membros.md`, `2026-11-26-020-e1-conferencia-e-guia.md`, `2026-11-26-021-tempo-limite-supabase.md`, `2026-11-26-022-remove-excecao-picomatch.md`, `2026-11-26-023-plano-e2.md`, `2026-11-26-024-e2-dominio-preparacao.md`, `2026-11-26-025-e2-simulacao-storage-e-checagens.md`, `2026-11-26-026-e2-banco-biblioteca.md`, `2026-11-26-027-e2-adaptadores-preparacao.md`, `2026-11-26-028-e2-aba-biblioteca.md`, `2026-11-27-029-e2-cenas-e-gestos.md`, `2026-11-27-030-e2-episodios-e-avisos.md`, `2026-11-27-031-e2-conferencia-e-guia.md`, `2026-11-27-032-jwt-expirado-sessao-expirada.md`, `2026-11-27-033-membros-foco-no-mesmo-commit.md` |
+| Arquivos | `README.md`, `_modelo-registro-de-correcao.md`, `2026-11-16-001-core-e-estrutura-docs.md`, `2026-11-16-002-autorizacao-git-e-branch-trabalho.md`, `2026-11-16-003-devsecops-checagens-e-ci.md`, `2026-11-16-004-readme-raiz.md`, `2026-11-16-005-desenho-recomeco.md`, `2026-11-16-006-desenho-verificado.md`, `2026-11-17-007-plano-e0.md`, `2026-11-17-008-e0-limpeza-e-esqueleto.md`, `2026-11-17-009-e0-supabase-cliente.md`, `2026-11-22-010-e0-banco.md`, `2026-11-22-011-e0-checagens-banco.md`, `2026-11-18-012-audit-excecao-com-prazo.md`, `2026-11-22-013-commits-locais-pelo-agente.md`, `2026-11-26-014-plano-e1.md`, `2026-11-26-015-e1-dominio-acesso.md`, `2026-11-26-016-e1-banco-membros.md`, `2026-11-26-017-e1-adaptadores-acesso.md`, `2026-11-26-018-e1-entrada-e-guarda.md`, `2026-11-26-019-e1-painel-e-membros.md`, `2026-11-26-020-e1-conferencia-e-guia.md`, `2026-11-26-021-tempo-limite-supabase.md`, `2026-11-26-022-remove-excecao-picomatch.md`, `2026-11-26-023-plano-e2.md`, `2026-11-26-024-e2-dominio-preparacao.md`, `2026-11-26-025-e2-simulacao-storage-e-checagens.md`, `2026-11-26-026-e2-banco-biblioteca.md`, `2026-11-26-027-e2-adaptadores-preparacao.md`, `2026-11-26-028-e2-aba-biblioteca.md`, `2026-11-27-029-e2-cenas-e-gestos.md`, `2026-11-27-030-e2-episodios-e-avisos.md`, `2026-11-27-031-e2-conferencia-e-guia.md`, `2026-11-27-032-jwt-expirado-sessao-expirada.md`, `2026-11-27-033-membros-foco-no-mesmo-commit.md`, `2026-11-27-034-plano-e3.md` |
 
 ## Propósito
 
@@ -84,6 +84,7 @@ Criado em 2026-11-16 a partir da regra do CORE "todo commit leva documento em `d
 | [`2026-11-27-031-e2-conferencia-e-guia.md`](2026-11-27-031-e2-conferencia-e-guia.md) | VER-031 — E2, Tarefa 8: conferência no navegador de toda a E2 (Biblioteca, Cenas, Gestos, Episódios e avisos com `equipe`, `admin` e `apresentadora`, claro e escuro, 320/390/1280 px, corte de 30 s do envio; 300/300 com 6 sabotagens do script) e guia "Biblioteca no Storage (E2)" em `supabase/README.md` (migração, consultas de conferência, D3–D5, conferência real e o que só o projeto real confirma); passo do responsável pendente |
 | [`2026-11-27-032-jwt-expirado-sessao-expirada.md`](2026-11-27-032-jwt-expirado-sessao-expirada.md) | VER-032 — JWT expirado recusado pelo Storage (`InvalidJWT` no corpo, com `statusCode` "400" ou "403") passa a virar `sessao_expirada` no envio, na remoção e na prévia, com prioridade sobre o `statusCode`; a `message` nunca decide (resolve o risco do VER-027 e do VER-031) |
 | [`2026-11-27-033-membros-foco-no-mesmo-commit.md`](2026-11-27-033-membros-foco-no-mesmo-commit.md) | VER-033 — foco da aba Membros aplicado com `useLayoutEffect` (no mesmo commit que mostra o aviso), como na aba Biblioteca (VER-028), com teste determinístico por `MutationObserver` |
+| [`2026-11-27-034-plano-e3.md`](2026-11-27-034-plano-e3.md) | VER-034 — plano de implementação da etapa E3 (PLA-004): pareamento de dispositivos, `/obs/palco`, `/controle` por toque, modo teste, iniciar e encerrar o ao vivo |
 
 ## Lógica
 
@@ -106,7 +107,7 @@ flowchart LR
 Próximo registro (exemplo hipotético de 2026-11-30):
 
 ```bash
-cp docs/verificacoes/_modelo-registro-de-correcao.md docs/verificacoes/2026-11-30-032-exemplo.md
+cp docs/verificacoes/_modelo-registro-de-correcao.md docs/verificacoes/2026-11-30-045-exemplo.md
 ```
 
 Para consultar: `ls docs/verificacoes` (ordem cronológica) ou `grep -l "Status de implementação | implementado" docs/verificacoes/*.md`.

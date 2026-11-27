@@ -11,7 +11,7 @@
 | Usuário responsável | TokumoH |
 | Status | ativo |
 | Commits | commit que introduz este arquivo — `git log --format=%h -- docs/planos/README.md` |
-| Arquivos | `README.md`, `2026-11-17-e0-fundacao.md`, `2026-11-26-e1-entrada-e-membros.md`, `2026-11-26-e2-preparar-episodio.md` |
+| Arquivos | `README.md`, `2026-11-17-e0-fundacao.md`, `2026-11-26-e1-entrada-e-membros.md`, `2026-11-26-e2-preparar-episodio.md`, `2026-11-27-e3-ao-vivo-por-toque.md` |
 
 ## Propósito
 
@@ -47,6 +47,7 @@ Criado para o plano da etapa E0 do [DES-001](../desenho/2026-11-16-revocast-came
 | [`2026-11-17-e0-fundacao.md`](2026-11-17-e0-fundacao.md) | PLA-001 — etapa E0: limpeza, esqueleto, cliente Supabase, banco com RLS testada e checagens do banco |
 | [`2026-11-26-e1-entrada-e-membros.md`](2026-11-26-e1-entrada-e-membros.md) | PLA-002 — etapa E1: domínio Acesso, login Google com PKCE, guarda por papel, tela de erro de configuração, painel vazio com abas e aba Membros; migração nova só de políticas (nenhum admin altera nem remove a própria linha da lista) |
 | [`2026-11-26-e2-preparar-episodio.md`](2026-11-26-e2-preparar-episodio.md) | PLA-003 — etapa E2: domínio Preparação, Biblioteca (envio de sons e imagens ao bucket privado `midias`, com tipo pelos bytes, 50 MB, uso de 1 GB, progresso, cancelamento e corte por inatividade), cenas, mapa de gestos, episódios e avisos; simulação do Storage e checagens aceitando só as políticas de `storage.objects` da Biblioteca; migração nova do bucket e das políticas |
+| [`2026-11-27-e3-ao-vivo-por-toque.md`](2026-11-27-e3-ao-vivo-por-toque.md) | PLA-004 — etapa E3: pareamento de dispositivos por QR e link de uso único (login anônimo, código de 244 bits guardado só como hash, limite de tentativas, revogação com aviso pelo canal), `/obs/palco` como executor (cena, som, aviso, clipe e marcador), `/controle` por toque, modo teste, iniciar e encerrar o ao vivo; simulação do Realtime e checagens aceitando só as duas políticas do canal; migração nova de funções e políticas; dependência `lean-qr` |
 
 ## Lógica
 
