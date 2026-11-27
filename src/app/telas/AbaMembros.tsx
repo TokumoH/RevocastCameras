@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { mesmoEmail, normalizarEmail } from '../../domains/acesso/email'
 import { conferirInclusao, conferirMudanca, montarLista } from '../../domains/acesso/listaDeAcesso'
@@ -101,8 +101,10 @@ export function AbaMembros({
   }, [carregar])
 
   // Depois de cada render: se uma ação pediu foco e a escrita acabou (os controles já voltaram a ficar
-  // habilitados), põe o foco no alvo. Sem isso, o navegador manda o foco para o <body>.
-  useEffect(() => {
+  // habilitados), põe o foco no alvo. Sem isso, o navegador manda o foco para o <body>. `useLayoutEffect`: o foco
+  // muda no mesmo commit que mostra o aviso; num `useEffect`, fora de evento, ele rodaria depois da pintura e o
+  // aviso apareceria com o foco ainda no <body> (VER-028, VER-033).
+  useLayoutEffect(() => {
     const alvo = focoPendente.current
     if (alvo === null || ocupado) return
     focoPendente.current = null

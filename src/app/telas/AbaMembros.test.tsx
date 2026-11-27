@@ -391,6 +391,43 @@ describe('aba Membros', () => {
     await waitFor(() => expect(document.activeElement).toBe(invalido))
   })
 
+  test('foco-no-mesmo-commit-do-aviso', async () => {
+    // lê o foco no instante em que o texto entra na região de aviso (não depois): prova que o foco muda no
+    // mesmo commit que mostra o aviso (`useLayoutEffect`), sem depender de tempo (VER-028, VER-033)
+    const { f } = abrir()
+    const bia = await linhaDe('bia@revocast.test')
+    const status = screen.getByRole('status', { name: '' })
+    const alerta = screen.getByRole('alert')
+    const focoNaHora: Record<string, Element | null | 'nunca'> = { status: 'nunca', alerta: 'nunca' }
+    const observar = (regiao: HTMLElement, chave: string) => {
+      const o = new MutationObserver(() => {
+        if (regiao.textContent && focoNaHora[chave] === 'nunca') focoNaHora[chave] = document.activeElement
+      })
+      o.observe(regiao, { childList: true, subtree: true, characterData: true })
+      return o
+    }
+    const observadores = [observar(status, 'status'), observar(alerta, 'alerta')]
+    try {
+      // sucesso: o foco vai para o aviso (remover) no mesmo commit
+      fireEvent.click(within(bia).getByRole('button', { name: 'Remover' }))
+      const confirmar = within(bia).getByRole('button', { name: 'Confirmar remoção' })
+      confirmar.focus()
+      fireEvent.click(confirmar)
+      await screen.findByText('Lista atualizada.')
+      expect(focoNaHora.status).toBe(status)
+      // erro: o foco vai para a mensagem de erro no mesmo commit
+      f.falharProxima('incluir', new ErroDeAcesso('rede'))
+      fireEvent.change(screen.getByLabelText('E-mail'), { target: { value: 'nova@revocast.test' } })
+      const botao = screen.getByRole('button', { name: 'Incluir' })
+      botao.focus()
+      fireEvent.click(botao)
+      await screen.findByText('Não foi possível salvar. Tente de novo.')
+      expect(focoNaHora.alerta).toBe(alerta)
+    } finally {
+      observadores.forEach((o) => o.disconnect())
+    }
+  })
+
   test('nome-com-html-literal', async () => {
     const nome = '<img src=x onerror=alert(1)>'
     const { container } = abrir({
