@@ -3,7 +3,7 @@ import type { ObsNoNavegador, ObsWebsocket } from '../../domains/obs/portas'
 import { criarObsNoNavegador } from '../../shared/infra/obsNavegador'
 import { criarObsWebsocket } from '../../shared/infra/obsWebsocket'
 import type { Dependencias } from '../dependencias'
-import { PalcoNoAr } from './PalcoNoAr'
+import { PalcoNoAr, SoComSaidaParada } from './PalcoNoAr'
 import { TelaDeDispositivo } from './TelaDeDispositivo'
 
 type Armazenamento = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
@@ -35,7 +35,8 @@ function armazenamentoDoNavegador(): Armazenamento {
 /**
  * `/obs/palco` (Fonte de navegador do OBS, em todas as cenas): pareamento pelo link (D3, D4) e o palco no
  * ar (`PalcoNoAr`). As portas do OBS e o armazenamento local vêm do navegador; os testes passam falsos.
- * O fundo transparente vem da classe `palco` que o `index.html` põe antes da primeira pintura (N2).
+ * O fundo transparente vem da classe `palco` que o `index.html` põe antes da primeira pintura (N2). As telas
+ * de pareamento e de erro (revogado, sem link...) só aparecem com nada no ar (`SoComSaidaParada`; D16, VER-046 I1).
  */
 export function ObsPalco({
   titulo,
@@ -56,7 +57,12 @@ export function ObsPalco({
     armazenamentoLocal: armazenamentoLocal ?? armazenamentoDoNavegador(),
   }))
   return (
-    <TelaDeDispositivo tipo="obs_palco" titulo={titulo} dependencias={dependencias}>
+    <TelaDeDispositivo
+      tipo="obs_palco"
+      titulo={titulo}
+      dependencias={dependencias}
+      cobrirTela={(tela) => <SoComSaidaParada obs={portas.obs}>{tela}</SoComSaidaParada>}
+    >
       {(pareado) => <PalcoNoAr {...pareado} {...portas} />}
     </TelaDeDispositivo>
   )

@@ -16,7 +16,7 @@ import { CodigoQr } from '../../shared/ui/CodigoQr'
 import { App } from '../App'
 import type { ServicosDeAoVivo } from '../servicos'
 import { aoVivoVazio, criarCanalFalso, criarFalsos, criarFalsosDePreparacao, preparacaoVazia, usuarioGoogle } from '../servicosFalsos'
-import { REABRIR_CANAIS_MS } from '../useDispositivo'
+import { REABRIR_CANAIS_MS } from '../canais'
 import { useEstudio } from '../useEstudio'
 import { AbaAoVivo, INTERVALO_DA_CONSULTA_MS, TEXTO_DA_ABA_AO_VIVO, TEXTO_DO_CHECKLIST, TEXTO_DO_EPISODIO } from './AbaAoVivo'
 

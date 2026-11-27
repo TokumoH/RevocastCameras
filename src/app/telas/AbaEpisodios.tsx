@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 import type { UsuarioDaSessao } from '../../domains/acesso/sessao'
+import type { RepositorioDoAoVivo } from '../../domains/aovivo/portas'
 import { conferirAviso, conferirEpisodio, normalizarLink, podeExcluirEpisodio, trocarOrdem } from '../../domains/preparacao/episodios'
 import type { Aviso, Episodio, EstadoDoEpisodio } from '../../domains/preparacao/episodios'
 import type { Midia } from '../../domains/preparacao/midia'
@@ -23,6 +24,7 @@ export const TEXTO_DOS_EPISODIOS = {
   naoCarregou: 'Não foi possível carregar os episódios.',
   notaDoAoVivo: 'Iniciar e encerrar o ao vivo ficam na aba Ao vivo.',
   soRascunho: 'Só rascunhos podem ser excluídos.',
+  saiaDoTeste: 'Saia do modo teste antes de apagar.',
   semImagem: 'Sem imagem',
   criado: 'Episódio criado.',
   salvo: 'Episódio salvo.',
@@ -32,6 +34,9 @@ export const TEXTO_DOS_EPISODIOS = {
   avisoExcluido: 'Aviso excluído.',
   ordem: 'Ordem atualizada.',
 } as const
+
+/** O episódio a excluir é o do modo teste (consultado antes de apagar; o banco também recusa, VER-046 I3). */
+class EpisodioNoModoTeste extends Error {}
 
 const ROTULO_DO_ESTADO: Record<EstadoDoEpisodio, string> = { rascunho: 'Rascunho', ao_vivo: 'Ao vivo', encerrado: 'Encerrado' }
 
@@ -114,7 +119,18 @@ function textoDaExclusao(quantos: number): string {
  * iniciar e encerrar o ao vivo ficam na aba Ao vivo (E3, D12). Quem nega é a RLS: escrita negada mostra a mensagem fixa,
  * pede `reavaliar()` e recarrega.
  */
-export function AbaEpisodios({ servicos, usuario, reavaliar }: { servicos: ServicosDePreparacao; usuario: UsuarioDaSessao; reavaliar: () => void }): ReactNode {
+export function AbaEpisodios({
+  servicos,
+  usuario,
+  reavaliar,
+  episodioAtivo,
+}: {
+  servicos: ServicosDePreparacao
+  usuario: UsuarioDaSessao
+  reavaliar: () => void
+  /** `episodio_ativo()` (porta do ao vivo): antes de excluir, a aba confere se o episódio é o do modo teste (VER-046, I3). */
+  episodioAtivo: RepositorioDoAoVivo['episodioAtivo']
+}): ReactNode {
   const [carga, setCarga] = useState<Carga>({ tipo: 'carregando' })
   const [recado, setRecado] = useState<Recado | null>(null)
   const [ocupado, setOcupado] = useState(false)
@@ -241,8 +257,12 @@ export function AbaEpisodios({ servicos, usuario, reavaliar }: { servicos: Servi
    * sem recarga (a leitura também falharia).
    */
   function tratarErro(erro: unknown, alvo: Alvo, recarregarSempre: boolean) {
-    const motivo = motivoDe(erro)
     const foco: Foco = { tipo: 'erro' }
+    if (erro instanceof EpisodioNoModoTeste) {
+      mostrar({ tom: 'erro', texto: TEXTO_DOS_EPISODIOS.saiaDoTeste }, foco)
+      return
+    }
+    const motivo = motivoDe(erro)
     if (motivo === 'sessao_expirada') {
       reavaliarAtual.current()
       return
@@ -349,7 +369,14 @@ export function AbaEpisodios({ servicos, usuario, reavaliar }: { servicos: Servi
       mostrar({ tom: 'erro', texto: TEXTO_DOS_EPISODIOS.soRascunho }, { tipo: 'erro' })
       return
     }
-    void escrever(() => servicos.episodios.remover(e.id), 'episodio', TEXTO_DOS_EPISODIOS.excluido, { tipo: 'status' }, {
+    const remover = async () => {
+      // O banco recusa apagar o episódio do modo teste (0 linhas); a consulta antes dá a frase certa. Consulta que
+      // falha não impede a tentativa: quem decide é a política (VER-046, I3).
+      const ativo = await episodioAtivo().catch(() => null)
+      if (ativo !== null && ativo.id === e.id && ativo.modo === 'teste') throw new EpisodioNoModoTeste()
+      await servicos.episodios.remover(e.id)
+    }
+    void escrever(remover, 'episodio', TEXTO_DOS_EPISODIOS.excluido, { tipo: 'status' }, {
       aoDarCerto: () => {
         definirAberto(null)
         setConfirmarEpisodio(false)

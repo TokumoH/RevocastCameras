@@ -48,7 +48,7 @@ Os agregados se referenciam (gesto → cena ou som; som → mídia; aviso → im
 | Arquivo ou subdiretório | O que contém |
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
-| [`midia.ts`](midia.ts) | `TipoDeMidia`, `TipoAceito`, `TIPOS_ACEITOS`, `LIMITE_POR_ARQUIVO_BYTES`, `LIMITE_TOTAL_BYTES`, `BYTES_PARA_DETECTAR`, `detectarTipo`, `RecusaDoArquivo`, `ConferenciaDoArquivo`, `conferirArquivo`, `caminhoDaMidia`, `nomeDeExibicao`, `Midia`, `usoDaBiblioteca`, `Som`, `conferirSom` |
+| [`midia.ts`](midia.ts) | `TipoDeMidia`, `TipoAceito`, `TIPOS_ACEITOS`, `LIMITE_POR_ARQUIVO_BYTES`, `LIMITE_TOTAL_BYTES`, `BYTES_PARA_DETECTAR`, `detectarTipo`, `RecusaDoArquivo`, `ConferenciaDoArquivo`, `conferirArquivo`, `caminhoDaMidia`, `nomeDeExibicao`, `Midia`, `usoDaBiblioteca`, `Som`, `conferirSom`; `UUID` (exportado desde o VER-046, N4: o único uuid do app, reexportado por `aovivo/mensagens.ts` e usado pelo caminho seguro de `shared/infra/armazenamentoSupabase.ts`) |
 | [`midia.test.ts`](midia.test.ts) | 31 testes: constantes, `tipo-pelos-bytes` (22 casos), `mp3-que-e-png`, `svg-e-html-recusados`, `limite-50mb`, `sem-espaco`, `caminho-sem-nome-do-arquivo`, `nome-de-exibicao`, `uso-da-biblioteca`, `conferir-som` |
 | [`cenas.ts`](cenas.ts) | `Cena`, `RecusaDaCena`, `conferirCena` (nome no OBS comparado exato) |
 | [`cenas.test.ts`](cenas.test.ts) | 2 testes: `nome-obs-exato`, `nomes-vazios` |

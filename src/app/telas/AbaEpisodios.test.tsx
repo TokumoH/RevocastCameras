@@ -49,17 +49,21 @@ function aviso(id: string, titulo: string, ordem: number, extra: Partial<Aviso> 
   return { id, episodioId: RASCUNHO.id, titulo, texto: '', link: null, imagemMidiaId: null, duracaoS: 10, ordem, ...extra }
 }
 
-function abrir(inicial: Parameters<typeof criarFalsosDePreparacao>[0] = {}) {
+function abrir(inicial: Parameters<typeof criarFalsosDePreparacao>[0] = {}, ativo: { id: string; modo: 'ao_vivo' | 'teste' } | null | 'falha' = null) {
   const f = criarFalsosDePreparacao(inicial)
   const reavaliar = vi.fn()
+  const episodioAtivo = vi.fn(async () => {
+    if (ativo === 'falha') throw new Error('rede')
+    return ativo
+  })
   // conta as leituras sem mudar o falso (os métodos não usam `this`)
   const listarEpisodios = vi.fn(f.servicos.episodios.listar)
   f.servicos.episodios.listar = listarEpisodios
   const listarAvisos = vi.fn(f.servicos.episodios.listarAvisos)
   f.servicos.episodios.listarAvisos = listarAvisos
   const usuario = usuarioGoogle('equipe@revocast.test', ID_USUARIO)
-  const tela = render(<AbaEpisodios servicos={f.servicos} usuario={usuario} reavaliar={reavaliar} />)
-  return { f, reavaliar, listarEpisodios, listarAvisos, ...tela }
+  const tela = render(<AbaEpisodios servicos={f.servicos} usuario={usuario} reavaliar={reavaliar} episodioAtivo={episodioAtivo} />)
+  return { f, reavaliar, listarEpisodios, listarAvisos, episodioAtivo, ...tela }
 }
 
 /** Espera a primeira carga (o botão "Criar episódio" só fica habilitado com a lista carregada). */
@@ -220,6 +224,31 @@ describe('aba Episódios', () => {
     await waitFor(() => expect(screen.queryByText('Episódio 1')).toBeNull())
     expect(await linhaDe('Episódio 2')).toBeTruthy()
     expect(document.activeElement).toBe(status())
+  })
+
+  test('episodio-do-modo-teste-nao-se-exclui (VER-046, I3)', async () => {
+    const { f, reavaliar, episodioAtivo } = abrir({ episodios: [RASCUNHO, AO_VIVO] }, { id: 'ep-1', modo: 'teste' })
+    await abrirEpisodio('Episódio 1')
+    fireEvent.click(screen.getByRole('button', { name: 'Excluir episódio' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar exclusão' }))
+    const alerta = await screen.findByText('Saia do modo teste antes de apagar.')
+    expect(alerta).toBeTruthy()
+    expect(episodioAtivo).toHaveBeenCalledTimes(1)
+    expect(f.chamadas.episodios).toEqual([]) // nada foi pedido ao banco
+    expect(reavaliar).not.toHaveBeenCalled()
+    expect(screen.getByText('Episódio 1')).toBeTruthy()
+  })
+
+  test.each([
+    ['outro episódio no modo teste', { id: 'ep-9', modo: 'teste' as const }],
+    ['a consulta falha (o banco decide)', 'falha' as const],
+  ])('excluir rascunho fora do teste: %s', async (_nome, ativo) => {
+    const { f } = abrir({ episodios: [RASCUNHO] }, ativo)
+    await abrirEpisodio('Episódio 1')
+    fireEvent.click(screen.getByRole('button', { name: 'Excluir episódio' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar exclusão' }))
+    expect(await screen.findByText(EXCLUIDO)).toBeTruthy()
+    expect(f.chamadas.episodios).toEqual([['remover', 'ep-1']])
   })
 
   test('episodios-nota-aponta-ao-vivo', async () => {
@@ -611,7 +640,7 @@ describe('aba Episódios', () => {
     const f = criarFalsosDePreparacao({ episodios: [RASCUNHO] })
     f.falharProxima('episodios.listar', new ErroDePreparacao('sessao_expirada'))
     const reavaliar = vi.fn()
-    render(<AbaEpisodios servicos={f.servicos} usuario={usuarioGoogle('equipe@revocast.test', ID_USUARIO)} reavaliar={reavaliar} />)
+    render(<AbaEpisodios servicos={f.servicos} usuario={usuarioGoogle('equipe@revocast.test', ID_USUARIO)} reavaliar={reavaliar} episodioAtivo={async () => null} />)
     expect(await screen.findByText('Não foi possível carregar os episódios.')).toBeTruthy()
     expect(reavaliar).toHaveBeenCalledTimes(1)
     expect((screen.getByRole('button', { name: 'Criar episódio' }) as HTMLButtonElement).disabled).toBe(true)

@@ -108,7 +108,7 @@ function ConteudoDoPainel({
         <h1>{titulo}</h1>
         <Abas abas={abas} ativa={ativa.id} aoEscolher={setEscolhida}>
           {ativa.id === 'episodios' ? (
-            <AbaEpisodios servicos={preparacao} usuario={usuario} reavaliar={reavaliar} />
+            <AbaEpisodios servicos={preparacao} usuario={usuario} reavaliar={reavaliar} episodioAtivo={aoVivo.repo.episodioAtivo} />
           ) : ativa.id === 'membros' ? (
             <AbaMembros repo={servicos.repo} usuario={usuario} reavaliar={reavaliar} avisarRevogacao={avisarRevogacao} />
           ) : ativa.id === 'biblioteca' ? (

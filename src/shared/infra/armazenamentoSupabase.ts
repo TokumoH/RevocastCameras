@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { UUID as UUID_DO_DOMINIO } from '../../domains/preparacao/midia'
 import { ErroDePreparacao } from '../../domains/preparacao/portas'
 import type { ArmazenamentoDeMidia, MotivoDaPreparacao, OpcoesDoEnvio } from '../../domains/preparacao/portas'
 
@@ -20,7 +21,7 @@ export const VALIDADE_DA_PREVIA_S = 600
  * migração `biblioteca_storage`. Recusa `.`/`..`, subpasta, outra pasta e extensão trocada (defesa em
  * profundidade: o `URL` normalizaria `imagem/../../outro/x.png` para fora do bucket).
  */
-const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+const UUID = UUID_DO_DOMINIO.source.slice(1, -1) // o mesmo uuid do domínio, sem as âncoras ^ e $ (VER-046, N4)
 const CAMINHO_SEGURO = new RegExp(`^(som/${UUID}\\.(mp3|wav|ogg|m4a)|imagem/${UUID}\\.(png|jpg|webp|gif))$`)
 
 /** Código HTTP (ou o `statusCode` do Storage) → motivo da Preparação. */

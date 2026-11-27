@@ -4,6 +4,7 @@ import type { EstadoDoDispositivo, TipoDeDispositivo } from '../domains/acesso/d
 import type { PresencaNoEstudio } from '../domains/aovivo/mensagens'
 import type { CanalDoEstudio, EstadoDoCanal } from '../domains/aovivo/portas'
 import { ErroDeConfiguracao } from '../shared/infra/configuracao'
+import { REABRIR_CANAIS_MS } from './canais'
 import type { Dependencias } from './dependencias'
 import type { ServicosDoDispositivo } from './servicos'
 
@@ -13,8 +14,8 @@ export type EstadoDaRotaDeDispositivo = EstadoDoDispositivo | { tipo: 'carregand
 /** O dispositivo pareado, como `resolverDispositivo` o devolve. */
 export type DispositivoPareado = Extract<EstadoDoDispositivo, { tipo: 'pareado' }>['dispositivo']
 
-/** Depois de um canal `fechado` ou `negado` com o dispositivo ainda válido, os canais reabrem em 5 s (D15, N3). */
-export const REABRIR_CANAIS_MS = 5000
+// `REABRIR_CANAIS_MS` (5 s) mora em `canais.ts`, módulo neutro que as telas de membro também importam (VER-046, N7);
+// `acompanharEstudio`, abaixo, é do dispositivo e só as rotas de dispositivo o usam.
 
 /** Nome da variável na mensagem do `ErroDeConfiguracao` (as mensagens de `lerConfiguracao` sempre a citam). */
 function variavelDoErro(erro: ErroDeConfiguracao): string {

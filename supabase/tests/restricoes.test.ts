@@ -259,7 +259,7 @@ describe('catálogo: chaves estrangeiras e unicidades (DES-001 §7)', () => {
       'dispositivos (usuario_anonimo_id) -> auth.users (id) on delete set null',
       'episodios (criado_por) -> membros (id) on delete set null',
       'estudio_estado (atualizado_por) -> membros (id) on delete set null',
-      'estudio_estado (episodio_teste_id) -> episodios (id) on delete set null',
+      'estudio_estado (episodio_teste_id) -> episodios (id) on delete no action', // VER-046 (I3): era set null
       'mapa_gestos (cena_id) -> cenas (id) on delete no action',
       'mapa_gestos (som_id) -> sons (id) on delete no action',
       'membros (id) -> auth.users (id) on delete cascade',

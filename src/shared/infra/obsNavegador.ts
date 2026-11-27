@@ -29,6 +29,9 @@ export const EVENTOS_DE_SAIDA = Object.freeze([
   'obsVirtualcamStopped',
 ] as const)
 
+/** Evento do obs-browser quando a cena do programa muda (README do obs-browser, "Available events"; VER-046, A1). */
+export const EVENTO_DE_CENA = 'obsSceneChanged'
+
 type ComCallback = (cb: (valor: unknown) => void) => void
 
 /** O pedaço de `window` que o adaptador usa. */
@@ -107,11 +110,18 @@ export function criarObsNoNavegador(janela: JanelaDoObs = window): ObsNoNavegado
         return { gravando: recording, replayBuffer: replaybuffer, transmitindo: streaming, cameraVirtual: virtualcam }
       }),
     aoMudarSaida(f) {
-      const ouvinte = () => f()
+      // o tipo e a saída vêm do nome do evento (`*Stopped` → fim; `*Starting`/`*Started` → início), nunca do `detail`
+      const ouvinte = (ev: Event) => f(ev.type.endsWith('Stopped') ? 'fim' : 'inicio', ev.type.replace(/^obs|(Starting|Started|Stopped)$/g, ''))
       for (const evento of EVENTOS_DE_SAIDA) janela.addEventListener(evento, ouvinte)
       return () => {
         for (const evento of EVENTOS_DE_SAIDA) janela.removeEventListener(evento, ouvinte)
       }
+    },
+    aoMudarCena(f) {
+      // o `detail` do evento não é lido: a cena vem de `cenaAtual()`, que confere o nível (READ_USER)
+      const ouvinte = () => f()
+      janela.addEventListener(EVENTO_DE_CENA, ouvinte)
+      return () => janela.removeEventListener(EVENTO_DE_CENA, ouvinte)
     },
     trocarCena: (nome) => acionar('setCurrentScene', nome),
     salvarClipe: () => acionar('saveReplayBuffer'),

@@ -14,7 +14,7 @@ import type { ServicosDeAoVivo } from '../servicos'
 import { aoVivoVazio, criarCanalFalso, criarFalsos, criarFalsosDePreparacao, usuarioGoogle } from '../servicosFalsos'
 import { ESPERA_MAXIMA_DA_CONSULTA_MS, REAVALIACOES_DA_LEITURA, useAoVivo } from '../useAoVivo'
 import type { AoVivo } from '../useAoVivo'
-import { REABRIR_CANAIS_MS } from '../useDispositivo'
+import { REABRIR_CANAIS_MS } from '../canais'
 import { useEstudio } from '../useEstudio'
 import { Controle, ConteudoDoControle, TEXTO_DO_CONTROLE } from './Controle'
 
@@ -356,6 +356,27 @@ describe('/controle por toque (Tarefa 7)', () => {
     expect(comandosEnviados(m, EP)).toHaveLength(0)
     // a presença em `:controle` é marcada no tópico novo (o palco republica o estado)
     expect(m.canal.presencas(controle(EP2))).toEqual([{}])
+  })
+
+  test('estado-de-remetente-revogado-ignorado (D5, VER-046 N3)', async () => {
+    const m = await pronto()
+    const estado = screen.getByRole('region', { name: 'Estado' })
+    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Geral' })))
+    await esperar()
+    expect(within(estado).getByText('Geral')).toBeTruthy()
+    // o palco antigo (trocado ou revogado) é avisado em `estudio`: o estado dele deixa de valer por 15 min
+    act(() => m.canal.entregar('estudio', 'revogacao', { usuario: PALCO, remetente: OUTRO }))
+    await esperar()
+    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Avulsa' })))
+    await esperar()
+    expect(within(estado).queryByText('Cena Avulsa')).toBeNull()
+    expect(within(estado).getByText('Geral')).toBeTruthy()
+    expect(m.reavaliar).not.toHaveBeenCalled()
+    // o estado de outro remetente (o palco novo) continua valendo
+    const NOVO = 'a1b2c3d4-0000-4000-8000-000000000004'
+    act(() => m.canal.entregar(controle(), 'estado', estadoNoAr({ cenaObs: 'Cena Avulsa', remetente: NOVO })))
+    await esperar()
+    expect(within(estado).getByText('Cena Avulsa')).toBeTruthy()
   })
 
   test('membro-revogado-reavalia', async () => {

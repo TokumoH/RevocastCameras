@@ -6,9 +6,10 @@ import type { CanalDoControle, RepositorioDoPalco } from '../../domains/aovivo/p
 import { criarExecutorObs } from '../../domains/obs/executor'
 import type { ExecutorObs } from '../../domains/obs/executor'
 import { NIVEL_DE_CONTROLE } from '../../domains/obs/portas'
-import type { ObsNoNavegador, ObsWebsocket } from '../../domains/obs/portas'
+import type { MarcadorObs, ObsNoNavegador, ObsWebsocket } from '../../domains/obs/portas'
 import type { ServicosDoDispositivo } from '../servicos'
-import { REABRIR_CANAIS_MS, acompanharEstudio } from '../useDispositivo'
+import { REABRIR_CANAIS_MS } from '../canais'
+import { acompanharEstudio } from '../useDispositivo'
 import type { DispositivoPareado } from '../useDispositivo'
 
 /** O selo de estado fica visível por 5 s depois da tecla `s` (D16). */
@@ -64,6 +65,96 @@ export function lerConfiguracaoDoWebsocket(a: Armazenamento): { porta: number; s
 
 function portaValida(p: unknown): p is number {
   return typeof p === 'number' && Number.isInteger(p) && p >= 1 && p <= 65535
+}
+
+/**
+ * Saída do OBS parada **e** status conhecido (D10, D16): `window.obsstudio` presente, nível READ_OBS ou mais e
+ * `getStatus` com transmissão, gravação, Replay Buffer e câmera virtual desligados. Qualquer dúvida → `false`.
+ */
+export async function saidaParada(obs: ObsNoNavegador): Promise<boolean> {
+  if (!obs.disponivel()) return false
+  const nivel = await obs.nivel()
+  if (nivel === null || nivel < NIVEL_DE_CONTROLE.READ_OBS) return false
+  const st = await obs.status()
+  if (st === null) return false
+  return !st.transmitindo && !st.gravando && !st.replayBuffer && !st.cameraVirtual
+}
+
+/** Releituras periódicas (a cada `SITUACAO_A_CADA_MS`) depois do último início de saída sem o fim, para voltar a confiar no status: 2, ao menos um período inteiro. */
+export const RELEITURAS_PARA_LIBERAR = 2
+
+/**
+ * Guarda da saída do OBS (D10, D16; VER-046, rodada 1). O `getStatus` do obs-browser só marca a saída depois do
+ * `*Started`; entre o `*Starting` e o `*Started` ele ainda diz "parada". Por isso, depois de um evento de início, a guarda
+ * recusa até chegar o `*Stopped` da mesma saída ou até `RELEITURAS_PARA_LIBERAR` releituras periódicas seguidas
+ * (`contarReleitura`) acharem a saída parada (um início que falhou e não teve fim). Sem bloqueio, vale `saidaParada`.
+ * Usada pelas telas de erro (`SoComSaidaParada`), pelo selo e pelo painel de configuração.
+ */
+export function criarGuardaDaSaida(obs: ObsNoNavegador): {
+  evento(tipo: 'inicio' | 'fim', saida: string): void
+  contarReleitura(): void
+  livre(): Promise<boolean>
+} {
+  const iniciadas = new Set<string>()
+  let releituras = 0
+  return {
+    evento(tipo, saida) {
+      if (tipo === 'inicio') {
+        iniciadas.add(saida)
+        releituras = 0
+      } else iniciadas.delete(saida)
+    },
+    contarReleitura() {
+      if (iniciadas.size > 0) releituras++
+    },
+    async livre() {
+      const parada = await saidaParada(obs)
+      // conferido depois do `await`: um início que chega durante a leitura vence
+      if (iniciadas.size > 0) {
+        if (!parada || releituras < RELEITURAS_PARA_LIBERAR) return false
+        iniciadas.clear()
+      }
+      return parada
+    },
+  }
+}
+
+/**
+ * As telas de pareamento e de erro da rota `/obs/palco` (revogado, sem link, link inválido, falha...) só
+ * aparecem quando nada vai ao ar (D16; VER-046, I1): fora do OBS (sem `window.obsstudio`, não há
+ * transmissão) ou com a saída parada e o status conhecido (`saidaParada`). Com a saída no ar ou o status
+ * desconhecido, a Fonte fica vazia (transparente). Um evento de início do obs-browser esconde na hora, já no
+ * `Starting`, e a tela só volta pela guarda (`criarGuardaDaSaida`: o `*Stopped` da saída ou duas releituras periódicas
+ * com a saída parada); a conferência é refeita a cada `SITUACAO_A_CADA_MS` (se um evento faltar).
+ */
+export function SoComSaidaParada({ obs, children }: { obs: ObsNoNavegador; children: ReactNode }): ReactNode {
+  const [livre, setLivre] = useState(false)
+  useEffect(() => {
+    let vivo = true
+    let geracao = 0
+    const guarda = criarGuardaDaSaida(obs)
+    async function conferir(): Promise<void> {
+      const minha = ++geracao
+      const ok = !obs.disponivel() || (await guarda.livre())
+      if (vivo && minha === geracao) setLivre(ok)
+    }
+    void conferir()
+    const soltar = obs.aoMudarSaida((tipo, saida) => {
+      guarda.evento(tipo, saida)
+      if (tipo === 'inicio') setLivre(false)
+      void conferir()
+    })
+    const t = setInterval(() => {
+      guarda.contarReleitura()
+      void conferir()
+    }, SITUACAO_A_CADA_MS)
+    return () => {
+      vivo = false
+      soltar()
+      clearInterval(t)
+    }
+  }, [obs])
+  return livre ? children : null
 }
 
 type Carga = Awaited<ReturnType<RepositorioDoPalco['carregar']>>
@@ -156,24 +247,32 @@ export function PalcoNoAr({
     let cancelarReconexao: (() => void) | null = null
 
     /**
-     * O websocket que o executor vê (a porta `ObsWebsocket` da Tarefa 5): sempre o mesmo objeto, que delega ao
-     * obs-websocket real desta rota, se houver. A queda e a volta aparecem por `conectado()`, e o estado sem
-     * conexão (desligado, senha recusada, sem conexão) pela função `estadoDoWebsocket`: nada no websocket
-     * recria o executor, o serviço do palco ou o `:controle` (rodada 1: nada reinicia a sessão no ar).
+     * O websocket que o executor vê (a porta estreita `MarcadorObs`, VER-046 N1): sempre o mesmo objeto, que
+     * delega ao obs-websocket real desta rota, se houver. Conectar, ouvir a queda e fechar são da rota
+     * (`conectarWs`). A queda e a volta aparecem por `conectado()`, e o estado sem conexão (desligado, senha
+     * recusada, sem conexão) pela função `estadoDoWebsocket`: nada no websocket recria o executor, o serviço
+     * do palco ou o `:controle` (rodada 1: nada reinicia a sessão no ar).
      */
-    const wsDoExecutor: ObsWebsocket = {
-      conectar: async () => 'sem_conexao', // quem conecta é a rota (`conectarWs`), no objeto real
+    const wsDoExecutor: MarcadorObs = {
       versao: () => ws?.versao() ?? Promise.resolve(null),
       marcar: (nome) => ws?.marcar(nome) ?? Promise.resolve(false),
       conectado: () => ws?.conectado() ?? false,
-      aoFechar: () => () => {},
-      fechar: () => {},
     }
     const estadoSemConexao = () => (estadoDoWs === 'desligado' ? 'desligado' : estadoDoWs === 'senha_errada' ? 'senha_errada' : 'sem_conexao')
 
+    /** URLs assinadas já obtidas nesta sessão (a mesma informação da `Vista`, para quem roda fora do React). */
+    let urlsAtuais: Record<string, string> = {}
+
     async function tocarSom(somId: string, volume: number): Promise<boolean> {
-      const el = audios.current.get(somId)
-      if (el === undefined || !el.getAttribute('src')) return false
+      let el = audios.current.get(somId)
+      if (el === undefined || !el.getAttribute('src')) {
+        // som relido agora (VER-046, I2): o `<audio>` (ou a URL dele) ainda não foi desenhado pelo React; toca por
+        // um elemento avulso com a URL já assinada
+        const som = sessao?.dados.sons.find((x) => x.id === somId)
+        const url = som === undefined ? undefined : urlsAtuais[som.caminho]
+        if (url === undefined) return false
+        el = new Audio(url)
+      }
       try {
         el.currentTime = 0
         el.volume = Math.min(1, Math.max(0, volume))
@@ -213,8 +312,10 @@ export function PalcoNoAr({
     let cancelarNovaConsulta: (() => void) | null = null
     const atual = (): ExecutorObs => sessao?.executor ?? base
 
-    async function renovarUrls(s: Sessao): Promise<void> {
-      const caminhos = [...s.dados.sons.map((x) => x.caminho), ...s.dados.avisos.flatMap((a) => (a.caminhoDaImagem === null ? [] : [a.caminhoDaImagem]))]
+    /** Assina as URLs dos arquivos da sessão; `soNovos`: só os que ainda não têm URL (depois de reler as listas). */
+    async function renovarUrls(s: Sessao, soNovos = false): Promise<void> {
+      const todos = [...s.dados.sons.map((x) => x.caminho), ...s.dados.avisos.flatMap((a) => (a.caminhoDaImagem === null ? [] : [a.caminhoDaImagem]))]
+      const caminhos = soNovos ? todos.filter((c) => urlsAtuais[c] === undefined) : todos
       const pares = await Promise.all(
         caminhos.map(async (c) => {
           try {
@@ -227,6 +328,7 @@ export function PalcoNoAr({
       if (!vivo || sessao !== s) return
       const novas: Record<string, string> = {}
       for (const p of pares) if (p !== null) novas[p[0]] = p[1]
+      urlsAtuais = { ...urlsAtuais, ...novas }
       // um `<audio>` tocando não troca de `src` (a carga nova cortaria o som): a URL nova entra no fim dele
       for (const som of s.dados.sons) {
         const el = audios.current.get(som.id)
@@ -244,9 +346,28 @@ export function PalcoNoAr({
       mudar((v) => ({ ...v, urls: { ...v.urls, ...novas } }))
     }
 
+    /**
+     * Relê as listas do episódio da sessão (VER-046, I2): troca a carga da tela e assina as URLs dos arquivos
+     * novos antes de devolver (um som relido já pode tocar). Falha ou sessão trocada → `null` (fica a anterior).
+     */
+    async function recarregarDados(s: Sessao): Promise<Carga | null> {
+      let nova: Carga
+      try {
+        nova = await servicos.palco.carregar(s.episodio.id)
+      } catch {
+        return null
+      }
+      if (!vivo || sessao !== s) return null
+      s.dados = nova
+      mudar((v) => ({ ...v, carga: nova }))
+      await renovarUrls(s, true)
+      return vivo && sessao === s ? nova : null
+    }
+
     function iniciarSessao(episodio: Sessao['episodio'], dados: Carga): void {
       const canal = servicos.canais(dispositivo.usuarioId).controle(episodio.id)
       const executor = criarExecutor()
+      let criada: Sessao | null = null // a releitura só é pedida depois de a sessão existir
       const palco = criarPalco({
         canal,
         repo: servicos.palco,
@@ -256,8 +377,10 @@ export function PalcoNoAr({
         dados,
         meuUsuario: dispositivo.usuarioId,
         agendarRepeticao: repetir,
+        recarregarDados: () => (criada === null ? Promise.resolve(null) : recarregarDados(criada)),
       })
       const s: Sessao = { episodio, dados, canal, executor, palco, soltar: [] }
+      criada = s
       sessao = s
       s.soltar.push(
         canal.aoMudarEstado((e) => {
@@ -267,6 +390,7 @@ export function PalcoNoAr({
         }),
         repetir(() => void renovarUrls(s), RENOVAR_URLS_MS),
       )
+      urlsAtuais = {}
       mudar((v) => ({ ...v, carga: dados, modo: episodio.modo, urls: {}, avisoId: null }))
       void renovarUrls(s)
       void atualizarSituacao()
@@ -287,6 +411,7 @@ export function PalcoNoAr({
           /* jsdom e áudio sem fonte */
         }
       }
+      urlsAtuais = {}
       mudar((v) => ({ ...v, carga: null, modo: null, urls: {}, avisoId: null }))
     }
 
@@ -306,7 +431,9 @@ export function PalcoNoAr({
       }
       if (!vivo || minha !== consulta) return
       if (sessao !== null && ep !== null && sessao.episodio.id === ep.id && sessao.episodio.modo === ep.modo) {
+        // mesmo episódio: republica e relê as listas, como o `/controle` e a aba Ao vivo em cada consulta (VER-046, I2)
         sessao.palco.republicar()
+        void sessao.palco.recarregarListas()
         return
       }
       pararSessao()
@@ -333,7 +460,10 @@ export function PalcoNoAr({
       } catch {
         return
       }
-      if (!vivo || executor !== atual() || depois === situacaoPublicada) return
+      if (!vivo || executor !== atual()) return
+      // a cena do programa no OBS (getCurrentScene, com o nível conferido pelo executor) entra no estado (VER-044 A1, D9)
+      sessao?.palco.definirCenaObs(executor.cenaAtual())
+      if (depois === situacaoPublicada) return
       situacaoPublicada = depois
       estudio.atualizarPresenca()
       sessao?.palco.republicar()
@@ -391,20 +521,11 @@ export function PalcoNoAr({
 
     // --- selo e configuração (D10, D16) ---
     let geracaoDaSaida = 0
+    const guarda = criarGuardaDaSaida(obs)
     let cancelarSelo: (() => void) | null = null
     let cancelarConfig: (() => void) | null = null
     let seloAberto = false
     let configAberta = false
-
-    /** Saída parada **e** status conhecido; qualquer dúvida recusa. */
-    async function saidaParada(): Promise<boolean> {
-      if (!obs.disponivel()) return false
-      const nivel = await obs.nivel()
-      if (nivel === null || nivel < NIVEL_DE_CONTROLE.READ_OBS) return false
-      const st = await obs.status()
-      if (st === null) return false
-      return !st.transmitindo && !st.gravando && !st.replayBuffer && !st.cameraVirtual
-    }
 
     function fecharSeloEConfig(): void {
       cancelarSelo?.()
@@ -416,7 +537,7 @@ export function PalcoNoAr({
 
     async function pedir(qual: 'selo' | 'config'): Promise<void> {
       const g = geracaoDaSaida
-      const livre = await saidaParada()
+      const livre = await guarda.livre()
       if (!vivo || !livre || g !== geracaoDaSaida) return
       if (qual === 'selo') {
         cancelarSelo?.()
@@ -442,7 +563,7 @@ export function PalcoNoAr({
     /** Defesa a mais (se um evento de saída do obs-browser faltar): a releitura periódica também fecha selo e painel com a saída no ar ou o status desconhecido. */
     async function conferirSaidaComAberto(): Promise<void> {
       if (!seloAberto && !configAberta) return
-      const livre = await saidaParada()
+      const livre = await guarda.livre()
       if (vivo && !livre) fecharSeloEConfig()
     }
 
@@ -472,13 +593,17 @@ export function PalcoNoAr({
         pararSessao()
       },
     })
-    const soltarSaida = obs.aoMudarSaida(() => {
+    const soltarSaida = obs.aoMudarSaida((tipo, saida) => {
+      guarda.evento(tipo, saida)
       geracaoDaSaida++
       fecharSeloEConfig()
       void atualizarSituacao()
     })
+    // cena trocada à mão no OBS (obsSceneChanged): relê a situação, que traz a cena atual (VER-046, A1)
+    const soltarCena = obs.aoMudarCena(() => void atualizarSituacao())
     window.addEventListener('keydown', aoTeclar)
     repetir(() => {
+      guarda.contarReleitura()
       void atualizarSituacao()
       void conferirSaidaComAberto()
     }, SITUACAO_A_CADA_MS)
@@ -504,6 +629,7 @@ export function PalcoNoAr({
       controlador.current = null
       window.removeEventListener('keydown', aoTeclar)
       soltarSaida()
+      soltarCena()
       estudio.parar()
       pararSessao()
       soltarQueda?.()

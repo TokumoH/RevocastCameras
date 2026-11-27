@@ -326,6 +326,14 @@ export function criarFabricaDeCanais(cliente: SupabaseClient, usuarioId: string,
         aoEntrarAlguem(f) {
           return alca.aoPresenca(alca.ouvintes.entrada, (adiarTela) => () => adiarTela(f))
         },
+        aoMudarPresentes(f) {
+          return alca.aoSincronizar((adiarTela) => (estado: Record<string, unknown>) => {
+            const usuarios = Object.entries(estado)
+              .filter(([usuario, lista]) => UUID.test(usuario) && Array.isArray(lista) && lista.length > 0)
+              .map(([usuario]) => usuario)
+            adiarTela(() => f(usuarios))
+          })
+        },
         aoMudarEstado: alca.aoEstado,
         enviarComando(c) {
           return alca.enviar(EVENTOS_DO_CONTROLE.comando, { ...c })

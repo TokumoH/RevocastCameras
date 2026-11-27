@@ -117,6 +117,11 @@ describe('criarRepositorioDoAoVivo', () => {
       expiraEm: '2026-11-27T12:02:00+00:00',
     })
     expect(f.tirar()).toEqual([['rpc', 'criar_codigo_pareamento', { p_tipo: 'obs_camera', p_rotulo: 'OBS da câmera', p_dispositivo: null, p_camera: UID }]])
+    // rótulo fora do limite do domínio (conferirRotulo, VER-046 I5): invalido, sem chamar o banco
+    for (const rotulo of ['', '   ', 'a'.repeat(61), '📷'.repeat(61)]) {
+      expect(await motivoDe(f.repo.criarCodigo({ tipo: 'camera', rotulo, dispositivoId: null, cameraId: null }))).toBe('invalido')
+    }
+    expect(f.tirar()).toEqual([])
     // linha ausente ou incompleta: nunca devolve um código vazio
     f.responder('criar_codigo_pareamento', { data: [] }, { data: [{ dispositivo: DISP, codigo: null, expira: 'x' }] })
     expect(await motivoDe(f.repo.criarCodigo({ tipo: 'camera', rotulo: 'x', dispositivoId: DISP, cameraId: null }))).toBe('outro')

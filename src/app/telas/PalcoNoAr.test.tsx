@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, test, expect, vi } from 'vitest'
 import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { lerEstadoNoAr } from '../../domains/aovivo/mensagens'
+import { RELEITURA_MINIMA_MS } from '../../domains/aovivo/palco'
 import type { RepositorioDoPalco } from '../../domains/aovivo/portas'
 import type { ObsWebsocket } from '../../domains/obs/portas'
 import { criarObsNoNavegador } from '../../shared/infra/obsNavegador'
@@ -42,14 +43,17 @@ type StatusDoObs = { recording: boolean; replaybuffer: boolean; streaming: boole
 const PARADO: StatusDoObs = { recording: false, replaybuffer: false, streaming: false, virtualcam: false }
 
 /** `window.obsstudio` falso (obs-browser), respondendo pelo callback; o palco usa o adaptador real sobre ele. */
-function instalarObs(o: { nivel?: number; status?: Partial<StatusDoObs> | null } = {}) {
+function instalarObs(o: { nivel?: number; status?: Partial<StatusDoObs> | null; cena?: string } = {}) {
   const chamadas: string[] = []
   const status = () => (o.status === null ? null : { ...PARADO, recordingPaused: false, ...o.status })
   const obsstudio = {
     pluginVersion: '2.24.0',
     getControlLevel: (cb: (v: unknown) => void) => cb(o.nivel ?? 4),
     getScenes: (cb: (v: unknown) => void) => cb(['Abertura']),
-    getCurrentScene: (cb: (v: unknown) => void) => cb({ name: 'Abertura', width: 1920, height: 1080 }),
+    getCurrentScene: (cb: (v: unknown) => void) => {
+      chamadas.push('getCurrentScene')
+      cb({ name: o.cena ?? 'Abertura', width: 1920, height: 1080 })
+    },
     getStatus: (cb: (v: unknown) => void) => {
       chamadas.push('getStatus')
       cb(status())
@@ -62,6 +66,10 @@ function instalarObs(o: { nivel?: number; status?: Partial<StatusDoObs> | null }
     chamadas,
     mudarStatus(s: Partial<StatusDoObs> | null) {
       o.status = s
+    },
+    /** A cena do programa passa a ser `nome` (como uma troca feita à mão no OBS). */
+    mudarCena(nome: string) {
+      o.cena = nome
     },
   }
 }
@@ -157,7 +165,14 @@ function montar(
   return { d, r, arm, ws, episodioAtivo, controle, criados }
 }
 
-function comando(m: ReturnType<typeof montar>, payload: Record<string, unknown>, remetente = MEMBRO, ep = EP) {
+/** Presença do `:controle` (membros) que os testes de comando simulam: o palco só aceita comando de quem está nela (VER-046, I4). */
+function presentesNoControle(m: ReturnType<typeof montar>, usuarios: string[], ep = EP) {
+  act(() => m.d.canal.sincronizarPresenca(m.controle(ep), Object.fromEntries(usuarios.map((u) => [u, [{}]]))))
+}
+
+/** Comando de um membro: por padrão ele está na presença do `:controle` (`naPresenca: false` simula quem não está). */
+function comando(m: ReturnType<typeof montar>, payload: Record<string, unknown>, remetente = MEMBRO, ep = EP, o: { naPresenca?: boolean } = {}) {
+  if (o.naPresenca !== false) presentesNoControle(m, [MEMBRO, OUTRO_MEMBRO, remetente], ep)
   act(() => m.d.canal.entregar(m.controle(ep), 'comando', { id: novoId(), ...payload, remetente }))
 }
 
@@ -265,9 +280,19 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     })
     await esperar()
     expect(obs.chamadas).toContain('getStatus') // a conferência terminou dizendo "parado"
+    expect(m.r.container.querySelector('input')).toBeNull()
+    // VER-046, rodada 1: o status continua "parado" até o `Started`, então a tecla `s` também é recusada depois do
+    // `Starting` (antes, o selo abria nessa janela)
     tecla('s')
     await esperar()
-    expect(screen.getByText('Pareado como Palco do estúdio')).toBeTruthy() // controle: sem evento no meio, abre
+    expect(screen.queryByText('Pareado como Palco do estúdio')).toBeNull()
+    // controle: com o fim da mesma saída, abre
+    act(() => {
+      window.dispatchEvent(new Event('obsStreamingStopped'))
+    })
+    tecla('s')
+    await esperar()
+    expect(screen.getByText('Pareado como Palco do estúdio')).toBeTruthy()
     expect(m.r.container.querySelector('input')).toBeNull()
   })
 
@@ -685,6 +710,233 @@ describe('/obs/palco no ar (D9, D10, D15, D16)', () => {
     expect(screen.getByText(TEXTO_DO_DISPOSITIVO.revogado)).toBeTruthy()
     expect(m.d.chamadas.sair).toBe(1)
     expect(m.d.canal.abertos()).toEqual([])
+  })
+})
+
+/** Último estado publicado pelo palco no `:controle`. */
+function ultimoEstado(m: ReturnType<typeof montar>, ep = EP): Record<string, unknown> | undefined {
+  return m.d.canal.enviados(m.controle(ep)).filter((e) => e.event === 'estado').at(-1)?.payload as Record<string, unknown> | undefined
+}
+
+describe('/obs/palco: revisão final da E3 (VER-046)', () => {
+  test.each([
+    ['transmissão', { status: { streaming: true } }],
+    ['gravação', { status: { recording: true } }],
+    ['status desconhecido (sem resposta)', { status: null }],
+    ['nível abaixo de READ_OBS', { nivel: 0 }],
+  ] as const)('palco revogado no ar não aparece na transmissão (I1, D16): %s', async (_nome, o) => {
+    instalarObs(o)
+    const m = montar()
+    await esperar()
+    act(() => m.d.canal.entregar('estudio', 'revogacao', { usuario: EU, remetente: MEMBRO }))
+    await esperar()
+    expect(m.d.chamadas.sair).toBe(1)
+    expect(m.d.canal.abertos()).toEqual([])
+    expect(m.r.container.textContent).toBe('')
+    expect(screen.queryByText(TEXTO_DO_DISPOSITIVO.revogado)).toBeNull()
+    await esperar(SITUACAO_A_CADA_MS)
+    expect(m.r.container.textContent).toBe('')
+  })
+
+  test('troca do aparelho (revogação pelo canal fechado) também não aparece no ar (I1)', async () => {
+    instalarObs({ status: { replaybuffer: true } })
+    const m = montar()
+    await esperar()
+    m.d.definirDispositivo(null)
+    act(() => m.d.canal.definirEstado('estudio', 'fechado'))
+    await esperar()
+    expect(m.d.chamadas.sair).toBe(1)
+    expect(m.r.container.textContent).toBe('')
+  })
+
+  test('a mensagem de revogado aparece com a saída parada e some no início da saída (I1)', async () => {
+    const obs = instalarObs()
+    const m = montar()
+    await esperar()
+    act(() => m.d.canal.entregar('estudio', 'revogacao', { usuario: EU, remetente: MEMBRO }))
+    await esperar()
+    expect(screen.getByText(TEXTO_DO_DISPOSITIVO.revogado)).toBeTruthy()
+    // o evento de início some com a tela na hora, já no Starting (antes da releitura do status)
+    act(() => {
+      window.dispatchEvent(new Event('obsStreamingStarting'))
+    })
+    expect(m.r.container.textContent).toBe('')
+    obs.mudarStatus({ streaming: true })
+    await esperar()
+    expect(m.r.container.textContent).toBe('')
+    // a saída para de novo (o `Stopped` da mesma saída): volta a mostrar
+    obs.mudarStatus({})
+    act(() => {
+      window.dispatchEvent(new Event('obsStreamingStopped'))
+    })
+    await esperar()
+    expect(screen.getByText(TEXTO_DO_DISPOSITIVO.revogado)).toBeTruthy()
+  })
+
+  test.each(['Recording', 'Streaming', 'Replaybuffer'])(
+    'Starting de %s com o status ainda "parado": a tela continua vazia até o Stopped ou duas releituras (I1, rodada 1)',
+    async (saida) => {
+      instalarObs() // o getStatus continua dizendo "parado" (como no obs-browser antes do `Started`)
+      const m = montar()
+      await esperar()
+      act(() => m.d.canal.entregar('estudio', 'revogacao', { usuario: EU, remetente: MEMBRO }))
+      await esperar()
+      expect(screen.getByText(TEXTO_DO_DISPOSITIVO.revogado)).toBeTruthy()
+      act(() => {
+        window.dispatchEvent(new Event(`obs${saida}Starting`))
+      })
+      expect(m.r.container.textContent).toBe('')
+      await esperar()
+      expect(m.r.container.textContent).toBe('')
+      // o `Stopped` de outra saída não libera
+      act(() => {
+        window.dispatchEvent(new Event(saida === 'Recording' ? 'obsStreamingStopped' : 'obsRecordingStopped'))
+      })
+      await esperar()
+      expect(m.r.container.textContent).toBe('')
+      // uma releitura periódica com o status "parado" ainda não libera (pode ser a janela antes do `Started`)
+      await esperar(SITUACAO_A_CADA_MS)
+      expect(m.r.container.textContent).toBe('')
+      // a segunda libera (um início que falhou e nunca teve fim)
+      await esperar(SITUACAO_A_CADA_MS)
+      expect(screen.getByText(TEXTO_DO_DISPOSITIVO.revogado)).toBeTruthy()
+    },
+  )
+
+  test('depois de um início que falhou e foi liberado, um Starting novo volta a esconder (I1, rodada 2)', async () => {
+    instalarObs() // o getStatus diz "parado" o tempo todo
+    const m = montar()
+    await esperar()
+    act(() => m.d.canal.entregar('estudio', 'revogacao', { usuario: EU, remetente: MEMBRO }))
+    await esperar()
+    // um início que falha (Starting sem Stopped): liberado depois de duas releituras com a saída parada
+    act(() => {
+      window.dispatchEvent(new Event('obsRecordingStarting'))
+    })
+    await esperar(SITUACAO_A_CADA_MS * 2)
+    expect(screen.getByText(TEXTO_DO_DISPOSITIVO.revogado)).toBeTruthy()
+    // um Starting novo, com o status ainda "parado": a contagem recomeça, e a tela fica vazia
+    act(() => {
+      window.dispatchEvent(new Event('obsStreamingStarting'))
+    })
+    await esperar()
+    expect(m.r.container.textContent).toBe('')
+    await esperar(SITUACAO_A_CADA_MS)
+    expect(m.r.container.textContent).toBe('')
+  })
+
+  test('comando de quem não está na presença do `:controle` é descartado (I4)', async () => {
+    instalarObs()
+    const OUTRO_PALCO = 'b0000000-0000-4000-8000-0000000000b2'
+    const m = montar()
+    await esperar()
+    presentesNoControle(m, [MEMBRO])
+    comando(m, { acao: 'aviso', avisoId: AVISO }, OUTRO_PALCO, EP, { naPresenca: false })
+    await esperar()
+    expect(m.r.container.querySelector('.aviso-no-ar')).toBeNull()
+    expect(m.d.chamadas.registros).toEqual([])
+    comando(m, { acao: 'aviso', avisoId: AVISO }, MEMBRO, EP, { naPresenca: false })
+    await esperar()
+    expect(m.r.container.querySelector('.aviso-no-ar')).not.toBeNull()
+  })
+
+  test('aviso e som criados depois do início: o palco relê e executa (I2)', async () => {
+    instalarObs()
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    const AVISO_NOVO = 'f0000000-0000-4000-8000-000000000002'
+    const SOM_NOVO = '50000000-0000-4000-8000-000000000002'
+    const m = montar()
+    await esperar()
+    const base = carga(EP, 'Ensaio geral')
+    m.d.definirCarga({
+      ...base,
+      sons: [...base.sons, { ...base.sons[0], id: SOM_NOVO, rotulo: 'Risada', caminho: 'som/risada.mp3', volume: 0.5 }],
+      avisos: [...base.avisos, { ...base.avisos[0], id: AVISO_NOVO, titulo: 'Aviso novo', texto: '' }],
+    })
+    comando(m, { acao: 'aviso', avisoId: AVISO_NOVO })
+    await esperar()
+    expect(screen.getByText('Aviso novo')).toBeTruthy()
+    expect(ultimoEstado(m)?.ultimo).toMatchObject({ acao: 'aviso', resultado: 'ok' })
+    comando(m, { acao: 'som', somId: SOM_NOVO })
+    await esperar()
+    expect(ultimoEstado(m)?.ultimo).toMatchObject({ acao: 'som', resultado: 'ok' })
+    expect(play).toHaveBeenCalledTimes(1)
+    expect((play.mock.contexts[0] as HTMLAudioElement).getAttribute('src')).toBe('https://armazenamento.revocast.test/assinada/som/risada.mp3?token=teste')
+    // a releitura assinou só o arquivo novo
+    expect(m.d.chamadas.urls.filter((u) => u === 'som/aplauso.mp3')).toHaveLength(1)
+    expect(m.d.chamadas.urls.filter((u) => u === 'som/risada.mp3')).toHaveLength(1)
+  })
+
+  test('som com URL já assinada e o `<audio>` ainda sem ela: toca por um elemento avulso (I2)', async () => {
+    instalarObs()
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    const m = montar()
+    await esperar()
+    // o React ainda não desenhou a URL (o caso do som recém-relido): simulado tirando o src do elemento
+    const audio = m.r.container.querySelector('audio') as HTMLAudioElement
+    audio.removeAttribute('src')
+    comando(m, { acao: 'som', somId: SOM })
+    await esperar()
+    expect(ultimoEstado(m)?.ultimo).toMatchObject({ acao: 'som', resultado: 'ok' })
+    expect(play).toHaveBeenCalledTimes(1)
+    expect(play.mock.contexts[0]).not.toBe(audio)
+    expect((play.mock.contexts[0] as HTMLAudioElement).getAttribute('src')).toBe('https://armazenamento.revocast.test/assinada/som/aplauso.mp3?token=teste')
+  })
+
+  test('aviso corrigido: quem entra no `:controle` faz o palco reler (I2)', async () => {
+    instalarObs()
+    const m = montar()
+    await esperar()
+    const carregar = vi.spyOn(m.d.servicos.palco, 'carregar')
+    m.d.definirCarga(carga(EP, 'Ensaio geral', { titulo: 'Inscreva-se já' }))
+    act(() => m.d.canal.entrarAlguem(m.controle()))
+    await esperar()
+    expect(carregar).toHaveBeenCalledTimes(1)
+    comando(m, { acao: 'aviso', avisoId: AVISO })
+    await esperar()
+    expect(screen.getByText('Inscreva-se já')).toBeTruthy()
+    expect(carregar).toHaveBeenCalledTimes(1) // o aviso já era conhecido: o comando não relê
+    // o mesmo episódio de volta (episodio_ativo_mudou) também relê, passado o intervalo mínimo (Date.now adiantado)
+    const agora = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(agora + RELEITURA_MINIMA_MS)
+    act(() => m.d.canal.entregar('estudio', 'episodio_ativo_mudou', { remetente: MEMBRO }))
+    await esperar()
+    expect(carregar).toHaveBeenCalledTimes(2)
+    expect(m.d.canal.abertos()).toEqual(['estudio', m.controle()])
+  })
+
+  test('cena atual do OBS no estado; troca à mão aparece (A1, D9)', async () => {
+    const obs = instalarObs({ cena: 'Abertura' })
+    const m = montar()
+    await esperar()
+    expect(ultimoEstado(m)?.cenaObs).toBe('Abertura')
+    obs.mudarCena('Conversa')
+    act(() => {
+      window.dispatchEvent(new CustomEvent('obsSceneChanged', { detail: { name: 'Conversa' } }))
+    })
+    await esperar()
+    expect(ultimoEstado(m)?.cenaObs).toBe('Conversa')
+    // sem o evento, a releitura periódica também traz a cena
+    obs.mudarCena('Abertura')
+    await esperar(SITUACAO_A_CADA_MS)
+    expect(ultimoEstado(m)?.cenaObs).toBe('Abertura')
+    // cena com nome longo vai como null no canal, sem perder o resto do estado
+    obs.mudarCena('L'.repeat(201))
+    await esperar(SITUACAO_A_CADA_MS)
+    expect(ultimoEstado(m)?.cenaObs).toBeNull()
+    expect(ultimoEstado(m)?.episodioId).toBe(EP)
+  })
+
+  test('cena atual: abaixo de READ_USER o palco não pede getCurrentScene (A1)', async () => {
+    const obs = instalarObs({ nivel: 1 })
+    const m = montar()
+    await esperar()
+    act(() => {
+      window.dispatchEvent(new CustomEvent('obsSceneChanged'))
+    })
+    await esperar(SITUACAO_A_CADA_MS)
+    expect(obs.chamadas).not.toContain('getCurrentScene')
+    expect(ultimoEstado(m)?.cenaObs).toBeNull()
   })
 })
 

@@ -649,6 +649,8 @@ describe('preparação, lista e registro (Correção 1)', () => {
     linhas(await comoSessao(db, ana, 'select public.definir_modo_teste($1)', [ID_EPISODIO]))
     expect((await db.query('select episodio_teste_id from public.estudio_estado')).rows).toEqual([{ episodio_teste_id: ID_EPISODIO }])
     expect(linhas(await comoSessao(db, ana, apagaAviso, [ID_AVISO]))).toEqual([{ id: ID_AVISO }])
+    // VER-046 (I3): o episódio do modo teste não se apaga; a equipe sai do teste pela função antes de apagar.
+    linhas(await comoSessao(db, ana, 'select public.definir_modo_teste($1)', [null]))
     expect(linhas(await comoSessao(db, ana, apagaEpisodio, [ID_EPISODIO]))).toEqual([{ id: ID_EPISODIO }])
     expect(linhas(await comoSessao(db, ana, apagaCena, [ID_CENA]))).toEqual([{ id: ID_CENA }])
   })
@@ -1912,6 +1914,52 @@ describe('E3 — pareamento, ao vivo e canais', () => {
     expect(linhas(await comoSessao(db, adm, APAGA, [ID_AO_VIVO]))).toEqual([])
     expect(linhas(await comoSessao(db, ana, APAGA, [ID_EPISODIO]))).toEqual([{ id: ID_EPISODIO }])
     expect((await db.query('select id from public.episodios order by id')).rows).toEqual([{ id: ID_AO_VIVO }, { id: ID_ENCERRADO }])
+  })
+
+  test('e3-episodio-do-teste-nao-se-apaga (VER-046, I3)', async () => {
+    const APAGA = 'delete from public.episodios where id = $1 returning id'
+    linhas(await comoSessao(db, ana, 'select public.definir_modo_teste($1)', [ID_EPISODIO]))
+    // nem equipe nem admin apagam o rascunho que está no modo teste: o teste não muda por fora das funções (D7)
+    expect(linhas(await comoSessao(db, ana, APAGA, [ID_EPISODIO]))).toEqual([])
+    expect(linhas(await comoSessao(db, adm, APAGA, [ID_EPISODIO]))).toEqual([])
+    expect(linhas(await comoSessao(db, ana, 'select modo from public.episodio_ativo()'))).toEqual([{ modo: 'teste' }])
+    expect((await db.query('select episodio_teste_id from public.estudio_estado')).rows).toEqual([{ episodio_teste_id: ID_EPISODIO }])
+    // controle: outro rascunho (fora do teste) continua apagável
+    await db.query(`insert into public.episodios (id, titulo) values ($1, 'Outro rascunho')`, [ID_ENCERRADO])
+    expect(linhas(await comoSessao(db, ana, APAGA, [ID_ENCERRADO]))).toEqual([{ id: ID_ENCERRADO }])
+    // saindo do modo teste pela função, o rascunho volta a poder ser apagado
+    linhas(await comoSessao(db, ana, 'select public.definir_modo_teste($1)', [null]))
+    expect(linhas(await comoSessao(db, ana, APAGA, [ID_EPISODIO]))).toEqual([{ id: ID_EPISODIO }])
+  })
+
+  test('e3-episodio-do-teste-fk-restrict (VER-046, I3, rodada 1)', async () => {
+    // A chave estrangeira recusa o delete do episódio do teste mesmo por fora da política (superusuário dos testes e
+    // postgres_sim, o dono das migrações): fecha a corrida definir_modo_teste × delete por construção.
+    await definirTeste(ID_EPISODIO)
+    for (const papel of [null, 'postgres_sim'] as const) {
+      await db.query('savepoint antes_do_delete')
+      if (papel !== null) await db.query(`set local role ${papel}`)
+      const r = await db.query('delete from public.episodios where id = $1', [ID_EPISODIO]).catch((e: unknown) => e)
+      expect([papel, codigoDoErro(r as Error)]).toEqual([papel, '23503'])
+      await db.query('rollback to savepoint antes_do_delete')
+    }
+    expect((await db.query('select episodio_teste_id from public.estudio_estado')).rows).toEqual([{ episodio_teste_id: ID_EPISODIO }])
+    // controle: sem o teste, o mesmo delete do dono passa
+    await definirTeste(null)
+    await db.query('set local role postgres_sim')
+    expect((await db.query('delete from public.episodios where id = $1 returning id', [ID_EPISODIO])).rows).toEqual([{ id: ID_EPISODIO }])
+    await db.query('reset role')
+  })
+
+  test('e3-episodio-do-teste-dependencia-da-leitura (VER-046, rodada 1)', async () => {
+    // A política de delete lê estudio_estado como quem apaga (estudio_estado_le). Sem essa leitura, a subconsulta é nula e
+    // a política deixa de filtrar: o delete do episódio do teste falha fechado pela chave estrangeira (23503), nunca apaga.
+    await definirTeste(ID_EPISODIO)
+    await db.query('drop policy estudio_estado_le on public.estudio_estado')
+    expect(linhas(await comoSessao(db, ana, 'select id from public.estudio_estado'))).toEqual([]) // a leitura foi negada
+    const r = await comoSessao(db, ana, 'delete from public.episodios where id = $1 returning id', [ID_EPISODIO])
+    expect(codigoDoErro(erro(r))).toBe('23503')
+    expect((await db.query('select episodio_teste_id from public.estudio_estado')).rows).toEqual([{ episodio_teste_id: ID_EPISODIO }])
   })
 
   test('e3-estudio-estado-so-leitura', async () => {

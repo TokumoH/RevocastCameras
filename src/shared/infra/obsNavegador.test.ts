@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, test, expect, vi } from 'vitest'
-import { EVENTOS_DE_SAIDA, TEMPO_DO_OBS_MS, criarObsNoNavegador } from './obsNavegador'
+import { EVENTOS_DE_SAIDA, EVENTO_DE_CENA, TEMPO_DO_OBS_MS, criarObsNoNavegador } from './obsNavegador'
 
 type Callback = (valor: unknown) => void
 
@@ -148,5 +148,34 @@ describe('window.obsstudio (obs-browser)', () => {
     soltar()
     for (const evento of EVENTOS_DE_SAIDA) window.dispatchEvent(new CustomEvent(evento))
     expect(vezes).toBe(11)
+  })
+
+  test('aoMudarSaida diz o tipo e a saída pelo nome do evento (VER-046, rodada 1)', () => {
+    const obs = criarObsNoNavegador()
+    const vistos: string[] = []
+    const soltar = obs.aoMudarSaida((tipo, saida) => vistos.push(`${tipo}:${saida}`))
+    for (const evento of EVENTOS_DE_SAIDA) window.dispatchEvent(new CustomEvent(evento, { detail: { tipo: 'fim' } }))
+    soltar()
+    expect(vistos).toEqual([
+      'inicio:Streaming', 'inicio:Streaming', 'fim:Streaming',
+      'inicio:Recording', 'inicio:Recording', 'fim:Recording',
+      'inicio:Replaybuffer', 'inicio:Replaybuffer', 'fim:Replaybuffer',
+      'inicio:Virtualcam', 'fim:Virtualcam',
+    ])
+  })
+
+  test('aoMudarCena ouve só obsSceneChanged e não lê o detail (VER-046, A1)', () => {
+    expect(EVENTO_DE_CENA).toBe('obsSceneChanged')
+    const obs = criarObsNoNavegador()
+    let vezes = 0
+    const soltar = obs.aoMudarCena(() => vezes++)
+    window.dispatchEvent(new CustomEvent('obsSceneChanged', { detail: { name: 'Conversa' } }))
+    window.dispatchEvent(new CustomEvent('obsSceneChanged'))
+    window.dispatchEvent(new CustomEvent('obsStreamingStarted'))
+    window.dispatchEvent(new CustomEvent('obsSceneListChanged'))
+    expect(vezes).toBe(2)
+    soltar()
+    window.dispatchEvent(new CustomEvent('obsSceneChanged', { detail: { name: 'Conversa' } }))
+    expect(vezes).toBe(2)
   })
 })

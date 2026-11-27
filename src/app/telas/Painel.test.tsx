@@ -7,7 +7,7 @@ import { App } from '../App'
 import type { Dependencias } from '../dependencias'
 import type { ServicosDeAoVivo } from '../servicos'
 import { aoVivoVazio, criarCanalFalso, criarFalsos, criarFalsosDePreparacao, preparacaoVazia, usuarioGoogle } from '../servicosFalsos'
-import { REABRIR_CANAIS_MS } from '../useDispositivo'
+import { REABRIR_CANAIS_MS } from '../canais'
 
 afterEach(() => {
   cleanup()

@@ -47,6 +47,12 @@ export interface CanalDoControle {
   aoEstado(f: (e: EstadoNoAr, remetente: string) => void): () => void
   /** Alguém entrou na presença do tópico: o palco republica o estado. */
   aoEntrarAlguem(f: () => void): () => void
+  /**
+   * Quem está na presença do tópico (a chave de cada um, só uuid), a cada mudança; quem se inscreve com o
+   * canal já conectado recebe a lista atual. Só membros podem marcar presença em `:controle` (RLS, D6), então
+   * o palco aceita comando só de quem está aqui (VER-046, I4: o remetente continua declarado).
+   */
+  aoMudarPresentes(f: (usuarios: string[]) => void): () => void
   aoMudarEstado(f: (e: EstadoDoCanal) => void): () => void
   enviarComando(c: Comando): Promise<RespostaDoEnvio>
   publicarEstado(e: EstadoNoAr): Promise<RespostaDoEnvio>

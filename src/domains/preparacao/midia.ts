@@ -108,8 +108,12 @@ export function conferirArquivo(a: { tamanho: number; inicio: Uint8Array }, usoA
   return { ok: true, tipo }
 }
 
-/** uuid em minúsculas, forma 8-4-4-4-12: a mesma da política de `insert` em `storage.objects` (D3). */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+/**
+ * uuid em minúsculas, forma 8-4-4-4-12 (a que o Postgres devolve): a mesma da política de `insert` em
+ * `storage.objects` (D3). Única no app (VER-046, N4): `aovivo/mensagens.ts` a reexporta e o adaptador do Storage
+ * monta o caminho seguro com ela.
+ */
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** Caminho no Storage: `som|imagem/<uuid>.<ext>`. O nome do arquivo do computador nunca entra aqui. */
 export function caminhoDaMidia(tipo: TipoAceito, id: string): string {

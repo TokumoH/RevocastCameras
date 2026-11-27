@@ -6,9 +6,11 @@ import type { ObsNoNavegador, ObsWebsocket } from './portas'
 type Status = { gravando: boolean; replayBuffer: boolean; transmitindo: boolean; cameraVirtual: boolean }
 
 /** OBS falso: nível de controle, cenas e saídas programáveis; anota cada chamada. */
-function obsFalso(o: { disponivel?: boolean; nivel?: number | null; cenas?: string[] | null; status?: Partial<Status> | null } = {}) {
+function obsFalso(o: { disponivel?: boolean; nivel?: number | null; cenas?: string[] | null; status?: Partial<Status> | null; cenaAtual?: string | null } = {}) {
   const chamadas: string[] = []
   const estado = {
+    cenaAtual: o.cenaAtual === undefined ? 'Abertura' : o.cenaAtual,
+    leiturasDaCena: 0,
     disponivel: o.disponivel ?? true,
     nivel: o.nivel === undefined ? 4 : o.nivel,
     cenas: o.cenas === undefined ? ['Abertura', 'Conversa'] : o.cenas,
@@ -19,9 +21,13 @@ function obsFalso(o: { disponivel?: boolean; nivel?: number | null; cenas?: stri
     versaoDoPlugin: () => (estado.disponivel ? '2.24.0' : null),
     nivel: async () => (estado.disponivel ? estado.nivel : null),
     cenas: async () => (estado.disponivel ? estado.cenas : null),
-    cenaAtual: async () => null,
+    cenaAtual: async () => {
+      estado.leiturasDaCena++
+      return estado.disponivel ? estado.cenaAtual : null
+    },
     status: async () => (estado.disponivel ? estado.status : null),
     aoMudarSaida: () => () => {},
+    aoMudarCena: () => () => {},
     trocarCena: (nome) => {
       chamadas.push(`trocarCena:${nome}`)
     },
@@ -332,5 +338,44 @@ describe('executor do OBS (Integração OBS, D1, D9, D10)', () => {
     ws.estado.conectado = false
     fora = 'sem_conexao'
     expect(executor.situacao()).toMatchObject({ websocket: 'sem_conexao', versaoObs: null })
+  })
+
+  test('cena-atual-lida-do-obs (VER-044 A1, D9)', async () => {
+    const { executor, falso } = montar()
+    expect(executor.cenaAtual()).toBeNull() // ainda não lida
+    await executor.atualizarSituacao()
+    expect(executor.cenaAtual()).toBe('Abertura')
+    // mudança feita à mão no OBS aparece na próxima leitura
+    falso.estado.cenaAtual = 'Conversa'
+    await executor.atualizarSituacao()
+    expect(executor.cenaAtual()).toBe('Conversa')
+    // a troca feita pelo próprio executor vale na hora
+    await executor.executar(trocar('Abertura'))
+    expect(executor.cenaAtual()).toBe('Abertura')
+  })
+
+  test.each([
+    ['READ_OBS (abaixo de READ_USER)', 1],
+    ['desconhecido', null],
+  ])('cena-atual-respeita-o-nivel: %s não chama getCurrentScene', async (_nome, nivel) => {
+    const { executor, falso } = montar({ obs: obsFalso({ nivel }) })
+    await executor.atualizarSituacao()
+    expect(executor.cenaAtual()).toBeNull()
+    expect(falso.estado.leiturasDaCena).toBe(0)
+    // READ_USER basta
+    const r = montar({ obs: obsFalso({ nivel: 2 }) })
+    await r.executor.atualizarSituacao()
+    expect(r.executor.cenaAtual()).toBe('Abertura')
+  })
+
+  test('cena-atual-sem-obs', async () => {
+    const falso = obsFalso()
+    const { executor } = montar({ obs: falso })
+    await executor.atualizarSituacao()
+    falso.estado.disponivel = false
+    expect(executor.cenaAtual()).toBeNull()
+    await executor.atualizarSituacao()
+    falso.estado.disponivel = true
+    expect(executor.cenaAtual()).toBeNull()
   })
 })

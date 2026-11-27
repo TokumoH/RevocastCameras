@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Papel } from '../domains/acesso/papeis'
 import type { CanalDoEstudio, EstadoDoCanal, FabricaDeCanais } from '../domains/aovivo/portas'
-import { REABRIR_CANAIS_MS } from './useDispositivo'
+import { REABRIR_CANAIS_MS } from './canais'
 
 /** O que `useCanalReaberto` precisa de uma alça de canal (`CanalDoEstudio` e `CanalDoControle` servem). */
 export interface AlcaReabrivel {

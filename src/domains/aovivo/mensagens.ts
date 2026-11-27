@@ -1,4 +1,5 @@
 import type { TipoDeDispositivo } from '../acesso/dispositivos'
+import { UUID } from '../preparacao/midia'
 
 /*
  * Mensagens dos canais `estudio` e `episodio:<id>:controle` (DES-001 §8; PLA-004, D6, D9, D14).
@@ -17,8 +18,8 @@ import type { TipoDeDispositivo } from '../acesso/dispositivos'
  * presença, o `realtime-js` acrescenta `presence_ref` a cada registro.
  */
 
-/** uuid em minúsculas (a forma que o Postgres devolve). */
-export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+/** uuid em minúsculas (a forma que o Postgres devolve): a de `preparacao/midia.ts`, a única do app (VER-046, N4). */
+export { UUID }
 
 /** Nomes dos eventos do Broadcast no tópico `episodio:<id>:controle`. */
 export const EVENTOS_DO_CONTROLE = Object.freeze({ comando: 'comando', estado: 'estado' } as const)

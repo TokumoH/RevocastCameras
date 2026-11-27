@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { conferirRotulo } from '../../domains/acesso/dispositivos'
 import type { Dispositivo, TipoDeDispositivo } from '../../domains/acesso/dispositivos'
 import { UUID } from '../../domains/aovivo/mensagens'
 import { ErroDoAoVivo } from '../../domains/aovivo/portas'
@@ -115,6 +116,9 @@ export function criarRepositorioDoAoVivo(cliente: SupabaseClient): RepositorioDo
     },
 
     async criarCodigo(p) {
+      // Rótulo conferido pelo domínio antes da rede (o mesmo limite da função: 1 a 60 caracteres aparados); fora
+      // dele → invalido, sem chamar o banco (VER-046, I5).
+      if (conferirRotulo(p.rotulo) !== null) throw new ErroDoAoVivo('invalido')
       const data = await executar(() =>
         cliente.rpc('criar_codigo_pareamento', { p_tipo: p.tipo, p_rotulo: p.rotulo, p_dispositivo: p.dispositivoId, p_camera: p.cameraId }),
       )

@@ -82,15 +82,24 @@ export function TelaDeDispositivo({
   tipo,
   titulo,
   dependencias,
+  cobrirTela,
   children,
 }: {
   tipo: TipoDeDispositivo
   titulo: string
   dependencias: Dependencias
+  /**
+   * Quem decide se a tela de um estado sem pareamento aparece (o palco: só com nada no ar, D16; VER-046, I1).
+   * Sem ela, a tela aparece sempre.
+   */
+  cobrirTela?: (tela: ReactNode) => ReactNode
   children: (pareado: Pareado) => ReactNode
 }): ReactNode {
   const { estado, servicos, tentarDeNovo, marcarRevogado } = useDispositivo(tipo, dependencias)
-  if (estado.tipo !== 'pareado') return <TelaDoEstado tipo={tipo} titulo={titulo} estado={estado} tentarDeNovo={tentarDeNovo} />
+  if (estado.tipo !== 'pareado') {
+    const tela = <TelaDoEstado tipo={tipo} titulo={titulo} estado={estado} tentarDeNovo={tentarDeNovo} />
+    return cobrirTela === undefined ? tela : cobrirTela(tela)
+  }
   if (servicos === null) return null // não acontece: o pareado só nasce com os serviços obtidos
   return children({ dispositivo: estado.dispositivo, servicos, marcarRevogado })
 }

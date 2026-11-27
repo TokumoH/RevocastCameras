@@ -218,6 +218,36 @@ describe('criarFabricaDeCanais', () => {
     expect(entrou).toHaveBeenCalledTimes(1)
   })
 
+  test('presentes-no-controle (VER-046, I4)', async () => {
+    const m = montar()
+    const controle = m.fabrica.controle(EP)
+    const presentes = vi.fn()
+    const cancelar = controle.aoMudarPresentes(presentes)
+    await tique()
+    const canal = m.rt.canal(TOPICO_CONTROLE)
+    m.rt.emitirStatus(canal, 'SUBSCRIBED')
+    m.rt.emitirPresenca(canal, 'sync', {
+      [EU]: [{ presence_ref: 'r1' }],
+      [OUTRO]: [],
+      'nao-e-uuid': [{}],
+      [DISP.toUpperCase()]: [{}],
+    })
+    expect(presentes).not.toHaveBeenCalled() // adiado: nunca dentro do callback do realtime-js
+    m.rodar()
+    // só chaves uuid com ao menos um registro
+    expect(presentes.mock.calls).toEqual([[[EU]]])
+    // quem se inscreve com o canal já conectado recebe a lista atual
+    const tarde = vi.fn()
+    controle.aoMudarPresentes(tarde)
+    m.rodar()
+    expect(tarde.mock.calls).toEqual([[[EU]]])
+    cancelar()
+    m.rt.emitirPresenca(canal, 'sync', { [OUTRO]: [{}] })
+    m.rodar()
+    expect(presentes).toHaveBeenCalledTimes(1)
+    expect(tarde.mock.calls.at(-1)).toEqual([[OUTRO]])
+  })
+
   test('ouvinte-adiado', async () => {
     const m = montar()
     const estudio = m.fabrica.estudio()

@@ -37,10 +37,18 @@ export interface ObsNoNavegador {
   status(): Promise<StatusDaSaida | null>
   /**
    * Eventos de saída do obs-browser disparados em `window` (início, inclusive os `Starting`, e fim
-   * de transmissão, gravação, Replay Buffer e câmera virtual). Devolve a função que solta o ouvinte.
+   * de transmissão, gravação, Replay Buffer e câmera virtual), com o tipo (`inicio` para `*Starting`/`*Started`,
+   * `fim` para `*Stopped`) e a saída (`Streaming`, `Recording`, `Replaybuffer`, `Virtualcam`). Devolve a função que solta o ouvinte. O `getStatus` só marca a saída depois do `*Started`:
+   * quem guarda a tela usa o tipo para não confiar no status entre o `Starting` e o `Started` (VER-046, rodada 1).
    * Não usa `obsSourceActiveChanged`: a Fonte fica em todas as cenas (I5).
    */
-  aoMudarSaida(f: () => void): () => void
+  aoMudarSaida(f: (tipo: 'inicio' | 'fim', saida: string) => void): () => void
+  /**
+   * Evento `obsSceneChanged` do obs-browser (a cena do programa mudou, inclusive à mão no OBS; README do
+   * obs-browser, "Available events"). Só avisa: quem lê a cena é `cenaAtual()`, com o nível conferido
+   * (VER-046, A1). Devolve a função que solta o ouvinte.
+   */
+  aoMudarCena(f: () => void): () => void
   /** `setCurrentScene` (ADVANCED). */
   trocarCena(nome: string): void
   /** `saveReplayBuffer` (BASIC). */
@@ -48,17 +56,24 @@ export interface ObsNoNavegador {
 }
 
 /**
- * obs-websocket v5 no `ws://127.0.0.1:<porta>` (D10). A senha só entra em `conectar` e só sai
- * como o hash de autenticação do `Identify`; nunca é guardada, registrada nem devolvida.
+ * O pedaço do obs-websocket que o executor usa (segregação de interface; VER-046, N1): marcar, saber se
+ * está conectado e ler a versão. Quem conecta, ouve a queda e fecha é a rota do palco, no `ObsWebsocket`.
  */
-export interface ObsWebsocket {
-  conectar(c: { porta: number; senha: string }): Promise<'conectado' | 'senha_errada' | 'sem_conexao'>
+export interface MarcadorObs {
   /** `GetVersion` → `obsVersion`; sem conexão ou sem resposta → `null`. */
   versao(): Promise<string | null>
   /** `CreateRecordChapter` (OBS 30.2, gravação em Hybrid MP4); `requestStatus.result` falso, sem conexão ou sem resposta → `false`. */
   marcar(nome: string): Promise<boolean>
   /** A conexão passou do `Identified` e não caiu nem foi fechada. */
   conectado(): boolean
+}
+
+/**
+ * obs-websocket v5 no `ws://127.0.0.1:<porta>` (D10). A senha só entra em `conectar` e só sai
+ * como o hash de autenticação do `Identify`; nunca é guardada, registrada nem devolvida.
+ */
+export interface ObsWebsocket extends MarcadorObs {
+  conectar(c: { porta: number; senha: string }): Promise<'conectado' | 'senha_errada' | 'sem_conexao'>
   /**
    * Avisa quando uma conexão já identificada cai (fechada pelo OBS ou pela rede; não por `fechar()`).
    * Os pedidos pendentes já estão resolvidos (`null`/`false`) quando o aviso chega. Devolve a função que solta.

@@ -113,13 +113,17 @@ const PROPRIA_LINHA_INTOCADA: Partial<Record<string, Partial<Record<Papel, strin
 
 /**
  * Recorte do delete permitido (PLA-004, D7; migração ao_vivo_e_pareamento): a política episodios_equipe_apaga passou a
- * exigir estado = 'rascunho'. No delete sem where de equipe/admin, somem todas as linhas em rascunho (inclusive as próprias
- * e as de outros autores) e ficam, idênticas, exatamente as ao_vivo e encerrado. A célula continua pegando uma política que
- * prenda a equipe às "próprias linhas" (os rascunhos de outros autores teriam de sumir) e passa a pegar uma que volte a
- * apagar episódio ao vivo ou encerrado.
+ * exigir estado = 'rascunho'; desde a migração episodio_em_teste_nao_se_apaga (VER-046, I3), também que o episódio não
+ * seja o do modo teste. No delete sem where de equipe/admin, somem todas as linhas apagáveis (rascunhos fora do teste,
+ * inclusive os próprios e os de outros autores) e ficam, idênticas, exatamente as outras (ao_vivo, encerrado e o rascunho
+ * do modo teste, que os dados semeados ligam). A célula continua pegando uma política que prenda a equipe às "próprias
+ * linhas" (os rascunhos de outros autores teriam de sumir), uma que volte a apagar episódio ao vivo ou encerrado e,
+ * agora, uma que volte a apagar o episódio do modo teste. `apagavel(x, teste)` é a condição SQL sobre a linha `x`, com o
+ * episódio do modo teste lido **antes** do delete (o "on delete set null" o limparia, e a conta depois do delete não
+ * veria mais qual era).
  */
-const DELETE_SO_EM: Partial<Record<string, { coluna: string; valor: string }>> = {
-  episodios: { coluna: 'estado', valor: 'rascunho' },
+const DELETE_SO_EM: Partial<Record<string, { apagavel: (x: string, teste: string | null) => string }>> = {
+  episodios: { apagavel: (x, teste) => `(${x}.estado::text = 'rascunho' and ${x}.id is distinct from ${teste === null ? 'null' : `'${teste}'`}::uuid)` },
 }
 
 const PAPEIS = {
@@ -423,6 +427,7 @@ describe('matriz de permissões (DES-001 §8)', () => {
         await db.query(`update public.mapa_gestos set acao = 'nenhuma', cena_id = null, som_id = null where cena_id is not null or som_id is not null`)
       }
       const antes = await retrato(tabela)
+      const testeAntes = (await db.query<{ t: string | null }>('select episodio_teste_id as t from public.estudio_estado')).rows[0]?.t ?? null
       await db.query(`create temp table antes_celula as select x::text as t from public.${tabela} x`)
       const sql = operacao === 'update' ? COMANDOS[tabela].update : `delete from public.${tabela}`
       const r = await comoSessao(db, sessao, sql)
@@ -434,11 +439,13 @@ describe('matriz de permissões (DES-001 §8)', () => {
         const intocada = PROPRIA_LINHA_INTOCADA[tabela]?.[papel]
         const recorte = operacao === 'delete' ? DELETE_SO_EM[tabela] : undefined
         if (recorte) {
-          // D7: sobram, idênticas, exatamente as linhas fora do recorte (no caso de episodios, as ao_vivo e encerrado).
-          const fora = await conta(`select count(*)::int as n from antes_celula a where (a.t::public.${tabela}).${recorte.coluna}::text <> '${recorte.valor}'`)
-          const dentro = await conta(`select count(*)::int as n from antes_celula a where (a.t::public.${tabela}).${recorte.coluna}::text = '${recorte.valor}'`)
-          expect([fora > 0, dentro > 0]).toEqual([true, true])
-          expect(await conta(`select count(*)::int as n from public.${tabela} x where x.${recorte.coluna}::text = '${recorte.valor}'`)).toBe(0)
+          // D7: sobram, idênticas, exatamente as linhas fora do recorte (no caso de episodios, as ao_vivo e encerrado e o
+          // rascunho do modo teste, VER-046 I3).
+          const linhaAntes = `(a.t::public.${tabela})`
+          const fora = await conta(`select count(*)::int as n from antes_celula a where not ${recorte.apagavel(linhaAntes, testeAntes)}`)
+          const dentro = await conta(`select count(*)::int as n from antes_celula a where ${recorte.apagavel(linhaAntes, testeAntes)}`)
+          expect([fora > 0, dentro > 0, testeAntes !== null]).toEqual([true, true, true])
+          expect(await conta(`select count(*)::int as n from public.${tabela} x where ${recorte.apagavel('x', testeAntes)}`)).toBe(0)
           expect(await conta(`select count(*)::int as n from public.${tabela} x where x::text in (select t from antes_celula)`)).toBe(fora)
           expect(await conta(`select count(*)::int as n from public.${tabela}`)).toBe(fora)
         } else if (intocada) {

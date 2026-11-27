@@ -1,4 +1,4 @@
-import { linhaDoRegistro, resolverComando, type AcaoNoObs } from './comandos'
+import { linhaDoRegistro, resolverComando, type AcaoNoObs, type MotivoDaRecusa } from './comandos'
 import { UUID, lerComando, lerEstadoNoAr, type Comando, type EstadoNoAr, type MotivoDoResultado, type ResultadoDoComando, type Revogados } from './mensagens'
 import type { CanalDoControle, ExecutorDeAcoes, RepositorioDoPalco } from './portas'
 
@@ -8,6 +8,21 @@ export const ESTADO_A_CADA_MS = 30_000
 /** Quantos `id` de comando o palco lembra para descartar repetidos (D9). */
 export const COMANDOS_LEMBRADOS = 200
 
+/**
+ * Recusas que podem vir de uma lista desatualizada no palco (item criado depois da carga): o palco relê as
+ * listas uma vez e resolve de novo antes de responder (VER-046, I2).
+ */
+export const RECUSAS_QUE_RELEEM: readonly MotivoDaRecusa[] = Object.freeze(['cena_inexistente', 'som_inexistente', 'aviso_inexistente', 'sem_cenas'] as const)
+
+/**
+ * Intervalo mínimo entre duas releituras das listas (VER-046, rodada 1): quem tem um `uid` presente no `:controle` não
+ * consegue forçar leituras seguidas ao banco. Dentro da janela, um pedido reaproveita a releitura em curso ou fica com
+ * as listas da última (o comando com item desconhecido é recusado).
+ */
+export const RELEITURA_MINIMA_MS = 5000
+
+type Dados = Awaited<ReturnType<RepositorioDoPalco['carregar']>>
+
 export interface DependenciasDoPalco {
   canal: CanalDoControle
   repo: RepositorioDoPalco
@@ -16,7 +31,13 @@ export interface DependenciasDoPalco {
   revogados: Revogados
   /** O episódio que o próprio palco consultou (`episodio_ativo()`); só os comandos deste tópico chegam aqui. */
   episodio: { id: string; modo: 'ao_vivo' | 'teste' }
-  dados: Awaited<ReturnType<RepositorioDoPalco['carregar']>>
+  dados: Dados
+  /**
+   * Relê as listas do episódio (cenas, sons, avisos) e devolve a carga nova, ou `null` se falhou (fica a
+   * anterior). A rota a fornece, porque também renova as URLs dos arquivos novos (VER-046, I2). Sem ela, o
+   * palco não relê.
+   */
+  recarregarDados?(): Promise<Dados | null>
   /** `auth.uid()` da sessão do palco: o eco do próprio envio é ignorado. */
   meuUsuario: string
   /** Repete `f` a cada `ms` até a função devolvida ser chamada (estado periódico e, uma vez só, o prazo do aviso). */
@@ -35,9 +56,12 @@ function copiar(e: EstadoNoAr): EstadoNoAr {
 /**
  * Serviço do palco (D9; DES-001 §10.1: o palco é o único executor). Para cada comando recebido:
  * 1. confere de novo a forma (`lerComando`) e o remetente (uuid); inválido → descartado sem efeito;
- * 2. ignora o próprio eco, o remetente revogado (`Revogados`, 15 min) e o `id` repetido (últimos 200);
- * 3. resolve contra as listas carregadas (`resolverComando`); recusa → estado publicado, nada executado
- *    e nada registrado;
+ * 2. ignora o próprio eco, o remetente revogado (`Revogados`, 15 min), o remetente que **não está na
+ *    presença do `:controle`** (só membros marcam presença ali, pela RLS; um `obs_palco` não entra nela,
+ *    VER-046, I4) e o `id` repetido (últimos 200);
+ * 3. resolve contra as listas carregadas (`resolverComando`); recusa por item desconhecido
+ *    (`RECUSAS_QUE_RELEEM`) → relê as listas uma vez (`recarregarDados`) e resolve de novo; recusa que
+ *    sobra → estado publicado, nada executado e nada registrado;
  * 4. executa (`ExecutorDeAcoes`); o clipe publica `pendente` antes de esperar;
  * 5. atualiza o estado (cena do OBS, aviso no ar e o prazo dele, último resultado) e o publica;
  * 6. com `ok`, grava `registro_acoes` (`linhaDoRegistro`); a falha ao gravar não desfaz nem bloqueia nada.
@@ -45,14 +69,33 @@ function copiar(e: EstadoNoAr): EstadoNoAr {
  * O estado também é publicado ao começar, a cada 30 s, quando alguém entra no `:controle` e quando a
  * rota pede (`republicar`, ao voltar a `conectado`: a publicação do começo pode ter saído com o canal
  * ainda conectando, e a reconexão do próprio palco não gera entrada na presença; Tarefa 6).
+ * A cena do OBS lida pela rota (`definirCenaObs`, `getCurrentScene`) entra no estado e é o ponto de
+ * partida da `proxima_cena` (D9; VER-044 A1); quem entra no `:controle` também faz o palco reler as
+ * listas (a mesma hora em que a aba Ao vivo e o `/controle` releem as suas; VER-046, I2).
  */
-export function criarPalco(d: DependenciasDoPalco): { estado(): EstadoNoAr; aoMudar(f: (e: EstadoNoAr) => void): () => void; republicar(): void; parar(): void } {
+export function criarPalco(d: DependenciasDoPalco): {
+  estado(): EstadoNoAr
+  aoMudar(f: (e: EstadoNoAr) => void): () => void
+  republicar(): void
+  /** A cena atual lida do OBS (a rota lê; `null` = não se sabe e nada muda). */
+  definirCenaObs(nome: string | null): void
+  /** Relê as listas pela rota (`recarregarDados`; uma releitura por vez; VER-046, I2). */
+  recarregarListas(): Promise<void>
+  parar(): void
+} {
   const agora = d.agora ?? (() => Date.now())
   const ouvintes = new Set<(e: EstadoNoAr) => void>()
   const vistos = new Set<string>()
   const ordemDosVistos: string[] = []
   let parado = false
   let cancelarPrazoDoAviso: (() => void) | null = null
+  let dados: Dados = d.dados
+  /** `auth.uid()` de quem está na presença do `:controle` (só membros podem marcar presença ali). */
+  let presentes: ReadonlySet<string> = new Set()
+  /** Releitura em curso: comandos que chegam juntos esperam a mesma (uma releitura por vez). */
+  let releitura: Promise<void> | null = null
+  /** Quando começou a última releitura (relógio `agora`); `null` = nenhuma ainda. */
+  let ultimaReleitura: number | null = null
   const estado: EstadoNoAr = {
     episodioId: d.episodio.id,
     modo: d.episodio.modo,
@@ -128,20 +171,54 @@ export function criarPalco(d: DependenciasDoPalco): { estado(): EstadoNoAr; aoMu
     publicar()
   }
 
+  function resolver(c: Comando) {
+    return resolverComando(c, {
+      cenas: dados.cenas,
+      sons: dados.sons,
+      avisos: dados.avisos,
+      estado: { cenaObs: estado.cenaObs, avisoId: estado.avisoId },
+      episodioTitulo: dados.episodio.titulo,
+    })
+  }
+
+  /**
+   * Relê as listas pela rota, uma releitura por vez e no máximo uma a cada `RELEITURA_MINIMA_MS`; falha → ficam as
+   * listas de antes.
+   */
+  function reler(): Promise<void> {
+    if (d.recarregarDados === undefined) return Promise.resolve()
+    if (releitura !== null) return releitura
+    const t = agora()
+    if (ultimaReleitura !== null && t - ultimaReleitura < RELEITURA_MINIMA_MS) return Promise.resolve()
+    ultimaReleitura = t
+    releitura = d
+      .recarregarDados()
+      .then(
+        (novos) => {
+          if (novos !== null && !parado) dados = novos
+        },
+        () => {},
+      )
+      .finally(() => {
+        releitura = null
+      })
+    return releitura
+  }
+
   async function tratar(recebido: unknown, remetente: string): Promise<void> {
     if (parado) return
     const c = lerComando(recebido)
     if (c === null || typeof remetente !== 'string' || !UUID.test(remetente)) return
     if (remetente === d.meuUsuario || d.revogados.contem(remetente)) return
+    if (!presentes.has(remetente)) return
     if (!lembrar(c.id)) return
 
-    const resolvido = resolverComando(c, {
-      cenas: d.dados.cenas,
-      sons: d.dados.sons,
-      avisos: d.dados.avisos,
-      estado: { cenaObs: estado.cenaObs, avisoId: estado.avisoId },
-      episodioTitulo: d.dados.episodio.titulo,
-    })
+    let resolvido = resolver(c)
+    if (!resolvido.ok && RECUSAS_QUE_RELEEM.includes(resolvido.motivo)) {
+      await reler()
+      if (parado) return
+      resolvido = resolver(c)
+    }
     if (!resolvido.ok) {
       anotar(c, 'recusado', resolvido.motivo)
       return
@@ -168,7 +245,13 @@ export function criarPalco(d: DependenciasDoPalco): { estado(): EstadoNoAr; aoMu
     d.canal.aoComando((c, remetente) => {
       void tratar(c, remetente)
     }),
-    d.canal.aoEntrarAlguem(() => publicar(false)),
+    d.canal.aoEntrarAlguem(() => {
+      publicar(false)
+      void reler()
+    }),
+    d.canal.aoMudarPresentes((usuarios) => {
+      presentes = new Set(usuarios)
+    }),
     d.agendarRepeticao(() => publicar(false), ESTADO_A_CADA_MS),
   ]
   publicar(false)
@@ -184,6 +267,12 @@ export function criarPalco(d: DependenciasDoPalco): { estado(): EstadoNoAr; aoMu
     republicar() {
       publicar(false)
     },
+    definirCenaObs(nome) {
+      if (parado || nome === null || nome === estado.cenaObs) return
+      estado.cenaObs = nome
+      publicar()
+    },
+    recarregarListas: reler,
     parar() {
       if (parado) return
       parado = true

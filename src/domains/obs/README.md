@@ -23,9 +23,9 @@ Criado na Tarefa 5 da etapa E3 ([PLA-004](../../../docs/planos/2026-11-27-e3-ao-
 
 ## Organização
 
-- `portas.ts`: `NIVEL_DE_CONTROLE` (0 NONE … 5 ALL), `StatusDaSaida`, `ObsNoNavegador` e `ObsWebsocket`. Sem teste próprio: só tipos e a constante, exercitados pelos testes do executor e dos adaptadores.
+- `portas.ts`: `NIVEL_DE_CONTROLE` (0 NONE … 5 ALL), `StatusDaSaida`, `ObsNoNavegador` (com `aoMudarCena`, o evento `obsSceneChanged`, desde o VER-046; `aoMudarSaida` passa o tipo, `inicio` ou `fim`, e a saída desde a rodada 1), `MarcadorObs` (o pedaço do obs-websocket que o executor usa: `versao`, `marcar`, `conectado`; VER-046, N1) e `ObsWebsocket` (que o estende com `conectar`, `aoFechar` e `fechar`, usados só pela rota do palco). Sem teste próprio: só tipos e a constante, exercitados pelos testes do executor e dos adaptadores.
 - `versao.ts`: `VERSAO_MINIMA_DO_OBS` e `versaoAtende` (com o teste ao lado).
-- `executor.ts`: `ESPERA_DO_CLIPE_MS`, `ExecutorObs` (o `ExecutorDeAcoes` mais `atualizarSituacao` e `parar`), `DependenciasDoExecutor` e `criarExecutorObs` (com o teste ao lado, com OBS, websocket e relógio falsos escritos no próprio arquivo).
+- `executor.ts`: `ESPERA_DO_CLIPE_MS`, `ExecutorObs` (o `ExecutorDeAcoes` mais `atualizarSituacao`, `cenaAtual` (desde o VER-046: a cena do programa lida por `getCurrentScene` só com nível READ_USER, ou a que o executor acabou de trocar) e `parar`), `DependenciasDoExecutor` e `criarExecutorObs` (com o teste ao lado, com OBS, websocket e relógio falsos escritos no próprio arquivo).
 - Adaptadores fora do domínio: [`../../shared/infra/obsNavegador.ts`](../../shared/infra/obsNavegador.ts) e [`../../shared/infra/obsWebsocket.ts`](../../shared/infra/obsWebsocket.ts).
 
 ## Por que esta organização
@@ -46,11 +46,11 @@ O OBS tem dois caminhos com regras diferentes (a Fonte de navegador com níveis 
 | Arquivo ou subdiretório | O que contém |
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
-| [`portas.ts`](portas.ts) | `NIVEL_DE_CONTROLE`, `StatusDaSaida`, `ObsNoNavegador`, `ObsWebsocket` (com `conectado()` e `aoFechar(f)` para saber da queda) |
+| [`portas.ts`](portas.ts) | `NIVEL_DE_CONTROLE`, `StatusDaSaida`, `ObsNoNavegador` (com `aoMudarCena` desde o VER-046), `MarcadorObs` (VER-046, N1), `ObsWebsocket` (estende `MarcadorObs`; com `conectado()` e `aoFechar(f)` para saber da queda) |
 | [`versao.ts`](versao.ts) | `VERSAO_MINIMA_DO_OBS` (`'30.2.0'`), `versaoAtende` |
 | [`versao.test.ts`](versao.test.ts) | 1 teste: `versao-minima` (os casos da interface, pré-lançamento — inclusive `30.2.0-rc1` —, forma errada e tamanho) |
 | [`executor.ts`](executor.ts) | `ESPERA_DO_CLIPE_MS`, `ExecutorObs`, `DependenciasDoExecutor`, `criarExecutorObs` |
-| [`executor.test.ts`](executor.test.ts) | 17 testes: constante, `trocar-cena-existente`, `cena-inexistente-no-obs`, `sem-permissao`, `clipe-espera-5s`, `clipe-repetido-ignorado`, `clipe-sem-replay-buffer`, `marcador-sem-websocket`, `marcador-sem-gravacao`, `marcador-ok`, `obs-ausente`, `websocket-cai-depois`, `websocket-cai-durante-o-pedido`, `parar-cancela-o-clipe-pendente`, `som-que-nao-toca-falha-sem-motivo`, `situacao`, `estado-do-websocket-por-funcao` (Tarefa 6, rodada 1) |
+| [`executor.test.ts`](executor.test.ts) | 21 testes: do VER-046, `cena-atual-lida-do-obs`, `cena-atual-respeita-o-nivel` (READ_OBS e desconhecido não chamam `getCurrentScene`; READ_USER basta) e `cena-atual-sem-obs`; antes, constante, `trocar-cena-existente`, `cena-inexistente-no-obs`, `sem-permissao`, `clipe-espera-5s`, `clipe-repetido-ignorado`, `clipe-sem-replay-buffer`, `marcador-sem-websocket`, `marcador-sem-gravacao`, `marcador-ok`, `obs-ausente`, `websocket-cai-depois`, `websocket-cai-durante-o-pedido`, `parar-cancela-o-clipe-pendente`, `som-que-nao-toca-falha-sem-motivo`, `situacao`, `estado-do-websocket-por-funcao` (Tarefa 6, rodada 1) |
 
 ## Lógica
 
@@ -85,7 +85,7 @@ versaoAtende('30.1.2') // false — o checklist mostra "versão do OBS abaixo de
 
 ## Verificação
 
-- `npx vitest run src/domains/obs`: 2 arquivos, 18 testes desde o VER-040 (17 até então) (mais 3 de `../arquitetura.test.ts`, que cobre esta pasta sem configuração).
+- `npx vitest run src/domains/obs`: 2 arquivos, 22 testes desde o VER-046 (18 desde o VER-040, 17 até então) (mais 3 de `../arquitetura.test.ts`, que cobre esta pasta sem configuração).
 - Sabotagens em memória, uma de cada vez, cada uma derrubando o teste citado (tabela no VER-039).
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`. Não há subdiretórios.
 
@@ -93,7 +93,7 @@ versaoAtende('30.1.2') // false — o checklist mostra "versão do OBS abaixo de
 
 - **Sem OBS real:** níveis, nomes de função e eventos vêm do README do obs-browser e do `protocol.md` do obs-websocket (lidos em 2026-11-27); a conferência num OBS real é da Tarefa 10 (passo do responsável).
 - **`sem_gravacao` cobre mais de uma causa:** o `CreateRecordChapter` recusado (gravação parada, formato que não é Hybrid MP4, OBS anterior a 30.2) e o pedido sem resposta em 5 s com a conexão de pé viram o mesmo motivo (a queda da conexão vira `sem_websocket`); a lista fixa não tem um motivo para cada caso.
-- **Situação lida por último:** `nivel`, `replayBuffer`, `gravando` e `versaoObs` são da última leitura; quem chama `atualizarSituacao()` periodicamente é a rota do palco (Tarefa 6).
+- **Situação lida por último:** `nivel`, `replayBuffer`, `gravando`, `versaoObs` e, desde o VER-046, a cena atual são da última leitura (a cena, só com nível READ_USER; abaixo dele, `null`); quem chama `atualizarSituacao()` periodicamente é a rota do palco (Tarefa 6).
 - **Websocket que cai:** o executor consulta `ws.conectado()` a cada marcador e a cada leitura da situação (marcador `sem_websocket`, situação `sem_conexao`), sem ser recriado e sem perder a guarda do clipe; reconectar é da rota (Tarefa 6), que ouve `aoFechar` e chama `conectar` no mesmo objeto.
 - **`parar()`:** cancela o clipe que espera e barra ações novas; a rota (Tarefa 6) chama `executor.parar()` junto com `palco.parar()`, senão um clipe pedido antes de trocar de episódio ainda sai 5 s depois.
 - **Clipe:** a espera de 5 s é fixa (DES-001 §16 fala em "configurável"); o Replay Buffer é conferido antes da espera, não depois.

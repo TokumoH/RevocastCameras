@@ -2,13 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Papel } from '../domains/acesso/papeis'
 import type { UsuarioDaSessao } from '../domains/acesso/sessao'
 import type { ListasDoAoVivo } from '../domains/aovivo/comandos'
+import { Revogados } from '../domains/aovivo/mensagens'
 import type { Comando, EstadoNoAr, PedidoDeComando } from '../domains/aovivo/mensagens'
 import { ErroDoAoVivo } from '../domains/aovivo/portas'
 import type { CanalDoControle, CanalDoEstudio, EstadoDoCanal, FabricaDeCanais, RepositorioDoAoVivo, RespostaDoEnvio } from '../domains/aovivo/portas'
 import { ErroDePreparacao } from '../domains/preparacao/portas'
 import type { ServicosDePreparacao } from '../domains/preparacao/portas'
 import type { Dependencias } from './dependencias'
-import { REABRIR_CANAIS_MS } from './useDispositivo'
+import { REABRIR_CANAIS_MS } from './canais'
 import { useCanalReaberto, useEstudio, useUmaReavaliacaoPorPerda } from './useEstudio'
 
 /** Numa sequência de leituras negadas (ou com sessão vencida) seguidas, no máximo 3 `reavaliar()`; depois só a frase de falha e as novas tentativas. */
@@ -90,8 +91,10 @@ interface Carga {
  *   `useCanalReaberto` (presença marcada: o palco republica o estado); trocar de episódio fecha o tópico
  *   antigo e abre o novo; `fechado`/`negado` em qualquer um → um `reavaliar()` só (os dois juntos, numa
  *   renovação de token, contam uma vez) e reabertura em 5 s se a tela continuar montada;
- * - `revogacao` do próprio `usuario.id` → `reavaliar()` (D5); de outro, nada. Com o `estudio` de fora, quem
- *   ouve a revogação é quem o abriu (o painel, Tarefa 9, rodada 1): o hook não ouve, para sair um `reavaliar()` só;
+ * - `revogacao` do próprio `usuario.id` → `reavaliar()` (D5); de outro, o `estado` publicado por esse remetente
+ *   passa a ser descartado por 15 min (`Revogados`, como no palco; D5, VER-046 N3), com ou sem `estudio` de fora.
+ *   Com o `estudio` de fora, quem reavalia na revogação própria é quem o abriu (o painel, Tarefa 9, rodada 1): o
+ *   hook não reavalia, para sair um `reavaliar()` só;
  * - `enviar`: duas respostas `sem_resposta` seguidas com o canal `conectado` → `reavaliar()` (um envio sem
  *   permissão volta como `timed out`, igual a rede ruim, N3); um `ok`, a troca de episódio e a volta do
  *   canal a `conectado` depois de uma queda zeram a contagem (a contagem é de respostas seguidas no mesmo
@@ -130,6 +133,8 @@ export function useAoVivo(d: {
   const [pedidos, setPedidos] = useState<ReadonlyMap<string, PedidoDeComando>>(() => new Map())
 
   const semRespostaSeguidas = useRef(0)
+  // Remetentes revogados avisados em `estudio`: o `estado` deles é descartado por 15 min (D5, VER-046 N3).
+  const [revogados] = useState(() => new Revogados(() => Date.now()))
 
   // --- perda de canal: um reavaliar() por janela de 5 s, para `estudio` e `:controle` caírem juntos;
   // com `aoPerderCanal` (o painel), a janela é a de quem abriu o `estudio`, dividida com ele ---
@@ -207,7 +212,8 @@ export function useAoVivo(d: {
     if (estudio === null) return
     const soltarMensagens = estudio.aoReceber((m) => {
       if (m.evento === 'episodio_ativo_mudou') void consultar()
-      else if (ouveRevogacao && m.evento === 'revogacao' && m.usuario === usuarioId) reavaliar.current()
+      else if (m.evento === 'revogacao' && m.usuario !== usuarioId) revogados.revogar(m.usuario)
+      else if (ouveRevogacao && m.evento === 'revogacao') reavaliar.current()
     })
     const soltarPresenca = estudio.aoMudarPresenca((presentes) => {
       setPresenca({ alca: estudio, palco: presentes.some((p) => p.presenca.tipo === 'obs_palco') })
@@ -216,7 +222,7 @@ export function useAoVivo(d: {
       soltarMensagens()
       soltarPresenca()
     }
-  }, [estudio, usuarioId, consultar, ouveRevogacao])
+  }, [estudio, usuarioId, consultar, ouveRevogacao, revogados])
 
   // Cada volta do `estudio` a `conectado` (depois da primeira) consulta de novo (D15).
   const jaConectou = useRef(false)
@@ -239,10 +245,11 @@ export function useAoVivo(d: {
   useEffect(() => {
     if (controle === null || episodioId === null) return
     void controle.marcarPresenca().catch(() => {})
-    return controle.aoEstado((e) => {
+    return controle.aoEstado((e, remetente) => {
+      if (revogados.contem(remetente)) return
       if (e.episodioId === episodioId) setEstadoNoAr(e)
     })
-  }, [controle, episodioId])
+  }, [controle, episodioId, revogados])
 
   // --- envio ---
   const canal = episodioId === null ? estadoDoEstudio : pior(estadoDoEstudio, estadoDoControle)

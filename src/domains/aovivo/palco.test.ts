@@ -2,7 +2,7 @@ import { describe, test, expect } from 'vitest'
 import type { AcaoNoObs, LinhaDoRegistro } from './comandos'
 import type { Comando, EstadoNoAr, MotivoDoResultado, ResultadoDoComando, SituacaoDoObs } from './mensagens'
 import { Revogados, lerEstadoNoAr } from './mensagens'
-import { ESTADO_A_CADA_MS, criarPalco } from './palco'
+import { ESTADO_A_CADA_MS, RELEITURA_MINIMA_MS, criarPalco } from './palco'
 import type { CanalDoControle, ExecutorDeAcoes, RepositorioDoPalco } from './portas'
 
 const EPISODIO = 'e0000000-0000-4000-8000-000000000001'
@@ -38,6 +38,7 @@ const SITUACAO: SituacaoDoObs = { navegador: true, versaoDoPlugin: '2.24.0', niv
 function canalFalso(o: { rejeitar?: boolean } = {}) {
   const comandos = new Set<(c: Comando, r: string) => void>()
   const entradas = new Set<() => void>()
+  const presencas = new Set<(u: string[]) => void>()
   const publicados: EstadoNoAr[] = []
   let tratadas = 0
   const canal: CanalDoControle = {
@@ -49,6 +50,10 @@ function canalFalso(o: { rejeitar?: boolean } = {}) {
     aoEntrarAlguem: (f) => {
       entradas.add(f)
       return () => entradas.delete(f)
+    },
+    aoMudarPresentes: (f) => {
+      presencas.add(f)
+      return () => presencas.delete(f)
     },
     aoMudarEstado: () => () => {},
     enviarComando: async () => 'ok',
@@ -77,7 +82,11 @@ function canalFalso(o: { rejeitar?: boolean } = {}) {
     entrar: () => {
       for (const f of entradas) f()
     },
-    ouvintes: () => comandos.size + entradas.size,
+    /** A presença do `:controle` passa a ser `usuarios` (como o `sync` do adaptador). */
+    presenca: (usuarios: string[]) => {
+      for (const f of presencas) f([...usuarios])
+    },
+    ouvintes: () => comandos.size + entradas.size + presencas.size,
     tratadas: () => tratadas,
   }
 }
@@ -173,6 +182,9 @@ function montar(
     falharRegistro?: boolean
     rejeitarPublicacao?: boolean
     dados?: Dados
+    /** Quem está na presença do `:controle` ao começar (padrão: ANA e BIA, membros). */
+    presentes?: string[]
+    recarregarDados?: () => Promise<Dados | null>
   } = {},
 ) {
   const canal = canalFalso({ rejeitar: o.rejeitarPublicacao })
@@ -190,7 +202,9 @@ function montar(
     meuUsuario: EU,
     agendarRepeticao: relogio.agendarRepeticao,
     agora: relogio.agora,
+    recarregarDados: o.recarregarDados,
   })
+  canal.presenca(o.presentes ?? [ANA, BIA])
   return { palco, canal, exec, repo, relogio, revogados }
 }
 
@@ -544,6 +558,143 @@ describe('serviço do palco (D9)', () => {
     expect(torta.canal.publicados).toEqual([])
     expect(torta.exec.executadas).toHaveLength(1)
     for (const e of [...m.canal.publicados, ...m2.canal.publicados]) expect(lerEstadoNoAr(e)).not.toBeNull()
+  })
+
+  test('remetente-fora-da-presenca (VER-046, I4)', async () => {
+    // Só membros marcam presença no `:controle` (RLS); um `obs_palco` ou uma sessão antiga, não.
+    const OUTRO_PALCO = 'b0000000-0000-4000-8000-0000000000b2'
+    const m = montar()
+    const antes = m.canal.publicados.length
+    m.canal.comando({ id: novoId(), acao: 'cena', cenaId: CENA_B }, OUTRO_PALCO)
+    await esvaziar()
+    expect(m.exec.executadas).toEqual([])
+    expect(m.repo.registros).toEqual([])
+    expect(m.canal.publicados.length).toBe(antes)
+    // quem sai da presença deixa de comandar; quem entra passa a comandar
+    m.canal.presenca([BIA])
+    m.canal.comando({ id: novoId(), acao: 'marcador' }, ANA)
+    await esvaziar()
+    expect(m.exec.executadas).toEqual([])
+    m.canal.comando({ id: novoId(), acao: 'marcador' }, BIA)
+    await esvaziar()
+    expect(m.exec.executadas).toEqual([{ tipo: 'marcar', nome: expect.any(String) }])
+    // sem ninguém na presença (ainda não sincronizou), nada executa
+    const vazio = montar({ presentes: [] })
+    vazio.canal.comando({ id: novoId(), acao: 'marcador' }, ANA)
+    await esvaziar()
+    expect(vazio.exec.executadas).toEqual([])
+  })
+
+  test('item-criado-depois-e-relido (VER-046, I2)', async () => {
+    const AVISO_3 = 'f0000000-0000-4000-8000-000000000003'
+    const novo = { id: AVISO_3, episodioId: EPISODIO, titulo: 'A3', texto: 't', link: null, imagemMidiaId: null, duracaoS: 5, ordem: 2, caminhoDaImagem: null }
+    let releituras = 0
+    const m = montar({
+      recarregarDados: async () => {
+        releituras++
+        return { ...DADOS, avisos: [...DADOS.avisos, novo] }
+      },
+    })
+    const id = novoId()
+    m.canal.comando({ id, acao: 'aviso', avisoId: AVISO_3 }, ANA)
+    await esvaziar()
+    expect(releituras).toBe(1)
+    expect(m.exec.executadas).toEqual([{ tipo: 'mostrar_aviso', avisoId: AVISO_3, duracaoS: 5 }])
+    expect(m.palco.estado().ultimo).toEqual({ comandoId: id, acao: 'aviso', resultado: 'ok', motivo: null })
+    // um comando conhecido não relê
+    m.canal.comando({ id: novoId(), acao: 'som', somId: SOM }, ANA)
+    await esvaziar()
+    expect(releituras).toBe(1)
+    // ainda desconhecido depois da releitura (ou releitura que falha): uma releitura só, e a recusa sai
+    const falha = montar({
+      recarregarDados: async () => {
+        releituras++
+        return null
+      },
+    })
+    const idFalha = novoId()
+    falha.canal.comando({ id: idFalha, acao: 'som', somId: SOM_INEXISTENTE }, ANA)
+    await esvaziar()
+    expect(releituras).toBe(2)
+    expect(falha.exec.executadas).toEqual([])
+    expect(falha.palco.estado().ultimo).toEqual({ comandoId: idFalha, acao: 'som', resultado: 'recusado', motivo: 'som_inexistente' })
+    // sem releitura fornecida, a recusa é a de antes
+    const sem = montar()
+    sem.canal.comando({ id: novoId(), acao: 'aviso', avisoId: AVISO_3 }, ANA)
+    await esvaziar()
+    expect(sem.palco.estado().ultimo?.motivo).toBe('aviso_inexistente')
+  })
+
+  test('quem-entra-faz-reler (VER-046, I2: aviso corrigido)', async () => {
+    let releituras = 0
+    const corrigido = { ...DADOS, avisos: DADOS.avisos.map((a) => (a.id === AVISO_1 ? { ...a, duracaoS: 45 } : a)) }
+    const m = montar({
+      recarregarDados: async () => {
+        releituras++
+        return corrigido
+      },
+    })
+    m.canal.entrar()
+    m.canal.entrar() // duas entradas juntas: uma releitura em curso, reaproveitada
+    await esvaziar()
+    expect(releituras).toBe(1)
+    m.canal.comando({ id: novoId(), acao: 'aviso', avisoId: AVISO_1 }, ANA)
+    await esvaziar()
+    expect(m.exec.executadas).toEqual([{ tipo: 'mostrar_aviso', avisoId: AVISO_1, duracaoS: 45 }])
+    m.relogio.avancar(RELEITURA_MINIMA_MS)
+    await m.palco.recarregarListas()
+    expect(releituras).toBe(2)
+  })
+
+  test('releitura-com-intervalo-minimo (VER-046, rodada 1)', async () => {
+    let releituras = 0
+    const m = montar({
+      recarregarDados: async () => {
+        releituras++
+        return DADOS // o item continua desconhecido
+      },
+    })
+    m.canal.comando({ id: novoId(), acao: 'som', somId: SOM_INEXISTENTE }, ANA)
+    await esvaziar()
+    expect(releituras).toBe(1)
+    // dentro da janela: nem comando desconhecido nem entrada releem; o comando é recusado na hora
+    const id = novoId()
+    m.relogio.avancar(RELEITURA_MINIMA_MS - 1)
+    m.canal.comando({ id, acao: 'som', somId: SOM_INEXISTENTE }, ANA)
+    m.canal.entrar()
+    await esvaziar()
+    expect(releituras).toBe(1)
+    expect(m.palco.estado().ultimo).toEqual({ comandoId: id, acao: 'som', resultado: 'recusado', motivo: 'som_inexistente' })
+    // passada a janela, relê de novo
+    m.relogio.avancar(1)
+    m.canal.entrar()
+    await esvaziar()
+    expect(releituras).toBe(2)
+  })
+
+  test('cena-do-obs (VER-044 A1, D9)', async () => {
+    const m = montar()
+    const antes = m.canal.publicados.length
+    m.palco.definirCenaObs('Conversa')
+    expect(m.palco.estado().cenaObs).toBe('Conversa')
+    expect(m.canal.publicados.length).toBe(antes + 1)
+    expect(m.canal.publicados.at(-1)?.cenaObs).toBe('Conversa')
+    // a mesma cena e o "não se sabe" (null) não mudam nem publicam
+    m.palco.definirCenaObs('Conversa')
+    m.palco.definirCenaObs(null)
+    expect(m.canal.publicados.length).toBe(antes + 1)
+    expect(m.palco.estado().cenaObs).toBe('Conversa')
+    // a próxima cena parte da cena atual do OBS (Conversa → volta à Abertura)
+    m.canal.comando({ id: novoId(), acao: 'proxima_cena' }, ANA)
+    await esvaziar()
+    expect(m.exec.executadas).toEqual([{ tipo: 'trocar_cena', nomeObs: 'Abertura', cenaId: CENA_A }])
+    // cena longa (além do limite do leitor): dentro do palco é a real; no canal vai null
+    m.palco.definirCenaObs('L'.repeat(201))
+    expect(m.canal.publicados.at(-1)?.cenaObs).toBeNull()
+    expect(m.palco.estado().cenaObs).toBe('L'.repeat(201))
+    m.palco.parar()
+    m.palco.definirCenaObs('Conversa')
+    expect(m.palco.estado().cenaObs).toBe('L'.repeat(201))
   })
 
   test('estado-e-copia', () => {
