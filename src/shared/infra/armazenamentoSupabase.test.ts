@@ -410,7 +410,14 @@ describe('enviar', () => {
     ['500', 500, '', 'outro'],
     ['statusCode numérico é ignorado', 500, '{"statusCode":403}', 'outro'],
     ['statusCode vazio conta como ausente', 403, '{"statusCode":"","error":"x"}', 'negado'],
-    ['code do corpo não é usado', 401, '{"code":"InvalidJWT","error":"x"}', 'sessao_expirada'],
+    ['code sem JWT inválido não é usado', 403, '{"code":"AccessDenied","error":"x"}', 'negado'],
+    // JWT inválido ou expirado (VER-032): o campo `error` ou `code` do corpo vence o statusCode
+    ['InvalidJWT com statusCode 400', 400, '{"statusCode":"400","error":"InvalidJWT","message":"exp claim timestamp check failed"}', 'sessao_expirada'],
+    ['InvalidJWT com statusCode 403', 403, '{"statusCode":"403","error":"InvalidJWT","message":"exp claim timestamp check failed"}', 'sessao_expirada'],
+    ['InvalidJWT em minúsculas', 400, '{"statusCode":"400","error":"invalidjwt"}', 'sessao_expirada'],
+    ['InvalidJWT no code', 400, '{"statusCode":"400","code":"InvalidJWT"}', 'sessao_expirada'],
+    ['InvalidJWT sem statusCode', 400, '{"error":"InvalidJWT"}', 'sessao_expirada'],
+    ['403 sem InvalidJWT segue negado', 400, '{"statusCode":"403","error":"Unauthorized","message":"InvalidJWT"}', 'negado'],
     ['JSON nulo', 403, 'null', 'negado'],
   ]
 
@@ -498,6 +505,12 @@ describe('remover e prévia', () => {
 
     f.bucket.remove.mockResolvedValueOnce({ data: null, error: { name: 'StorageApiError', status: 400, statusCode: '403', message: 'x' } })
     expect(await motivoDe(f.armazenamento.remover(CAMINHO))).toBe('negado')
+    f.bucket.remove.mockResolvedValueOnce({ data: null, error: { name: 'StorageApiError', status: 400, statusCode: '400', code: 'InvalidJWT', message: 'x' } })
+    expect(await motivoDe(f.armazenamento.remover(CAMINHO))).toBe('sessao_expirada')
+    f.bucket.remove.mockResolvedValueOnce({ data: null, error: { name: 'StorageApiError', status: 403, statusCode: 'InvalidJWT', message: 'x' } })
+    expect(await motivoDe(f.armazenamento.remover(CAMINHO))).toBe('sessao_expirada')
+    f.bucket.remove.mockResolvedValueOnce({ data: null, error: { name: 'StorageApiError', status: 403, statusCode: '403', code: 'AccessDenied', message: 'InvalidJWT' } })
+    expect(await motivoDe(f.armazenamento.remover(CAMINHO))).toBe('negado')
     f.bucket.remove.mockResolvedValueOnce({ data: null, error: { name: 'StorageUnknownError', message: 'Failed to fetch' } })
     expect(await motivoDe(f.armazenamento.remover(CAMINHO))).toBe('rede')
     f.bucket.remove.mockRejectedValueOnce(new Error('inesperado'))
@@ -509,6 +522,8 @@ describe('remover e prévia', () => {
     f.bucket.createSignedUrl.mockResolvedValueOnce({ data: null, error: { name: 'StorageApiError', status: 400, statusCode: '404', message: 'Object not found' } })
     expect(await motivoDe(f.armazenamento.urlDePrevia(CAMINHO))).toBe('outro')
     f.bucket.createSignedUrl.mockResolvedValueOnce({ data: null, error: { name: 'StorageApiError', status: 401, statusCode: '', message: 'x' } })
+    expect(await motivoDe(f.armazenamento.urlDePrevia(CAMINHO))).toBe('sessao_expirada')
+    f.bucket.createSignedUrl.mockResolvedValueOnce({ data: null, error: { name: 'StorageApiError', status: 403, statusCode: '403', code: 'InvalidJWT', message: 'x' } })
     expect(await motivoDe(f.armazenamento.urlDePrevia(CAMINHO))).toBe('sessao_expirada')
     f.bucket.createSignedUrl.mockResolvedValueOnce({ data: null, error: null })
     expect(await motivoDe(f.armazenamento.urlDePrevia(CAMINHO))).toBe('outro')

@@ -33,33 +33,48 @@ function motivoDoCodigo(codigo: string): MotivoDaPreparacao {
 }
 
 /**
- * Lê a resposta de erro do Storage: primeiro o `statusCode` **texto, não vazio** do corpo JSON (o Storage
- * costuma responder 400 com `statusCode` "403", "409" ou "413" no corpo; é o caso que o `storage-js` 2.119.0
- * recebe em `dist/index.mjs`, linha 326), depois o status HTTP. Diferente do SDK (`statusCode || code ||
- * status`), não usa o `code` do corpo (por exemplo `InvalidJWT`, que esconderia o status HTTP) nem um
- * `statusCode` de outro tipo. O texto do corpo nunca sai daqui.
+ * JWT inválido ou expirado: o Storage o recusa com `error` (ou `code`) `InvalidJWT` no corpo, e o
+ * `statusCode` pode vir "400" ou "403" (VER-032). Decide só pelo nome do erro, sem diferenciar maiúsculas;
+ * a `message` é texto livre e nunca decide.
+ */
+function ehJwtInvalido(valor: unknown): boolean {
+  return typeof valor === 'string' && valor.toLowerCase() === 'invalidjwt'
+}
+
+/**
+ * Lê a resposta de erro do Storage: primeiro o JWT inválido (`error` ou `code` `InvalidJWT` do corpo →
+ * `sessao_expirada`, com prioridade sobre o resto), depois o `statusCode` **texto, não vazio** do corpo JSON
+ * (o Storage costuma responder 400 com `statusCode` "403", "409" ou "413" no corpo; é o caso que o
+ * `storage-js` 2.119.0 recebe em `dist/index.mjs`, linha 326), depois o status HTTP. Diferente do SDK
+ * (`statusCode || code || status`), o `code` do corpo só conta quando é `InvalidJWT`, para não esconder o
+ * status HTTP; um `statusCode` de outro tipo é ignorado. O texto do corpo nunca sai daqui.
  */
 export function motivoDaResposta(status: number, corpo: string): MotivoDaPreparacao {
   let codigo = String(status)
   try {
     const json: unknown = JSON.parse(corpo)
-    if (json && typeof json === 'object' && 'statusCode' in json && typeof json.statusCode === 'string' && json.statusCode !== '')
-      codigo = json.statusCode
+    if (json && typeof json === 'object') {
+      if (('error' in json && ehJwtInvalido(json.error)) || ('code' in json && ehJwtInvalido(json.code))) return 'sessao_expirada'
+      if ('statusCode' in json && typeof json.statusCode === 'string' && json.statusCode !== '') codigo = json.statusCode
+    }
   } catch {
     /* corpo vazio ou não JSON: fica o status HTTP */
   }
-  return motivoDoCodigo(codigo)
+  return ehJwtInvalido(codigo) ? 'sessao_expirada' : motivoDoCodigo(codigo)
 }
 
 /**
  * Erro devolvido (ou lançado) pelo `storage-js` em `remove` e `createSignedUrl`: `StorageUnknownError`
- * é a falha do `fetch` → `rede`; `StorageApiError` traz `statusCode` (do corpo) e `status` (HTTP),
- * lidos na mesma ordem de `motivoDaResposta`; qualquer outra coisa → `outro`.
+ * é a falha do `fetch` → `rede`; `StorageApiError` traz `code` e `statusCode` (do corpo) e `status` (HTTP):
+ * `InvalidJWT` em `code` ou `statusCode` (o SDK põe o `code` no `statusCode` quando o corpo não traz um)
+ * → `sessao_expirada`, depois `statusCode` e `status`, na mesma ordem de `motivoDaResposta`; qualquer
+ * outra coisa → `outro`. O SDK descarta o campo `error` do corpo; a `message` não decide.
  */
 function motivoDoStorage(erro: unknown): MotivoDaPreparacao {
   if (!erro || typeof erro !== 'object') return 'outro'
-  const e = erro as { name?: unknown; status?: unknown; statusCode?: unknown }
+  const e = erro as { name?: unknown; status?: unknown; statusCode?: unknown; code?: unknown; error?: unknown }
   if (e.name === 'StorageUnknownError') return 'rede'
+  if (ehJwtInvalido(e.code) || ehJwtInvalido(e.error) || ehJwtInvalido(e.statusCode)) return 'sessao_expirada'
   if (typeof e.statusCode === 'string' && e.statusCode !== '') return motivoDoCodigo(e.statusCode)
   if (typeof e.status === 'number') return motivoDoCodigo(String(e.status))
   return 'outro'
