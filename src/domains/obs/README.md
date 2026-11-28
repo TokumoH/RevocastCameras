@@ -6,12 +6,12 @@
 |---|---|
 | Id | DIR-src-domains-obs |
 | Título | `obs` |
-| Tipo | código · domínio Integração OBS (camada anticorrupção: portas, versão mínima e executor) |
+| Tipo | código · domínio Integração OBS (camada anticorrupção: portas, versão mínima, executor e guarda da saída) |
 | Data | 2026-11-27 |
 | Usuário responsável | TokumoH |
 | Status | em construção |
 | Commits | commit que introduz este arquivo — `git log --diff-filter=A --format=%h -- src/domains/obs/README.md` |
-| Arquivos | `README.md`, `portas.ts`, `versao.ts`, `versao.test.ts`, `executor.ts`, `executor.test.ts` |
+| Arquivos | `README.md`, `portas.ts`, `versao.ts`, `versao.test.ts`, `executor.ts`, `executor.test.ts`, `saida.ts`, `saida.test.ts` |
 
 ## Propósito
 
@@ -26,6 +26,7 @@ Criado na Tarefa 5 da etapa E3 ([PLA-004](../../../docs/planos/2026-11-27-e3-ao-
 - `portas.ts`: `NIVEL_DE_CONTROLE` (0 NONE … 5 ALL), `StatusDaSaida`, `ObsNoNavegador` (com `aoMudarCena`, o evento `obsSceneChanged`, desde o VER-046; `aoMudarSaida` passa o tipo, `inicio` ou `fim`, e a saída desde a rodada 1), `MarcadorObs` (o pedaço do obs-websocket que o executor usa: `versao`, `marcar`, `conectado`; VER-046, N1) e `ObsWebsocket` (que o estende com `conectar`, `aoFechar` e `fechar`, usados só pela rota do palco). Sem teste próprio: só tipos e a constante, exercitados pelos testes do executor e dos adaptadores.
 - `versao.ts`: `VERSAO_MINIMA_DO_OBS` e `versaoAtende` (com o teste ao lado).
 - `executor.ts`: `ESPERA_DO_CLIPE_MS`, `ExecutorObs` (o `ExecutorDeAcoes` mais `atualizarSituacao`, `cenaAtual` (desde o VER-046: a cena do programa lida por `getCurrentScene` só com nível READ_USER, ou a que o executor acabou de trocar) e `parar`), `DependenciasDoExecutor` e `criarExecutorObs` (com o teste ao lado, com OBS, websocket e relógio falsos escritos no próprio arquivo).
+- `saida.ts` (desde o [VER-053](../../../docs/verificacoes/2026-11-28-053-e4-obs-camera.md), D8 do PLA-005): a guarda da saída do OBS do VER-046, movida do `src/app/telas/PalcoNoAr.tsx` sem mudar uma regra: `SELO_VISIVEL_MS` (5 s), `SITUACAO_A_CADA_MS` (15 s), `saidaParada`, `RELEITURAS_PARA_LIBERAR` (2) e `criarGuardaDaSaida` (com o teste ao lado, com um OBS falso escrito no próprio arquivo). Só depende da porta `ObsNoNavegador`; o palco (`/obs/palco`) e a câmera do OBS (`/obs/camera`) usam a mesma, e a casca React que esconde as telas de erro (`SoComSaidaParada`) fica em [`../../app/telas/TelaDeDispositivo.tsx`](../../app/telas/TelaDeDispositivo.tsx).
 - Adaptadores fora do domínio: [`../../shared/infra/obsNavegador.ts`](../../shared/infra/obsNavegador.ts) e [`../../shared/infra/obsWebsocket.ts`](../../shared/infra/obsWebsocket.ts).
 
 ## Por que esta organização
@@ -50,6 +51,8 @@ O OBS tem dois caminhos com regras diferentes (a Fonte de navegador com níveis 
 | [`versao.ts`](versao.ts) | `VERSAO_MINIMA_DO_OBS` (`'30.2.0'`), `versaoAtende` |
 | [`versao.test.ts`](versao.test.ts) | 1 teste: `versao-minima` (os casos da interface, pré-lançamento — inclusive `30.2.0-rc1` —, forma errada e tamanho) |
 | [`executor.ts`](executor.ts) | `ESPERA_DO_CLIPE_MS`, `ExecutorObs`, `DependenciasDoExecutor`, `criarExecutorObs` |
+| [`saida.ts`](saida.ts) | `SELO_VISIVEL_MS`, `SITUACAO_A_CADA_MS`, `saidaParada`, `RELEITURAS_PARA_LIBERAR`, `criarGuardaDaSaida` (guarda da saída, VER-046; aqui desde o VER-053) |
+| [`saida.test.ts`](saida.test.ts) | 19 testes (VER-053): constantes movidas sem mudar valor, `saidaParada` (10 casos: parada, cada saída no ar, status e nível nulos, nível abaixo de READ_OBS e READ_OBS, sem `window.obsstudio`), sem início vale `saidaParada`, início sem fim recusa, `*Stopped` da mesma saída libera (o de outra não), duas releituras liberam e uma não, releituras com a saída no ar não liberam, releituras sem início pendente não contam, início durante a leitura vence, nível abaixo de READ_OBS sem pedir o status |
 | [`executor.test.ts`](executor.test.ts) | 21 testes: do VER-046, `cena-atual-lida-do-obs`, `cena-atual-respeita-o-nivel` (READ_OBS e desconhecido não chamam `getCurrentScene`; READ_USER basta) e `cena-atual-sem-obs`; antes, constante, `trocar-cena-existente`, `cena-inexistente-no-obs`, `sem-permissao`, `clipe-espera-5s`, `clipe-repetido-ignorado`, `clipe-sem-replay-buffer`, `marcador-sem-websocket`, `marcador-sem-gravacao`, `marcador-ok`, `obs-ausente`, `websocket-cai-depois`, `websocket-cai-durante-o-pedido`, `parar-cancela-o-clipe-pendente`, `som-que-nao-toca-falha-sem-motivo`, `situacao`, `estado-do-websocket-por-funcao` (Tarefa 6, rodada 1) |
 
 ## Lógica
@@ -85,12 +88,13 @@ versaoAtende('30.1.2') // false — o checklist mostra "versão do OBS abaixo de
 
 ## Verificação
 
-- `npx vitest run src/domains/obs`: 2 arquivos, 22 testes desde o VER-046 (18 desde o VER-040, 17 até então) (mais 3 de `../arquitetura.test.ts`, que cobre esta pasta sem configuração).
+- `npx vitest run src/domains/obs`: 3 arquivos, 41 testes desde o VER-053 (`saida.test.ts`, 19); 2 arquivos, 22 testes desde o VER-046 (18 desde o VER-040, 17 até então) (mais 3 de `../arquitetura.test.ts`, que cobre esta pasta sem configuração).
 - Sabotagens em memória, uma de cada vez, cada uma derrubando o teste citado (tabela no VER-039).
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`. Não há subdiretórios.
 
 ## Riscos
 
+- **Guarda movida (VER-053):** o corpo de `saidaParada`, `criarGuardaDaSaida` e da `SoComSaidaParada` é o mesmo, letra por letra, do `PalcoNoAr.tsx` do VER-046 (conferido por comparação de texto no VER-053), e o `PalcoNoAr.test.tsx` passa sem mudar uma expectativa; as âncoras do VER-046 para `PalcoNoAr.tsx` passam a apontar linhas deslocadas (a guarda saiu de lá).
 - **Sem OBS real:** níveis, nomes de função e eventos vêm do README do obs-browser e do `protocol.md` do obs-websocket (lidos em 2026-11-27); a conferência num OBS real é da Tarefa 10 (passo do responsável).
 - **`sem_gravacao` cobre mais de uma causa:** o `CreateRecordChapter` recusado (gravação parada, formato que não é Hybrid MP4, OBS anterior a 30.2) e o pedido sem resposta em 5 s com a conexão de pé viram o mesmo motivo (a queda da conexão vira `sem_websocket`); a lista fixa não tem um motivo para cada caso.
 - **Situação lida por último:** `nivel`, `replayBuffer`, `gravando`, `versaoObs` e, desde o VER-046, a cena atual são da última leitura (a cena, só com nível READ_USER; abaixo dele, `null`); quem chama `atualizarSituacao()` periodicamente é a rota do palco (Tarefa 6).

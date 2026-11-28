@@ -525,3 +525,11 @@ html.palco { color-scheme: light; }
   border-radius: 999px;
 }
 .previa-da-camera { display: block; width: 100%; max-width: 100%; height: auto; max-height: 60vh; object-fit: contain; background: #000; }
+
+/* /obs/camera (Fonte de navegador do OBS com o vídeo da câmera, D8 do PLA-005): a classe `obs-camera` vem do mesmo script do
+   index.html, antes da primeira pintura; fundo transparente e esquema claro como o palco. Só o vídeo, em tela cheia, sem
+   cortar (`object-fit: contain`) e sem fundo próprio; o selo (tecla `s`) reusa o `.selo-do-palco`. */
+html.obs-camera, html.obs-camera body { background: transparent; }
+html.obs-camera { color-scheme: light; }
+.obs-camera-no-ar { position: fixed; inset: 0; overflow: hidden; }
+.video-da-obs-camera { display: block; width: 100%; height: 100%; object-fit: contain; background: transparent; }

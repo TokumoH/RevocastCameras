@@ -58,17 +58,20 @@ describe('rotas de dispositivo: pareamento (D3, D4)', () => {
     expect(ordem.filter((m) => m === 'limparFragmento')).toHaveLength(1)
   })
 
-  // desde a E4 (VER-052), o `/camera` pareado é a tela preta (`CameraNoAr`), com a situação do vídeo na presença
+  // desde a E4 (VER-052), o `/camera` pareado é a tela preta (`CameraNoAr`), com a situação do vídeo na presença; desde o
+  // VER-053, o `/obs/camera` pareado (`ObsCameraNoAr`) não mostra texto nenhum na Fonte (D8): só o vídeo, quando houver
   test.each([
     ['/camera', 'camera', TEXTO_DA_CAMERA.aguardando_toque, { video: { estado: 'aguardando_toque', telaLigada: null, bateria: null } }],
-    ['/obs/camera', 'obs_camera', 'Pareado como Celular de gravação. O vídeo chega na etapa E4.', {}],
+    ['/obs/camera', 'obs_camera', null, { video: { estado: 'aguardando_episodio', telaLigada: null, bateria: null } }],
   ] as const)('pareia-e-mostra (%s)', async (caminho, tipo, frase, extra) => {
     const d = criarFalsosDeDispositivo({ pareamento: { resultado: 'pareado', dispositivo: { id: DISPOSITIVO, rotulo: 'Celular de gravação' } } })
-    render(<App caminho={caminho} dependencias={montar(d, `#${CODIGO}`)} />)
-    expect(await screen.findByText(frase)).toBeTruthy()
+    const { container } = render(<App caminho={caminho} dependencias={montar(d, `#${CODIGO}`)} />)
+    if (frase !== null) expect(await screen.findByText(frase)).toBeTruthy()
+    else await waitFor(() => expect(d.chamadas.parear).toHaveLength(1))
     // presença em `estudio` com o próprio dispositivo, sem OBS
     await waitFor(() => expect(d.canal.presencas('estudio')).toEqual([{ tipo, dispositivoId: DISPOSITIVO, obs: null, ...extra }]))
     expect(d.canal.abertos()).toEqual(['estudio'])
+    if (frase === null) expect(container.textContent).toBe('')
   })
 
   test.each([
@@ -234,7 +237,8 @@ describe('rotas de dispositivo: pareamento (D3, D4)', () => {
     expect(d.chamadas.parear).toHaveLength(1)
   })
 
-  test('carregando: a câmera diz que confere; o palco (na Fonte do OBS) não mostra nada', async () => {
+  // VER-053 (revisão 1, N3): o `/obs/camera` também recarrega dentro da Fonte do OBS, inclusive no ar
+  test('carregando-invisivel-no-obs-camera: a câmera diz que confere; o palco e a câmera do OBS (na Fonte do OBS) não mostram nada', async () => {
     for (const [caminho, tipo] of ROTAS) {
       const d = criarFalsosDeDispositivo()
       const servico = { ...d.servicos.servico, sessaoAtual: () => new Promise<never>(() => {}) }
@@ -242,7 +246,7 @@ describe('rotas de dispositivo: pareamento (D3, D4)', () => {
       await act(async () => {
         for (let i = 0; i < 10; i++) await Promise.resolve()
       })
-      if (tipo === 'obs_palco') expect(container.textContent, caminho).toBe('')
+      if (tipo === 'obs_palco' || tipo === 'obs_camera') expect(container.textContent, caminho).toBe('')
       else expect(screen.getByText(TEXTO_DO_DISPOSITIVO.carregando)).toBeTruthy()
       cleanup()
     }

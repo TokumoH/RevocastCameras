@@ -5,21 +5,19 @@ import { criarPalco } from '../../domains/aovivo/palco'
 import type { CanalDoControle, CanalDoEstado, EstadoDoCanal, RepositorioDoPalco } from '../../domains/aovivo/portas'
 import { criarExecutorObs } from '../../domains/obs/executor'
 import type { ExecutorObs } from '../../domains/obs/executor'
-import { NIVEL_DE_CONTROLE } from '../../domains/obs/portas'
 import type { MarcadorObs, ObsNoNavegador, ObsWebsocket } from '../../domains/obs/portas'
+import { SELO_VISIVEL_MS, SITUACAO_A_CADA_MS, criarGuardaDaSaida } from '../../domains/obs/saida'
 import type { ServicosDoDispositivo } from '../servicos'
 import { REABRIR_CANAIS_MS } from '../canais'
 import { acompanharEstudio } from '../useDispositivo'
 import type { DispositivoPareado } from '../useDispositivo'
 
-/** O selo de estado fica visível por 5 s depois da tecla `s` (D16). */
-export const SELO_VISIVEL_MS = 5000
+/** `SELO_VISIVEL_MS` (5 s, D16) e `SITUACAO_A_CADA_MS` (15 s) moram em `domains/obs/saida.ts` desde o VER-053 (a guarda é a mesma no `/obs/camera`). */
+export { SELO_VISIVEL_MS, SITUACAO_A_CADA_MS }
 /** O painel de configuração do websocket fecha sozinho em 2 min (D10). */
 export const CONFIG_ABERTA_MS = 120_000
 /** As URLs assinadas dos sons e das imagens (válidas por 1 h) são renovadas a cada 45 min (D16). */
 export const RENOVAR_URLS_MS = 45 * 60_000
-/** A situação do OBS (nível, saídas, versão) é lida de novo a cada 15 s e a cada evento de saída (VER-039, Riscos). */
-export const SITUACAO_A_CADA_MS = 15_000
 /** O obs-websocket que caiu (ou não respondeu) é tentado de novo a cada 10 s, no mesmo objeto (VER-039, I1). */
 export const RECONECTAR_WS_MS = 10_000
 /** Chave do armazenamento local da Fonte de navegador com a porta e a senha do obs-websocket (D10, DES-001 §8). */
@@ -65,96 +63,6 @@ export function lerConfiguracaoDoWebsocket(a: Armazenamento): { porta: number; s
 
 function portaValida(p: unknown): p is number {
   return typeof p === 'number' && Number.isInteger(p) && p >= 1 && p <= 65535
-}
-
-/**
- * Saída do OBS parada **e** status conhecido (D10, D16): `window.obsstudio` presente, nível READ_OBS ou mais e
- * `getStatus` com transmissão, gravação, Replay Buffer e câmera virtual desligados. Qualquer dúvida → `false`.
- */
-export async function saidaParada(obs: ObsNoNavegador): Promise<boolean> {
-  if (!obs.disponivel()) return false
-  const nivel = await obs.nivel()
-  if (nivel === null || nivel < NIVEL_DE_CONTROLE.READ_OBS) return false
-  const st = await obs.status()
-  if (st === null) return false
-  return !st.transmitindo && !st.gravando && !st.replayBuffer && !st.cameraVirtual
-}
-
-/** Releituras periódicas (a cada `SITUACAO_A_CADA_MS`) depois do último início de saída sem o fim, para voltar a confiar no status: 2, ao menos um período inteiro. */
-export const RELEITURAS_PARA_LIBERAR = 2
-
-/**
- * Guarda da saída do OBS (D10, D16; VER-046, rodada 1). O `getStatus` do obs-browser só marca a saída depois do
- * `*Started`; entre o `*Starting` e o `*Started` ele ainda diz "parada". Por isso, depois de um evento de início, a guarda
- * recusa até chegar o `*Stopped` da mesma saída ou até `RELEITURAS_PARA_LIBERAR` releituras periódicas seguidas
- * (`contarReleitura`) acharem a saída parada (um início que falhou e não teve fim). Sem bloqueio, vale `saidaParada`.
- * Usada pelas telas de erro (`SoComSaidaParada`), pelo selo e pelo painel de configuração.
- */
-export function criarGuardaDaSaida(obs: ObsNoNavegador): {
-  evento(tipo: 'inicio' | 'fim', saida: string): void
-  contarReleitura(): void
-  livre(): Promise<boolean>
-} {
-  const iniciadas = new Set<string>()
-  let releituras = 0
-  return {
-    evento(tipo, saida) {
-      if (tipo === 'inicio') {
-        iniciadas.add(saida)
-        releituras = 0
-      } else iniciadas.delete(saida)
-    },
-    contarReleitura() {
-      if (iniciadas.size > 0) releituras++
-    },
-    async livre() {
-      const parada = await saidaParada(obs)
-      // conferido depois do `await`: um início que chega durante a leitura vence
-      if (iniciadas.size > 0) {
-        if (!parada || releituras < RELEITURAS_PARA_LIBERAR) return false
-        iniciadas.clear()
-      }
-      return parada
-    },
-  }
-}
-
-/**
- * As telas de pareamento e de erro da rota `/obs/palco` (revogado, sem link, link inválido, falha...) só
- * aparecem quando nada vai ao ar (D16; VER-046, I1): fora do OBS (sem `window.obsstudio`, não há
- * transmissão) ou com a saída parada e o status conhecido (`saidaParada`). Com a saída no ar ou o status
- * desconhecido, a Fonte fica vazia (transparente). Um evento de início do obs-browser esconde na hora, já no
- * `Starting`, e a tela só volta pela guarda (`criarGuardaDaSaida`: o `*Stopped` da saída ou duas releituras periódicas
- * com a saída parada); a conferência é refeita a cada `SITUACAO_A_CADA_MS` (se um evento faltar).
- */
-export function SoComSaidaParada({ obs, children }: { obs: ObsNoNavegador; children: ReactNode }): ReactNode {
-  const [livre, setLivre] = useState(false)
-  useEffect(() => {
-    let vivo = true
-    let geracao = 0
-    const guarda = criarGuardaDaSaida(obs)
-    async function conferir(): Promise<void> {
-      const minha = ++geracao
-      const ok = !obs.disponivel() || (await guarda.livre())
-      if (vivo && minha === geracao) setLivre(ok)
-    }
-    void conferir()
-    const soltar = obs.aoMudarSaida((tipo, saida) => {
-      guarda.evento(tipo, saida)
-      if (tipo === 'inicio') setLivre(false)
-      void conferir()
-    })
-    const t = setInterval(() => {
-      guarda.contarReleitura()
-      void conferir()
-    }, SITUACAO_A_CADA_MS)
-    return () => {
-      vivo = false
-      soltar()
-      clearInterval(t)
-    }
-  }, [obs])
-  return livre ? children : null
 }
 
 type Carga = Awaited<ReturnType<RepositorioDoPalco['carregar']>>

@@ -3,8 +3,8 @@ import type { ObsNoNavegador, ObsWebsocket } from '../../domains/obs/portas'
 import { criarObsNoNavegador } from '../../shared/infra/obsNavegador'
 import { criarObsWebsocket } from '../../shared/infra/obsWebsocket'
 import type { Dependencias } from '../dependencias'
-import { PalcoNoAr, SoComSaidaParada } from './PalcoNoAr'
-import { TelaDeDispositivo } from './TelaDeDispositivo'
+import { PalcoNoAr } from './PalcoNoAr'
+import { SoComSaidaParada, TelaDeDispositivo } from './TelaDeDispositivo'
 
 type Armazenamento = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 

@@ -1,11 +1,13 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { TipoDeDispositivo } from '../../domains/acesso/dispositivos'
+import type { ObsNoNavegador } from '../../domains/obs/portas'
+import { SITUACAO_A_CADA_MS, criarGuardaDaSaida } from '../../domains/obs/saida'
 import { Cartao } from '../../shared/ui/Cartao'
 import { Logo } from '../../shared/ui/Logo'
 import type { Dependencias } from '../dependencias'
 import type { ServicosDoDispositivo } from '../servicos'
-import { acompanharEstudio, useDispositivo } from '../useDispositivo'
+import { useDispositivo } from '../useDispositivo'
 import type { DispositivoPareado, EstadoDaRotaDeDispositivo } from '../useDispositivo'
 import { TelaConfiguracaoIncompleta } from './EstadosDeAcesso'
 
@@ -48,8 +50,9 @@ type EstadoSemPareado = Exclude<EstadoDaRotaDeDispositivo, { tipo: 'pareado' }>
 function TelaDoEstado({ tipo, titulo, estado, tentarDeNovo }: { tipo: TipoDeDispositivo; titulo: string; estado: EstadoSemPareado; tentarDeNovo: () => void }) {
   switch (estado.tipo) {
     case 'carregando':
-      // O palco recarrega dentro da Fonte do OBS, inclusive no ar: nada aparece enquanto confere (D16).
-      if (tipo === 'obs_palco') return null
+      // O palco e a câmera do OBS recarregam dentro da Fonte do OBS, inclusive no ar: nada aparece enquanto confere (D16;
+      // o `/obs/camera` desde o VER-053, revisão 1, N3 do PLA-005).
+      if (tipo === 'obs_palco' || tipo === 'obs_camera') return null
       return (
         <Tela titulo={titulo}>
           <p role="status">{TEXTO_DO_DISPOSITIVO.carregando}</p>
@@ -89,8 +92,8 @@ export function TelaDeDispositivo({
   titulo: string
   dependencias: Dependencias
   /**
-   * Quem decide se a tela de um estado sem pareamento aparece (o palco: só com nada no ar, D16; VER-046, I1).
-   * Sem ela, a tela aparece sempre.
+   * Quem decide se a tela de um estado sem pareamento aparece (as rotas da Fonte do OBS: só com nada no ar, pela
+   * `SoComSaidaParada`; D16, VER-046 I1; o `/obs/camera` desde o VER-053). Sem ela, a tela aparece sempre.
    */
   cobrirTela?: (tela: ReactNode) => ReactNode
   children: (pareado: Pareado) => ReactNode
@@ -105,29 +108,40 @@ export function TelaDeDispositivo({
 }
 
 /**
- * `/obs/camera` pareado (o vídeo dele chega na Tarefa 5 da E4; o `/camera` usa a `CameraNoAr` desde o VER-052): o
- * rótulo, a presença em `estudio` e a revogação ao vivo (`acompanharEstudio`).
+ * As telas de pareamento e de erro das rotas da Fonte do OBS (`/obs/palco` e, desde o VER-053, `/obs/camera`: revogado,
+ * sem link, link inválido, falha...) só aparecem quando nada vai ao ar (D16; VER-046, I1; D8 do PLA-005): fora do OBS (sem
+ * `window.obsstudio`, não há transmissão) ou com a saída parada e o status conhecido (`saidaParada`). Com a saída no ar ou
+ * o status desconhecido, a Fonte fica vazia (transparente). Um evento de início do obs-browser esconde na hora, já no
+ * `Starting`, e a tela só volta pela guarda (`criarGuardaDaSaida`: o `*Stopped` da saída ou duas releituras periódicas
+ * com a saída parada); a conferência é refeita a cada `SITUACAO_A_CADA_MS` (se um evento faltar). Movida do
+ * `PalcoNoAr.tsx` no VER-053, sem mudar uma regra: a casca não depende da tela do palco.
  */
-export function CameraPareada({ tipo, titulo, pareado }: { tipo: 'camera' | 'obs_camera'; titulo: string; pareado: Pareado }) {
-  const { dispositivo, servicos, marcarRevogado } = pareado
+export function SoComSaidaParada({ obs, children }: { obs: ObsNoNavegador; children: ReactNode }): ReactNode {
+  const [livre, setLivre] = useState(false)
   useEffect(() => {
-    const estudio = acompanharEstudio({
-      tipo,
-      dispositivo,
-      servicos,
-      presenca: () => ({ tipo, dispositivoId: dispositivo.id, obs: null }),
-      marcarRevogado,
-      agendar: (f, ms) => {
-        const t = setTimeout(f, ms)
-        return () => clearTimeout(t)
-      },
+    let vivo = true
+    let geracao = 0
+    const guarda = criarGuardaDaSaida(obs)
+    async function conferir(): Promise<void> {
+      const minha = ++geracao
+      const ok = !obs.disponivel() || (await guarda.livre())
+      if (vivo && minha === geracao) setLivre(ok)
+    }
+    void conferir()
+    const soltar = obs.aoMudarSaida((tipo, saida) => {
+      guarda.evento(tipo, saida)
+      if (tipo === 'inicio') setLivre(false)
+      void conferir()
     })
-    return () => estudio.parar()
-  }, [tipo, dispositivo, servicos, marcarRevogado])
-
-  return (
-    <Tela titulo={titulo}>
-      <p role="status">{`Pareado como ${dispositivo.rotulo}. O vídeo chega na etapa E4.`}</p>
-    </Tela>
-  )
+    const t = setInterval(() => {
+      guarda.contarReleitura()
+      void conferir()
+    }, SITUACAO_A_CADA_MS)
+    return () => {
+      vivo = false
+      soltar()
+      clearInterval(t)
+    }
+  }, [obs])
+  return livre ? children : null
 }

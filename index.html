@@ -6,12 +6,16 @@
     <meta name="color-scheme" content="light dark" />
     <title>RevoCast Câmeras</title>
     <script>
-      // /obs/palco (Fonte de navegador do OBS): fundo transparente e esquema claro já na primeira pintura,
-      // antes do CSS e do app (N2); as barras finais saem como no resolverRota.
-      if (location.pathname.replace(/\/+$/, '') === '/obs/palco') {
-        document.documentElement.classList.add('palco')
-        document.documentElement.style.colorScheme = 'light'
-      }
+      // /obs/palco e /obs/camera (Fontes de navegador do OBS): fundo transparente e esquema claro já na primeira pintura,
+      // antes do CSS e do app (N2; D8 do PLA-005); as barras finais saem como no resolverRota.
+      ;(function () {
+        var caminho = location.pathname.replace(/\/+$/, '')
+        var classe = caminho === '/obs/palco' ? 'palco' : caminho === '/obs/camera' ? 'obs-camera' : ''
+        if (classe) {
+          document.documentElement.classList.add(classe)
+          document.documentElement.style.colorScheme = 'light'
+        }
+      })()
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

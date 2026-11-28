@@ -103,7 +103,7 @@ Estados do vídeo (`EstadoDoVideo`), em ordem de precedência no emissor (o rece
 | `sem_conexao_direta` | duas falhas seguidas depois de resposta aceita (ou respondida, no receptor); segue tentando a cada 30 s | câmera, R |
 | `aguardando_par` | `sem_par`, 15 s sem resposta, ou o par encerrou (câmera); nenhuma oferta (receptor) | câmera, R |
 | `conectando` | o resto: oferta montada ou enviada, resposta aceita, queda breve, espera crescente | câmera, R |
-| `sem_video_direto` | o navegador não tem `RTCPeerConnection` (VER-052, rodada 1, I2): **publicada pela rota**, nunca pelo emissor nem pelo receptor; a aba Ao vivo (Tarefa 6) mostra a causa | rota da câmera (a do `obs_camera` pode usar na Tarefa 5) |
+| `sem_video_direto` | o navegador não tem `RTCPeerConnection` (VER-052, rodada 1, I2): **publicada pela rota**, nunca pelo emissor nem pelo receptor; a aba Ao vivo (Tarefa 6) mostra a causa | rota da câmera e, desde o VER-053, a do `obs_camera` (no selo e na presença) |
 
 Vídeo no receptor (D3, D8): o fluxo do evento `track` fica guardado e só vai à tela (`aoVideo(fluxo)`) com a conexão em `conectado`; ao sair de `conectado` (`caiu`, `conectando`, `falhou`, fechamento) sai `aoVideo(null)`, e o mesmo fluxo volta com o `conectado`.
 
