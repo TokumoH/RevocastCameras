@@ -38,6 +38,7 @@ import {
   type ExtensaoDoCanal,
 } from './banco'
 import { COLUNAS_DE_MEU_DISPOSITIVO, FORMA_DO_CODIGO } from '../../src/domains/acesso/dispositivos'
+import { INTERVALO_DO_SERVIDOR_MS } from '../../src/domains/captura/gestos'
 
 let db: PGlite
 
@@ -853,12 +854,13 @@ describe('preparação, lista e registro (Correção 1)', () => {
     // Controle: há as 13 tabelas (12 da E0 e tentativas_pareamento, da E3) e as 13 funções em public (a lista acima não
     // veio de um schema vazio): as 3 da E0 (papel_atual, dispositivo_atual, criar_perfil_membro), as 9 da E3
     // (criar_codigo_pareamento, parear_dispositivo, meu_dispositivo, revogar_dispositivo, episodio_ativo, iniciar_ao_vivo,
-    // encerrar_ao_vivo, definir_modo_teste, pode_usar_canal) e a da E4 (enviar_sinal_de_video, VER-050).
+    // encerrar_ao_vivo, definir_modo_teste, pode_usar_canal), a da E4 (enviar_sinal_de_video, VER-050) e as 4 da E5
+    // (definir_gestos_ligados, definir_reconhecimento, situacao_dos_gestos e enviar_gesto, VER-060): 17 funções.
     const n = await db.query<{ n: number }>(
       `select (select count(*) from pg_class c join pg_namespace s on s.oid = c.relnamespace where s.nspname = 'public' and c.relkind = 'r')
             + (select count(*) from pg_proc p join pg_namespace s on s.oid = p.pronamespace where s.nspname = 'public') as n`,
     )
-    expect(Number(n.rows[0].n)).toBe(13 + 13)
+    expect(Number(n.rows[0].n)).toBe(13 + 17)
   })
 
   test('anon-nao-le-nem-escreve', async () => {
@@ -1977,8 +1979,9 @@ describe('E3 — pareamento, ao vivo e canais', () => {
   })
 
   test('e3-funcoes-so-authenticated', async () => {
-    // As 9 funções da E3 e a da E4 (enviar_sinal_de_video, VER-050): SECURITY DEFINER, search_path vazio e EXECUTE só para
-    // authenticated (o rpc:grants-check confere o mesmo nas migrações; aqui, no banco dos testes).
+    // As 9 funções da E3, a da E4 (enviar_sinal_de_video, VER-050) e as 4 da E5 (definir_gestos_ligados,
+    // definir_reconhecimento, situacao_dos_gestos e enviar_gesto, VER-060): SECURITY DEFINER, search_path vazio e EXECUTE só
+    // para authenticated (o rpc:grants-check confere o mesmo nas migrações; aqui, no banco dos testes).
     const r = await db.query<{ f: string; definer: boolean; config: string[]; anon: boolean; service: boolean; auth: boolean; publico: boolean }>(
       `select p.oid::regprocedure::text as f, p.prosecdef as definer, p.proconfig as config,
               has_function_privilege('anon', p.oid, 'EXECUTE') as anon, has_function_privilege('service_role', p.oid, 'EXECUTE') as service,
@@ -1986,14 +1989,16 @@ describe('E3 — pareamento, ao vivo e canais', () => {
               exists (select 1 from aclexplode(p.proacl) a where a.grantee = 0) as publico
        from pg_proc p where p.pronamespace = 'public'::regnamespace
          and p.proname in ('criar_codigo_pareamento', 'parear_dispositivo', 'meu_dispositivo', 'revogar_dispositivo', 'episodio_ativo',
-                           'iniciar_ao_vivo', 'encerrar_ao_vivo', 'definir_modo_teste', 'pode_usar_canal', 'enviar_sinal_de_video')
+                           'iniciar_ao_vivo', 'encerrar_ao_vivo', 'definir_modo_teste', 'pode_usar_canal', 'enviar_sinal_de_video',
+                           'definir_gestos_ligados', 'definir_reconhecimento', 'situacao_dos_gestos', 'enviar_gesto')
        order by 1`,
     )
     expect(r.rows.map((l) => l.f)).toEqual([
-      'criar_codigo_pareamento(tipo_dispositivo,text,uuid,uuid)', 'definir_modo_teste(uuid)', 'encerrar_ao_vivo(uuid)',
+      'criar_codigo_pareamento(tipo_dispositivo,text,uuid,uuid)', 'definir_gestos_ligados(uuid,boolean)', 'definir_modo_teste(uuid)',
+      'definir_reconhecimento(uuid,local_reconhecimento)', 'encerrar_ao_vivo(uuid)', 'enviar_gesto(uuid,gesto)',
       'enviar_sinal_de_video(text,uuid,text)', 'episodio_ativo()',
       'iniciar_ao_vivo(uuid)', 'meu_dispositivo()', 'parear_dispositivo(text,tipo_dispositivo)', 'pode_usar_canal(text,text,boolean)',
-      'revogar_dispositivo(uuid)',
+      'revogar_dispositivo(uuid)', 'situacao_dos_gestos()',
     ])
     for (const l of r.rows) {
       expect([l.f, l.definer, l.config, l.anon, l.service, l.auth, l.publico]).toEqual([l.f, true, ['search_path=""'], false, false, true, false])
@@ -2028,6 +2033,13 @@ describe('E3 — pareamento, ao vivo e canais', () => {
     ['video_proprio', `video:${uid}`], ['video_da_camera', `video:${UID_SESSAO_CAMERA}`], ['video_da_obs', `video:${UID_SESSAO_OBS_CAMERA}`],
     ['video_do_dispositivo', `video:${ID_CAMERA}`], ['video_x', `video:${uid}x`], ['video_sub', `video:${uid}:x`],
     ['video_maiusculo', `VIDEO:${uid}`], ['video_uid_maiusculo', `video:${uid.toUpperCase()}`], ['video_espaco', `video:${uid} `],
+    // VER-060 (D2 do PLA-006): o tópico de gestos de cada sessão (o da sessão consultada, o do palco, o da câmera e o do
+    // obs_camera semeados, e o id do dispositivo do palco no lugar do uid), os parecidos com o da sessão consultada (sufixo,
+    // subtópico, maiúsculas no prefixo, uid em maiúsculas, espaço e tab no fim) e o episodio:<ativo>:gestos do desenho.
+    ['gestos_proprio', `gestos:${uid}`], ['gestos_do_palco', `gestos:${UID_SESSAO_PALCO}`], ['gestos_da_camera', `gestos:${UID_SESSAO_CAMERA}`],
+    ['gestos_da_obs', `gestos:${UID_SESSAO_OBS_CAMERA}`], ['gestos_do_dispositivo', `gestos:${ID_PALCO}`], ['gestos_x', `gestos:${uid}x`],
+    ['gestos_sub', `gestos:${uid}:x`], ['gestos_maiusculo', `GESTOS:${uid}`], ['gestos_uid_maiusculo', `gestos:${uid.toUpperCase()}`],
+    ['gestos_espaco', `gestos:${uid} `], ['gestos_tab', `gestos:${uid}\t`], ['gestos_do_episodio', `episodio:${ativo}:gestos`],
   ]
   /** O que cada sessão pode, por tópico (rb/rp receber broadcast/presence; eb/ep/es enviar broadcast/presence/persistence). */
   async function permissoesNoCanal(quem: Claims | null): Promise<Record<string, string>> {
@@ -2043,6 +2055,8 @@ describe('E3 — pareamento, ao vivo e canais', () => {
     estudio: '', controle: '', outro: '', video: '', x: '', estado: '', outro_estado: '',
     estado_x: '', estado_sub: '', estado_maiusculo: '', topico_estado_maiusculo: '', controle_x: '', controle_sub: '', controle_maiusculo: '', estado_espaco: '', controle_tab: '',
     video_proprio: '', video_da_camera: '', video_da_obs: '', video_do_dispositivo: '', video_x: '', video_sub: '', video_maiusculo: '', video_uid_maiusculo: '', video_espaco: '',
+    gestos_proprio: '', gestos_do_palco: '', gestos_da_camera: '', gestos_da_obs: '', gestos_do_dispositivo: '', gestos_x: '', gestos_sub: '',
+    gestos_maiusculo: '', gestos_uid_maiusculo: '', gestos_espaco: '', gestos_tab: '', gestos_do_episodio: '',
   }
   /**
    * A matriz da D6: uma linha por sessão; persistence nunca; outro episódio, :video e qualquer outro tópico, nunca.
@@ -2055,6 +2069,12 @@ describe('E3 — pareamento, ao vivo e canais', () => {
    * de '' para 'rb rp'; obs_camera × video_proprio e video_da_obs de '' para 'rb rp'. Todas as outras células das 9 colunas
    * de vídeo: ninguém (inclusive membros, palco, solta e revogado). Ninguém envia (eb, ep, es) em tópico de vídeo: os sinais
    * saem por public.enviar_sinal_de_video. A coluna video (episodio:<ativo>:video) continua fechada.
+   * VER-060 (D2 do PLA-006; células mudadas): palco × gestos_proprio e gestos_do_palco (o mesmo tópico, o da própria sessão)
+   * de '' para 'rb rp'; camera × gestos_proprio e gestos_da_camera de '' para 'rb rp'; obs_camera × gestos_proprio e
+   * gestos_da_obs de '' para 'rb rp'. Todas as outras células das 12 colunas de gestos: ninguém (inclusive membros, solta,
+   * revogado e anon; gestos_do_dispositivo, os parecidos e episodio:<ativo>:gestos para todos). Ninguém envia (eb, ep, es) em
+   * tópico de gestos: os gestos e os avisos saem por public.enviar_gesto e public.definir_gestos_ligados (realtime.send).
+   * As colunas antigas não mudam.
    */
   const MATRIZ_DO_CANAL: [string, Record<string, string>][] = [
     ['anon', NADA],
@@ -2062,9 +2082,9 @@ describe('E3 — pareamento, ao vivo e canais', () => {
     ['bia', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp eb ep', estado: 'rb rp' }],
     ['adm', { ...NADA, estudio: 'rb rp eb ep', controle: 'rb rp eb ep', estado: 'rb rp' }],
     ['estranho', NADA],
-    ['camera', { ...NADA, estudio: 'rb rp ep', video_proprio: 'rb rp', video_da_camera: 'rb rp' }],
-    ['palco', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp', estado: 'rb rp eb' }],
-    ['obs_camera', { ...NADA, estudio: 'rb rp ep', video_proprio: 'rb rp', video_da_obs: 'rb rp' }],
+    ['camera', { ...NADA, estudio: 'rb rp ep', video_proprio: 'rb rp', video_da_camera: 'rb rp', gestos_proprio: 'rb rp', gestos_da_camera: 'rb rp' }],
+    ['palco', { ...NADA, estudio: 'rb rp ep', controle: 'rb rp', estado: 'rb rp eb', gestos_proprio: 'rb rp', gestos_do_palco: 'rb rp' }],
+    ['obs_camera', { ...NADA, estudio: 'rb rp ep', video_proprio: 'rb rp', video_da_obs: 'rb rp', gestos_proprio: 'rb rp', gestos_da_obs: 'rb rp' }],
     ['solta', NADA],
     ['revogado', NADA],
   ]
@@ -2757,6 +2777,625 @@ describe('E3 — pareamento, ao vivo e canais', () => {
       expect(solto).not.toEqual(linhaDaCamera)
       expect(solto.video_da_obs).toBe('rb rp eb ep es')
       expect(await recebe(camera, TOPICO_OBS)).toBe(true) // a recepção que e4-repareamento e e4-video-de-outra-camera negam
+    })
+  })
+
+  // ===== E5 (PLA-006, Tarefa 3; VER-060): gestos =====
+  // Os gestos saem por public.enviar_gesto (D2): a sessão, o episódio ativo, a câmera não revogada, quem reconhece (D5), o
+  // interruptor e o intervalo do servidor (D3) são conferidos a cada chamada, o remetente e o dispositivo são postos pelo
+  // servidor e o gesto sai por realtime.send para gestos:<uid da sessão do palco>, em que só a própria sessão recebe e ninguém
+  // envia. O interruptor muda por public.definir_gestos_ligados (D4), que avisa (sem valor) até 5 sessões, com limite global
+  // só para ligar. "Publica" = uma linha em realtime.messages com private e extension 'broadcast' (mensagensPublicadas). Fica
+  // dentro do bloco da E3 para reusar as sessões, o pareamento e a matriz do canal. Episódio em modo teste, salvo dito.
+  describe('E5 — gestos', () => {
+    const ENVIA_GESTO = 'select public.enviar_gesto($1, $2) as r'
+    const DEFINE = 'select public.definir_gestos_ligados($1, $2) as r'
+    const RECONHECER = 'select public.definir_reconhecimento($1, $2)'
+    const SITUACAO = 'select ligados, reconhecer_aqui from public.situacao_dos_gestos()'
+    const GESTO_ID = '22222222-2222-4222-8222-222222222222'
+    const OUTRO_GESTO_ID = '33333333-3333-4333-8333-333333333333'
+    /** Um id que nenhum episódio nem dispositivo tem. */
+    const ID_OUTRO_INEXISTENTE = '00000000-0000-4000-8000-00000000c1ff'
+    const TOPICO_PALCO = `gestos:${UID_SESSAO_PALCO}`
+    const TOPICO_CAMERA = `gestos:${UID_SESSAO_CAMERA}`
+    const TOPICO_OBS = `gestos:${UID_SESSAO_OBS_CAMERA}`
+    /** Os três destinos semeados do aviso, na ordem da função (palco, obs_camera, câmeras). */
+    const DESTINOS = [TOPICO_PALCO, TOPICO_OBS, TOPICO_CAMERA]
+    const UM_ID = expect.stringMatching(/^[0-9a-f-]{36}$/)
+    const resposta = (r: { r: unknown }[] | Error) => (r instanceof Error ? `erro ${codigoDoErro(r)}` : String(r[0].r))
+    /** O resultado de enviar_gesto ('enviado', 'intervalo', 'desligados', 'sem_palco') ou o código do erro. */
+    const gesto = async (quem: Claims | null, g: string | null = 'Victory', id: string | null = GESTO_ID) =>
+      resposta(await comoSessao<{ r: string }>(db, quem, ENVIA_GESTO, [id, g]))
+    /** O valor devolvido por definir_gestos_ligados ('true'/'false') ou o código do erro. */
+    const definir = async (quem: Claims | null, ligado: boolean | null, episodio: string | null = ID_EPISODIO) =>
+      resposta(await comoSessao<{ r: boolean }>(db, quem, DEFINE, [episodio, ligado]))
+    const ligar = (v: boolean) => db.query('update public.episodios set gestos_ligados = $1 where id = $2', [v, ID_EPISODIO])
+    const coluna = async (id = ID_EPISODIO) =>
+      (await db.query<{ g: boolean }>('select gestos_ligados as g from public.episodios where id = $1', [id])).rows[0].g
+    const reconhecerNo = (v: string | null) => db.query('update public.dispositivos set reconhecer_no = $1 where id = $2', [v, ID_CAMERA])
+    const totalDeMensagens = async () => (await db.query<{ n: number }>('select count(*)::int as n from realtime.messages')).rows[0].n
+    const recebe = (quem: Claims | null, topico: string) => comoCanal(db, quem, topico, 'broadcast', 'receber')
+    async function combinacoes(quem: Claims | null, topico: string): Promise<string> {
+      const pode: string[] = []
+      for (const [sigla, ext, op] of COMBINACOES) if (await comoCanal(db, quem, topico, ext, op)) pode.push(sigla)
+      return pode.join(' ')
+    }
+    const publicada = (topico: string, evento: string, p: Record<string, unknown>) =>
+      ({ topic: topico, event: evento, private: true, extension: 'broadcast', payload: p })
+    const doGesto = (g: string, dispositivo: string, remetente: string, gestoId = GESTO_ID) =>
+      ({ tipo: 'gesto', gesto_id: gestoId, gesto: g, dispositivo, remetente, id: UM_ID })
+    const aviso = (remetente: string) => ({ tipo: 'gestos_mudaram', remetente, id: UM_ID })
+    /** Linhas gravadas pelo superusuário no tópico, com o evento e o remetente, `msAtras` ms antes do agora da transação. */
+    async function semear(topico: string, evento: string, quantas: number, msAtras: number, remetente: string = UID_SESSAO_CAMERA): Promise<void> {
+      await db.query(
+        `insert into realtime.messages (topic, extension, event, private, payload, inserted_at)
+         select $1, 'broadcast', $2, true, jsonb_build_object('tipo', $2::text, 'remetente', $3::text),
+                timezone('utc', now()) - $5::int * interval '1 millisecond'
+         from generate_series(1, $4)`,
+        [topico, evento, remetente, quantas, msAtras],
+      )
+    }
+    const MEIA_HORA_MS = 30 * 60 * 1000
+    /** Recua os gestos do tópico do palco para `ms` antes do agora da transação (o mesmo now() que a função lê). */
+    const recuarGestos = (ms: number, topico = TOPICO_PALCO) => db.query(
+      `update realtime.messages set inserted_at = timezone('utc', now()) - $1::int * interval '1 millisecond' where topic = $2 and event = 'gesto'`,
+      [ms, topico])
+    /** Travas advisory de transação desta conexão com a chave hashtext(chave). */
+    const TRAVAS = `select count(*)::int as n from pg_locks where locktype = 'advisory' and pid = pg_backend_pid() and granted and mode = 'ExclusiveLock'
+      and ((classid::int8 << 32) | objid::int8) = hashtext($1)::int8 and objsubid = 1`
+    const travas = async (chave: string) => (await db.query<{ n: number }>(TRAVAS, [chave])).rows[0].n
+    const migracaoDosGestos = () => MIGRACOES.find((m) => m.arquivo.endsWith('_gestos.sql'))!.sql
+    const normal = (t: string) => t.replace(/\s+/g, ' ').trim()
+
+    beforeEach(async () => {
+      await definirTeste(ID_EPISODIO)
+    })
+
+    // ----- interruptor (D4) -----
+
+    test.each(['ana', 'bia', 'adm'])('e5-definir-gestos-ligados: %s', async (nome) => {
+      const quem = sessao(nome)!
+      expect(await definir(quem, true)).toBe('true')
+      expect(await coluna()).toBe(true)
+      for (const t of DESTINOS) expect(await mensagensPublicadas(db, t)).toEqual([publicada(t, 'gestos_mudaram', aviso(quem.sub))])
+      expect(await totalDeMensagens()).toBe(3) // nada em outro tópico
+      expect(await definir(quem, false)).toBe('false')
+      expect(await coluna()).toBe(false)
+      expect(await totalDeMensagens()).toBe(6)
+    })
+
+    test('e5-aviso-sem-valor', async () => {
+      expect(await definir(ana, true)).toBe('true')
+      expect(await definir(bia, false)).toBe('false')
+      const todas = (await db.query<{ payload: Record<string, unknown> }>('select payload from realtime.messages')).rows
+      expect(todas).toHaveLength(6)
+      for (const { payload } of todas) expect(Object.keys(payload).sort()).toEqual(['id', 'remetente', 'tipo']) // nenhum "ligados"
+    })
+
+    test.each(['estranho', 'solta', 'camera', 'palco', 'obs_camera', 'revogado', 'anon'])('e5-interruptor-so-membro: %s', async (nome) => {
+      await cadastrarSessoesExtras()
+      const r = await comoSessao(db, sessao(nome), DEFINE, [ID_EPISODIO, true])
+      if (nome === 'anon') expect(erro(r).message).toBe('permission denied for function definir_gestos_ligados')
+      else expect(codigoDoErro(erro(r))).toBe('42501')
+      expect(await coluna()).toBe(false)
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e5-interruptor-so-no-ativo', async () => {
+      const ID_ENCERRADO_E5 = '00000000-0000-4000-8000-00000000c107'
+      await db.query(`insert into public.episodios (id, titulo) values ($1, 'Outro')`, [ID_OUTRO])
+      await db.query(`insert into public.episodios (id, titulo, estado) values ($1, 'Encerrado', 'encerrado')`, [ID_ENCERRADO_E5])
+      expect(await definir(ana, true, ID_OUTRO)).toBe('erro 55000') // outro episódio em rascunho
+      expect(await definir(ana, true, ID_ENCERRADO_E5)).toBe('erro 55000') // encerrado
+      expect(await definir(ana, true, ID_OUTRO_INEXISTENTE)).toBe('erro 55000') // inexistente
+      expect(await definir(ana, null)).toBe('erro 22023')
+      expect(await definir(ana, true, null)).toBe('erro 22023')
+      await definirTeste(null)
+      expect(await definir(ana, true)).toBe('erro 55000') // sem episódio ativo
+      expect([await coluna(), await coluna(ID_OUTRO), await coluna(ID_ENCERRADO_E5)]).toEqual([false, false, false])
+      expect(await totalDeMensagens()).toBe(0)
+      // Controles: no modo teste e ao vivo, o ativo muda.
+      await definirTeste(ID_EPISODIO)
+      expect(await definir(ana, true)).toBe('true')
+      linhas(await comoSessao(db, ana, 'select public.iniciar_ao_vivo($1)', [ID_EPISODIO]))
+      expect(await definir(ana, false)).toBe('false')
+    })
+
+    test('e5-update-direto-negado', async () => {
+      // D7 do PLA-004: authenticated só tem update (titulo, data) em episodios; gestos_ligados muda só pela função.
+      const r = erro(await comoSessao(db, ana, 'update public.episodios set gestos_ligados = true where id = $1', [ID_EPISODIO]))
+      expect([codigoDoErro(r), r.message]).toEqual(['42501', negado('episodios')])
+      expect(await coluna()).toBe(false)
+    })
+
+    test('e5-limite-do-interruptor (I4, I10)', async () => {
+      // 20 mudanças no minuto, de dois membros, alternando ligar e desligar: o limite é do projeto, não do membro.
+      for (let i = 0; i < 20; i += 1) {
+        const liga = i % 2 === 0
+        expect([i, await definir(i % 4 < 2 ? ana : bia, liga)]).toEqual([i, String(liga)])
+      }
+      expect(await mensagensPublicadas(db, TOPICO_PALCO)).toHaveLength(20)
+      const r = erro(await comoSessao(db, adm, DEFINE, [ID_EPISODIO, true]))
+      expect([codigoDoErro(r), r.message]).toEqual(['54000', 'limite do interruptor'])
+      expect(await coluna()).toBe(false)
+      expect(await mensagensPublicadas(db, TOPICO_PALCO)).toHaveLength(20) // nada publicado
+      // As 20 linhas recuadas para 61 s antes do agora da transação: saem do minuto (continuam na hora).
+      await db.query(`update realtime.messages set inserted_at = timezone('utc', now()) - interval '61 seconds' where event = 'gestos_mudaram'`)
+      expect(await definir(adm, true)).toBe('true')
+      expect(await definir(ana, false)).toBe('false') // desligar não é limitado
+      // 120 na última hora (22 recuadas + 98 de meia hora): o ligar seguinte é recusado; com 119, passa.
+      await db.query(`update realtime.messages set inserted_at = timezone('utc', now()) - interval '61 seconds' where event = 'gestos_mudaram'`)
+      await semear(TOPICO_PALCO, 'gestos_mudaram', 98, MEIA_HORA_MS, UID_ANA)
+      expect(await mensagensPublicadas(db, TOPICO_PALCO)).toHaveLength(120)
+      expect(await definir(adm, true)).toBe('erro 54000')
+      await db.query(`delete from realtime.messages where id = (select id from realtime.messages where topic = $1 and inserted_at < timezone('utc', now()) - interval '10 minutes' limit 1)`, [TOPICO_PALCO])
+      expect(await definir(adm, true)).toBe('true')
+    })
+
+    test('e5-gestos-nao-contam-no-limite (I11)', async () => {
+      // 120 gestos na hora no tópico do palco (o primeiro destino), 20 deles no último minuto: não bloqueiam o ligar.
+      await semear(TOPICO_PALCO, 'gesto', 100, MEIA_HORA_MS)
+      await semear(TOPICO_PALCO, 'gesto', 20, 1000)
+      expect(await definir(ana, true)).toBe('true')
+      expect((await mensagensPublicadas(db, TOPICO_PALCO)).filter((m) => m.event === 'gestos_mudaram')).toEqual([
+        publicada(TOPICO_PALCO, 'gestos_mudaram', aviso(UID_ANA)),
+      ])
+      // Controle: avisos no mesmo tópico contam (2 + 18 = 20 no minuto).
+      expect(await definir(ana, false)).toBe('false')
+      await semear(TOPICO_PALCO, 'gestos_mudaram', 18, 1000, UID_ANA)
+      expect(await definir(adm, true)).toBe('erro 54000')
+    })
+
+    test('e5-desligar-nunca-limitado (I10)', async () => {
+      await ligar(true)
+      await semear(TOPICO_PALCO, 'gestos_mudaram', 20, 1000, UID_ANA)
+      await semear(TOPICO_PALCO, 'gestos_mudaram', 100, MEIA_HORA_MS, UID_ANA)
+      expect(await definir(ana, false)).toBe('false')
+      expect(await coluna()).toBe(false)
+      for (const t of DESTINOS) {
+        expect((await mensagensPublicadas(db, t)).filter((m) => m.payload?.remetente === UID_ANA && m.payload?.id)).toEqual([
+          publicada(t, 'gestos_mudaram', aviso(UID_ANA)),
+        ])
+      }
+      expect(await definir(adm, true)).toBe('erro 54000') // controle: a cota está cheia para ligar
+    })
+
+    test('e5-mesmo-valor-nao-publica (I10)', async () => {
+      expect(await definir(ana, false)).toBe('false') // já desligados: devolve sem gravar nem publicar
+      expect(await totalDeMensagens()).toBe(0)
+      expect(await definir(ana, true)).toBe('true')
+      expect(await totalDeMensagens()).toBe(3) // uma linha por destino
+      expect(await definir(bia, true)).toBe('true') // já ligados: devolve sem publicar
+      expect(await totalDeMensagens()).toBe(3)
+      // Nem conta: com a cota cheia, repetir "ligar" com os gestos ligados devolve true, sem 54000.
+      await semear(TOPICO_PALCO, 'gestos_mudaram', 20, 1000, UID_ANA)
+      expect(await definir(adm, true)).toBe('true')
+      expect(await totalDeMensagens()).toBe(23)
+    })
+
+    test('e5-destinos-do-aviso', async () => {
+      // Quatro câmeras pareadas: a semeada (a mais antiga) e três novas, com pareado_em diferentes.
+      await db.query(`update public.dispositivos set pareado_em = now() - interval '1 hour' where id = $1`, [ID_CAMERA])
+      const novas: string[] = []
+      for (let i = 1; i <= 3; i += 1) {
+        const s = await novaAnonima()
+        await db.query(
+          `insert into public.dispositivos (tipo, rotulo, usuario_anonimo_id, pareado_em) values ('camera', $1, $2, now() - $3::int * interval '1 minute')`,
+          [`Celular ${i}`, s.sub, 40 - i * 10])
+        novas.push(`gestos:${s.sub}`)
+      }
+      expect(await definir(ana, true)).toBe('true')
+      const esperados = [TOPICO_PALCO, TOPICO_OBS, ...novas]
+      for (const t of esperados) expect([t, (await mensagensPublicadas(db, t)).length]).toEqual([t, 1])
+      expect(await mensagensPublicadas(db, TOPICO_CAMERA)).toEqual([]) // a quarta câmera, a mais antiga, fica de fora
+      expect(await totalDeMensagens()).toBe(5)
+      // Sem palco: a contagem do limite usa o tópico do obs_camera, o primeiro da ordem (2 + 18 = 20 no minuto).
+      await db.query('update public.dispositivos set revogado_em = now() where id = $1', [ID_PALCO])
+      expect(await definir(ana, false)).toBe('false')
+      expect(await mensagensPublicadas(db, TOPICO_CAMERA)).toHaveLength(1) // com o palco fora, a quarta câmera entra
+      await semear(TOPICO_OBS, 'gestos_mudaram', 18, 1000, UID_ANA)
+      expect(await definir(adm, true)).toBe('erro 54000')
+      await db.query(`delete from realtime.messages where id = (select id from realtime.messages where topic = $1 and payload ->> 'id' is null limit 1)`, [TOPICO_OBS])
+      expect(await definir(adm, true)).toBe('true')
+      // Sem destino nenhum: a coluna muda e nada é publicado nem contado.
+      await db.query('update public.dispositivos set revogado_em = now() where revogado_em is null')
+      const antes = await totalDeMensagens()
+      expect(await definir(ana, false)).toBe('false')
+      expect(await coluna()).toBe(false)
+      expect(await definir(adm, true)).toBe('true')
+      expect(await coluna()).toBe(true)
+      expect(await totalDeMensagens()).toBe(antes)
+    })
+
+    test('e5-trava-antes-da-contagem (N1)', async () => {
+      const CHAVE = 'definir_gestos_ligados'
+      expect(await travas(CHAVE)).toBe(0)
+      // A trava é tomada antes da leitura do valor e da contagem: até o "mesmo valor" (que devolve antes de contar) a toma.
+      const casos: [string, () => Promise<unknown>, boolean, string][] = [
+        ['mesmo valor', async () => undefined, false, 'false'],
+        ['desligar', () => ligar(true), false, 'false'],
+        ['ligar', () => ligar(false), true, 'true'],
+      ]
+      for (const [caso, preparar, valor, esperado] of casos) {
+        await db.exec('savepoint trava')
+        await preparar()
+        expect([caso, await definir(ana, valor)]).toEqual([caso, esperado])
+        expect([caso, await travas(CHAVE)]).toEqual([caso, 1]) // fica até o fim da transação
+        expect([caso, await travas('enviar_gesto')]).toEqual([caso, 0])
+        await db.exec('rollback to savepoint trava')
+        expect(await travas(CHAVE)).toBe(0)
+      }
+    })
+
+    test('e5-ordem-das-travas (N1, rodada 1 da revisão, C1)', async () => {
+      // pg_locks não mostra a ordem (no fim da transação a trava está lá, venha antes ou depois): ela é conferida no corpo
+      // instalado de cada função (pg_get_functiondef). A trava tem de vir antes de toda leitura que decide (o valor atual do
+      // interruptor), das contagens (intervalo, limite) e da gravação (update, realtime.send): contar e gravar ficam atômicos
+      // entre chamadas paralelas. A concorrência real não é reproduzível no PGlite (conexão única): VER-060, Riscos.
+      const corpo = async (assinatura: string) =>
+        (await db.query<{ d: string }>('select pg_get_functiondef($1::regprocedure) as d', [assinatura])).rows[0].d
+      const posicao = (texto: string, trecho: string) => {
+        const i = texto.indexOf(trecho)
+        expect([trecho, i >= 0, texto.lastIndexOf(trecho) === i]).toEqual([trecho, true, true]) // uma vez só
+        return i
+      }
+      const casos: [string, string, string[]][] = [
+        ['public.enviar_gesto(uuid, public.gesto)', "pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('enviar_gesto'))", [
+          'if exists (select 1 from realtime.messages m', // intervalo
+          'if (select pg_catalog.count(*) from realtime.messages m', // 600 por hora
+          'perform realtime.send(',
+        ]],
+        ['public.definir_gestos_ligados(uuid, boolean)', "pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('definir_gestos_ligados'))", [
+          'select e.gestos_ligados into v_atual', // a leitura do valor atual
+          'select pg_catalog.count(*) filter', // minuto e hora
+          'update public.episodios e set gestos_ligados',
+          'perform realtime.send(',
+        ]],
+      ]
+      for (const [assinatura, trava, depois] of casos) {
+        const texto = await corpo(assinatura)
+        const t = posicao(texto, trava)
+        for (const trecho of depois) expect([assinatura, trecho, t < posicao(texto, trecho)]).toEqual([assinatura, trecho, true])
+      }
+    })
+
+    // ----- onde reconhecer (D5) -----
+
+    test('e5-definir-reconhecimento', async () => {
+      await cadastrarSessoesExtras()
+      const rec = async (quem: Claims | null, disp: string | null, local: string | null) => {
+        const r = await comoSessao(db, quem, RECONHECER, [disp, local])
+        return r instanceof Error ? `erro ${codigoDoErro(r)}` : 'ok'
+      }
+      const valor = async () => (await db.query<{ v: string | null }>('select reconhecer_no as v from public.dispositivos where id = $1', [ID_CAMERA])).rows[0].v
+      expect(await rec(adm, ID_CAMERA, 'computador')).toBe('ok')
+      expect(await valor()).toBe('computador')
+      expect(await rec(adm, ID_CAMERA, 'celular')).toBe('ok')
+      expect(await valor()).toBe('celular')
+      expect(await rec(adm, ID_PALCO, 'computador')).toBe('erro 22023') // não é câmera
+      expect(await rec(adm, ID_OBS_CAMERA, 'computador')).toBe('erro 22023')
+      expect(await rec(adm, ID_OUTRO_INEXISTENTE, 'computador')).toBe('erro 22023') // inexistente
+      expect(await rec(adm, null, 'computador')).toBe('erro 22023')
+      expect(await rec(adm, ID_CAMERA, null)).toBe('erro 22023') // nulo (para o padrão, grava celular)
+      expect(await rec(adm, ID_CAMERA, 'nuvem')).toBe('erro 22P02')
+      for (const nome of ['bia', 'estranho', 'solta', 'camera', 'palco', 'obs_camera', 'revogado']) {
+        expect([nome, await rec(sessao(nome), ID_CAMERA, 'computador')]).toEqual([nome, 'erro 42501']) // bia: apresentadora
+      }
+      expect(erro(await comoSessao(db, null, RECONHECER, [ID_CAMERA, 'computador'])).message).toBe('permission denied for function definir_reconhecimento')
+      expect(await valor()).toBe('celular')
+      expect(await rec(ana, ID_CAMERA, 'computador')).toBe('ok') // controle: equipe
+      expect(await valor()).toBe('computador')
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    type Situacao = { ligados: boolean; reconhecer_aqui: boolean }
+    const situacao = async (quem: Claims | null): Promise<Situacao | string> => {
+      const r = await comoSessao<Situacao>(db, quem, SITUACAO)
+      if (r instanceof Error) return `erro ${codigoDoErro(r)}`
+      expect(r).toHaveLength(1)
+      return r[0]
+    }
+    /** [dispositivo, reconhecer_no, interruptor, com episódio ativo, ligados, reconhecer_aqui] */
+    const CASOS_DA_SITUACAO: [string, string | null, boolean, boolean, boolean, boolean][] = []
+    for (const disp of ['camera', 'obs_camera']) {
+      for (const rn of [null, 'celular', 'computador']) {
+        const aqui = disp === 'camera' ? rn !== 'computador' : rn === 'computador'
+        for (const lig of [true, false]) CASOS_DA_SITUACAO.push([disp, rn, lig, true, lig, aqui])
+        CASOS_DA_SITUACAO.push([disp, rn, true, false, false, aqui])
+      }
+    }
+    test.each(CASOS_DA_SITUACAO)('e5-situacao-dos-gestos: %s, reconhecer_no %s, interruptor %s, episódio ativo %s', async (disp, rn, lig, ativo, ligados, aqui) => {
+      await reconhecerNo(rn)
+      await ligar(lig)
+      if (!ativo) await definirTeste(null)
+      expect(await situacao(disp === 'camera' ? camera : obsCamera)).toEqual({ ligados, reconhecer_aqui: aqui })
+    })
+
+    test.each(['palco', 'ana', 'bia', 'adm', 'estranho', 'solta', 'revogado', 'anon'])('e5-situacao-dos-gestos: %s é negado', async (nome) => {
+      await cadastrarSessoesExtras()
+      if (nome === 'anon') expect(erro(await comoSessao(db, null, SITUACAO)).message).toBe('permission denied for function situacao_dos_gestos')
+      else expect(await situacao(sessao(nome))).toBe('erro 42501')
+    })
+
+    test('e5-so-quem-reconhece', async () => {
+      await ligar(true)
+      await reconhecerNo(null) // nulo = celular (D5)
+      expect(await gesto(camera)).toBe('enviado')
+      expect(await gesto(obsCamera)).toBe('erro 42501')
+      await reconhecerNo('computador')
+      await recuarGestos(INTERVALO_DO_SERVIDOR_MS) // fora do intervalo do servidor
+      expect(await gesto(camera)).toBe('erro 42501')
+      expect(await gesto(obsCamera, 'Thumb_Up', OUTRO_GESTO_ID)).toBe('enviado')
+      await reconhecerNo('celular')
+      await recuarGestos(INTERVALO_DO_SERVIDOR_MS)
+      expect(await gesto(obsCamera)).toBe('erro 42501')
+      expect(await gesto(camera)).toBe('enviado')
+      // Os dois primeiros foram recuados para o mesmo inserted_at (a ordem entre eles é a do id, aleatório): confere-se o conjunto.
+      expect((await mensagensPublicadas(db, TOPICO_PALCO)).map((m) => String(m.payload?.dispositivo)).sort()).toEqual([ID_CAMERA, ID_CAMERA, ID_OBS_CAMERA].sort())
+    })
+
+    test('e5-reconhecer-aqui-igual-nas-duas', async () => {
+      // A regra de "reconhecer aqui" está escrita nas duas funções: em todos os casos, situacao_dos_gestos e enviar_gesto
+      // concordam (permitido = enviado, intervalo ou desligados; não permitido = 42501).
+      const vistos: [string, string | null, boolean, boolean, string][] = []
+      for (const rn of [null, 'celular', 'computador']) {
+        for (const lig of [true, false]) {
+          for (const [nome, quem] of [['camera', camera], ['obs_camera', obsCamera]] as const) {
+            await reconhecerNo(rn)
+            await ligar(lig)
+            await recuarGestos(INTERVALO_DO_SERVIDOR_MS)
+            const s = await situacao(quem)
+            const r = await gesto(quem)
+            const aqui = typeof s === 'string' ? null : s.reconhecer_aqui
+            expect(['enviado', 'intervalo', 'desligados', 'erro 42501']).toContain(r)
+            vistos.push([nome, rn, lig, aqui === true, r])
+            expect([nome, rn, lig, aqui]).toEqual([nome, rn, lig, r !== 'erro 42501'])
+          }
+        }
+      }
+      // Os dois lados aparecem (a comparação não passou só com um tipo de resposta).
+      expect(vistos.filter((v) => v[3]).length).toBe(6)
+      expect(vistos.filter((v) => !v[3]).length).toBe(6)
+    })
+
+    // ----- gestos (D2, D3) -----
+
+    test('e5-gesto-publica-no-palco', async () => {
+      await ligar(true)
+      expect(await gesto(camera, 'Victory')).toBe('enviado')
+      const m = await mensagensPublicadas(db, TOPICO_PALCO)
+      expect(m).toEqual([publicada(TOPICO_PALCO, 'gesto', doGesto('Victory', ID_CAMERA, UID_SESSAO_CAMERA))])
+      expect(Object.keys(m[0].payload!).sort()).toEqual(['dispositivo', 'gesto', 'gesto_id', 'id', 'remetente', 'tipo'])
+      expect(await totalDeMensagens()).toBe(1) // nada em outro tópico
+      // A assinatura só tem o id e o gesto: o cliente não passa remetente nem dispositivo (nem um terceiro parâmetro).
+      const r = await db.query<{ a: string }>(
+        `select pg_get_function_arguments(p.oid) as a from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = 'enviar_gesto'`)
+      expect(r.rows).toEqual([{ a: 'p_id uuid, p_gesto gesto' }])
+      expect(codigoDoErro(erro(await comoSessao(db, camera, 'select public.enviar_gesto($1, $2, $3)', [GESTO_ID, 'Victory', ID_PALCO])))).toBe('42883')
+    })
+
+    test('e5-desligados-nao-publica', async () => {
+      expect(await coluna()).toBe(false)
+      expect(await gesto(camera)).toBe('desligados')
+      await reconhecerNo('computador')
+      expect(await gesto(obsCamera)).toBe('desligados')
+      expect(await totalDeMensagens()).toBe(0)
+      await ligar(true)
+      expect(await gesto(obsCamera)).toBe('enviado') // controle
+    })
+
+    test('e5-sem-palco', async () => {
+      await ligar(true)
+      await db.query('update public.dispositivos set revogado_em = now() where id = $1', [ID_PALCO])
+      expect(await gesto(camera)).toBe('sem_palco')
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e5-intervalo-no-banco (I1, I2)', async () => {
+      await ligar(true)
+      const agora = async () => (await db.query<{ t: string }>('select now()::text as t')).rows[0].t
+      const t0 = await agora()
+      expect(await gesto(camera, 'Victory', GESTO_ID)).toBe('enviado')
+      expect(await gesto(camera, 'Thumb_Up', OUTRO_GESTO_ID)).toBe('intervalo')
+      expect(await mensagensPublicadas(db, TOPICO_PALCO)).toHaveLength(1)
+      // A fronteira pelo inserted_at gravado na mesma transação (o now() é o mesmo que a função lê), não pelo tempo real.
+      await recuarGestos(INTERVALO_DO_SERVIDOR_MS - 1)
+      expect(await gesto(camera, 'Thumb_Up', OUTRO_GESTO_ID)).toBe('intervalo')
+      expect(await mensagensPublicadas(db, TOPICO_PALCO)).toHaveLength(1)
+      await recuarGestos(INTERVALO_DO_SERVIDOR_MS)
+      expect(await gesto(camera, 'Thumb_Up', OUTRO_GESTO_ID)).toBe('enviado')
+      expect((await mensagensPublicadas(db, TOPICO_PALCO)).map((m) => m.payload?.gesto)).toEqual(['Victory', 'Thumb_Up'])
+      expect(await agora()).toBe(t0)
+    })
+
+    test('e5-intervalo-com-trava', async () => {
+      await ligar(true)
+      expect(await travas('enviar_gesto')).toBe(0)
+      await db.exec('savepoint trava')
+      expect(await gesto(camera)).toBe('enviado')
+      // A trava de transação de chave fixa fica até o fim da transação (o comoSessao já liberou o próprio savepoint). A
+      // concorrência real não é provada no PGlite (conexão única): VER-060, Riscos.
+      expect(await travas('enviar_gesto')).toBe(1)
+      expect(await travas('definir_gestos_ligados')).toBe(0)
+      await db.exec('rollback to savepoint trava')
+      expect(await travas('enviar_gesto')).toBe(0)
+    })
+
+    test('e5-limite-por-hora', async () => {
+      await ligar(true)
+      await semear(TOPICO_PALCO, 'gesto', 599, MEIA_HORA_MS, UID_SESSAO_CAMERA)
+      expect(await gesto(camera)).toBe('enviado') // a 600ª
+      await recuarGestos(MEIA_HORA_MS)
+      const r = erro(await comoSessao(db, camera, ENVIA_GESTO, [GESTO_ID, 'Victory']))
+      expect([codigoDoErro(r), r.message]).toEqual(['54000', 'limite de gestos'])
+      expect(await mensagensPublicadas(db, TOPICO_PALCO)).toHaveLength(600) // nada publicado
+      // Outro remetente (a sessão antiga) não conta para esta sessão.
+      await db.query(`update realtime.messages set payload = jsonb_set(payload, '{remetente}', to_jsonb($1::text))`, [UID_ANA])
+      expect(await gesto(camera)).toBe('enviado')
+    })
+
+    test('e5-contagens-usam-o-indice (I3, N15, I11)', async () => {
+      const intervalo = `interval '${INTERVALO_DO_SERVIDOR_MS / 1000} seconds'`
+      // Os predicados da migração (com as variáveis), conferidos no texto dela.
+      const PREDICADOS = [
+        `m.topic = 'gestos:' || v_palco::text and m.extension = 'broadcast' and m.private and m.inserted_at > pg_catalog.timezone('utc', pg_catalog.now()) - ${intervalo} and m.event = 'gesto'`,
+        `m.topic = 'gestos:' || v_palco::text and m.extension = 'broadcast' and m.private and m.inserted_at > pg_catalog.timezone('utc', pg_catalog.now()) - interval '1 hour' and m.payload ->> 'remetente' = (select auth.uid())::text`,
+        `pg_catalog.count(*) filter (where m.inserted_at > pg_catalog.timezone('utc', pg_catalog.now()) - interval '1 minute')`,
+        `m.topic = 'gestos:' || v_destinos[1]::text and m.extension = 'broadcast' and m.private and m.inserted_at > pg_catalog.timezone('utc', pg_catalog.now()) - interval '1 hour' and m.event = 'gestos_mudaram'`,
+      ]
+      for (const p of PREDICADOS) expect(normal(migracaoDosGestos())).toContain(normal(p))
+      // As mesmas consultas com os valores no lugar das variáveis.
+      const CONSULTAS: [string, string, RegExp | null][] = [
+        ['intervalo', `select exists (select 1 from realtime.messages m where m.topic = '${TOPICO_PALCO}' and m.extension = 'broadcast' and m.private
+          and m.inserted_at > timezone('utc', now()) - ${intervalo} and m.event = 'gesto')`, /Filter: \(event = 'gesto'::text\)/],
+        ['hora do gesto', `select count(*) from realtime.messages m where m.topic = '${TOPICO_PALCO}' and m.extension = 'broadcast' and m.private
+          and m.inserted_at > timezone('utc', now()) - interval '1 hour' and m.payload ->> 'remetente' = '${UID_SESSAO_CAMERA}'`, null],
+        ['minuto e hora do interruptor', `select count(*) filter (where m.inserted_at > timezone('utc', now()) - interval '1 minute'), count(*)
+          from realtime.messages m where m.topic = '${TOPICO_PALCO}' and m.extension = 'broadcast' and m.private
+          and m.inserted_at > timezone('utc', now()) - interval '1 hour' and m.event = 'gestos_mudaram'`, /Filter: \(event = 'gestos_mudaram'::text\)/],
+      ]
+      const filho = (await db.query<{ n: string }>(
+        `select c.relname as n from pg_inherits i join pg_class c on c.oid = i.inhrelid where i.inhparent = 'realtime.messages_replay_index'::regclass`)).rows
+      expect(filho).toHaveLength(1)
+      await semear(TOPICO_PALCO, 'gesto', 50, MEIA_HORA_MS)
+      await semear(TOPICO_PALCO, 'gestos_mudaram', 50, MEIA_HORA_MS, UID_ANA)
+      await semear('estudio', 'gesto', 50, MEIA_HORA_MS)
+      await db.query(`select set_config('enable_seqscan', 'off', true)`)
+      for (const [nome, sql, filtro] of CONSULTAS) {
+        const plano = (await db.query<{ 'QUERY PLAN': string }>(`explain ${sql}`)).rows.map((l) => l['QUERY PLAN']).join('\n')
+        expect([nome, plano.includes(filho[0].n)]).toEqual([nome, true])
+        expect([nome, /Index Cond: \(\(topic = 'gestos:[^']+'::text\) AND \(inserted_at > /.test(plano)]).toEqual([nome, true])
+        if (filtro) expect([nome, filtro.test(plano)]).toEqual([nome, true]) // o event é só filtro
+      }
+      await db.query(`select set_config('enable_seqscan', 'on', true)`)
+    })
+
+    test('e5-so-com-episodio-ativo', async () => {
+      await ligar(true)
+      const passos: [string, () => Promise<unknown>][] = [
+        ['sem episódio ativo', () => definirTeste(null)],
+        ['ao vivo', async () => {
+          await definirTeste(ID_EPISODIO)
+          linhas(await comoSessao(db, ana, 'select public.iniciar_ao_vivo($1)', [ID_EPISODIO]))
+        }],
+        ['encerrado', async () => linhas(await comoSessao(db, ana, 'select public.encerrar_ao_vivo($1)', [ID_EPISODIO]))],
+      ]
+      const visto: [string, string, boolean, boolean, boolean][] = []
+      for (const [nome, passo] of passos) {
+        await passo()
+        await recuarGestos(INTERVALO_DO_SERVIDOR_MS)
+        visto.push([nome, await gesto(camera), await recebe(camera, TOPICO_CAMERA), await recebe(obsCamera, TOPICO_OBS), await recebe(palco, TOPICO_PALCO)])
+      }
+      expect(visto).toEqual([
+        ['sem episódio ativo', 'erro 55000', false, false, false],
+        ['ao vivo', 'enviado', true, true, true],
+        ['encerrado', 'erro 55000', false, false, false],
+      ])
+      expect(await totalDeMensagens()).toBe(1)
+    })
+
+    test('e5-camera-revogada (N2)', async () => {
+      await ligar(true)
+      expect([await recebe(camera, TOPICO_CAMERA), await recebe(obsCamera, TOPICO_OBS)]).toEqual([true, true]) // controle
+      linhas(await comoSessao(db, ana, 'select public.revogar_dispositivo($1)', [ID_CAMERA]))
+      expect([await gesto(camera), await situacao(camera), await recebe(camera, TOPICO_CAMERA)]).toEqual(['erro 42501', 'erro 42501', false])
+      // O obs_camera continua pareado, mas a câmera dele está revogada: não envia nem recebe, e a situação diz que não reconhece.
+      await reconhecerNo('computador')
+      expect([await gesto(obsCamera), await recebe(obsCamera, TOPICO_OBS)]).toEqual(['erro 55000', false])
+      expect(await situacao(obsCamera)).toEqual({ ligados: true, reconhecer_aqui: false })
+      expect(await recebe(palco, TOPICO_PALCO)).toBe(true) // o palco não depende da câmera
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e5-repareamento-da-camera', async () => {
+      await ligar(true)
+      const { dispositivo, codigo } = await criarCodigo('camera', null, ID_CAMERA)
+      expect(dispositivo).toBe(ID_CAMERA)
+      const nova = await novaAnonima()
+      expect((await parear(nova, codigo, 'camera')).dispositivo).toBe(ID_CAMERA)
+      const topicoNovo = `gestos:${nova.sub}`
+      expect(await gesto(nova)).toBe('enviado')
+      expect(await mensagensPublicadas(db, TOPICO_PALCO)).toEqual([publicada(TOPICO_PALCO, 'gesto', doGesto('Victory', ID_CAMERA, nova.sub))])
+      expect(await combinacoes(nova, topicoNovo)).toBe('rb rp')
+      // A sessão antiga: a função recusa e o tópico antigo fica fechado.
+      expect(await gesto(camera)).toBe('erro 42501')
+      expect(await combinacoes(camera, TOPICO_CAMERA)).toBe('')
+      expect(await combinacoes(nova, TOPICO_CAMERA)).toBe('') // nem a sessão nova entra no tópico antigo
+      // O aviso do interruptor vai para a sessão nova, nunca para o tópico antigo.
+      expect(await definir(ana, false)).toBe('false')
+      expect(await mensagensPublicadas(db, topicoNovo)).toEqual([publicada(topicoNovo, 'gestos_mudaram', aviso(UID_ANA))])
+      expect(await mensagensPublicadas(db, TOPICO_CAMERA)).toEqual([])
+    })
+
+    test('e5-repareamento-do-palco', async () => {
+      await ligar(true)
+      const { dispositivo, codigo } = await criarCodigo('obs_palco', null, ID_PALCO)
+      expect(dispositivo).toBe(ID_PALCO)
+      const nova = await novaAnonima()
+      expect((await parear(nova, codigo, 'obs_palco')).dispositivo).toBe(ID_PALCO)
+      const topicoNovo = `gestos:${nova.sub}`
+      expect(await gesto(camera)).toBe('enviado')
+      expect(await mensagensPublicadas(db, topicoNovo)).toEqual([publicada(topicoNovo, 'gesto', doGesto('Victory', ID_CAMERA, UID_SESSAO_CAMERA))])
+      expect(await mensagensPublicadas(db, TOPICO_PALCO)).toEqual([])
+      expect(await mensagensPublicadas(db, `gestos:${ID_PALCO}`)).toEqual([])
+      expect(await combinacoes(nova, topicoNovo)).toBe('rb rp')
+      expect(await combinacoes(palco, TOPICO_PALCO)).toBe('') // a sessão antiga não recebe mais nada ali
+      expect(await combinacoes(nova, TOPICO_PALCO)).toBe('')
+      expect(await definir(ana, false)).toBe('false')
+      expect((await mensagensPublicadas(db, topicoNovo)).map((m) => m.event)).toEqual(['gesto', 'gestos_mudaram'])
+      expect(await mensagensPublicadas(db, TOPICO_PALCO)).toEqual([])
+    })
+
+    test('e5-gesto-invalido', async () => {
+      await ligar(true)
+      expect(await gesto(camera, 'Victory', null)).toBe('erro 22023')
+      expect(await gesto(camera, null)).toBe('erro 22023')
+      expect(await gesto(camera, 'Banana')).toBe('erro 22P02')
+      expect(await gesto(camera, 'None')).toBe('erro 22P02') // "None" não é gesto
+      expect(await gesto(camera, 'victory')).toBe('erro 22P02')
+      expect(await totalDeMensagens()).toBe(0)
+    })
+
+    test('e5-realtime-send-direto-negado', async () => {
+      await ligar(true)
+      expect(await gesto(camera)).toBe('enviado') // uma linha legítima no tópico do palco
+      // realtime.send chamado direto como authenticated, nos dois tópicos: a política de insert nega e o realtime.send só avisa.
+      for (const topico of [TOPICO_PALCO, TOPICO_CAMERA]) {
+        linhas(await comoSessao(db, camera, `select realtime.send('{"tipo":"gesto","gesto":"Victory"}'::jsonb, 'gesto', $1, true)`, [topico]))
+      }
+      expect(await mensagensPublicadas(db, TOPICO_CAMERA)).toEqual([])
+      expect(await totalDeMensagens()).toBe(1)
+      // O motivo, sem o realtime.send no meio: o insert direto dá 42501, nos dois tópicos.
+      for (const topico of [TOPICO_PALCO, TOPICO_CAMERA]) {
+        await db.query(`select set_config('realtime.topic', $1, true)`, [topico])
+        const ins = erro(await comoSessao(db, camera,
+          `insert into realtime.messages (topic, extension, payload, event, private) values ($1, 'broadcast', '{}', 'gesto', true)`, [topico]))
+        expect([topico, codigoDoErro(ins), ins.message]).toEqual([topico, '42501', violaRls('messages')])
+      }
+      await db.query(`select set_config('realtime.topic', '', true)`)
+      expect(await totalDeMensagens()).toBe(1)
+    })
+
+    test('e5-dispositivo-nao-envia-no-controle', async () => {
+      const CONTROLE = `episodio:${ID_EPISODIO}:controle`
+      for (const [nome, quem] of [['camera', camera], ['obs_camera', obsCamera]] as const) {
+        expect([nome, await combinacoes(quem, CONTROLE)]).toEqual([nome, ''])
+      }
+      expect(await combinacoes(ana, CONTROLE)).toBe('rb rp eb ep') // controle
+    })
+
+    test('e5-funcao-que-libera-tudo-e-pega (N5)', async () => {
+      // Uma pode_usar_canal que devolva true passa nas duas checagens (mesmo oid); só os testes de banco a pegam.
+      const linhaDaCamera = MATRIZ_DO_CANAL.find(([n]) => n === 'camera')![1]
+      expect(await permissoesNoCanal(camera)).toEqual(linhaDaCamera) // controle
+      expect(await recebe(camera, TOPICO_PALCO)).toBe(false) // controle
+      await db.query(`create or replace function public.pode_usar_canal(p_topico text, p_extensao text, p_enviar boolean)
+        returns boolean language sql stable security definer set search_path = '' as $$ select true $$`)
+      const solto = await permissoesNoCanal(camera)
+      expect(solto).not.toEqual(linhaDaCamera)
+      expect(solto.gestos_do_palco).toBe('rb rp eb ep es')
+      expect(await recebe(camera, TOPICO_PALCO)).toBe(true) // a recepção que e5-repareamento e a matriz negam
+      expect(await recebe(palco, `gestos:${ID_PALCO}`)).toBe(true)
     })
   })
 })
