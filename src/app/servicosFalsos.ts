@@ -29,10 +29,11 @@ import type {
   FaixaDeVideo,
   FalhaDaCamera,
   FluxoDeVideo,
+  FonteDeQuadros,
   ManterTelaLigada,
   RespostaDoSinal,
 } from '../domains/captura/portas'
-import { criarReconhecedoresFalsos, criarRepoDosGestosFalso } from '../domains/captura/falsos'
+import { criarFonteFalsa, criarReconhecedoresFalsos, criarRepoDosGestosFalso } from '../domains/captura/falsos'
 import type { Cena } from '../domains/preparacao/cenas'
 import type { Aviso, Episodio } from '../domains/preparacao/episodios'
 import { GESTOS } from '../domains/preparacao/gestos'
@@ -706,6 +707,25 @@ export interface ConexaoDeVideoFalsa {
  *   `RTCPeerConnection`, VER-052).
  * Os avisos são agendados por `queueMicrotask` (fora da chamada, como o `setTimeout` dos adaptadores).
  */
+/**
+ * Quadros falsos (E5, PLA-006, Tarefa 6): `quadros(fluxo)` guarda o fluxo pedido e devolve uma fonte de `criarFonteFalsa`
+ * do domínio (quadros opacos; `fontes.config` e as contagens para o teste). Sempre uma fonte, como a composição real
+ * (`criarFonteDeQuadros`); quem decide se há vídeo é a rota.
+ */
+export function criarQuadrosFalsos() {
+  const fontes = criarFonteFalsa()
+  const fluxos: FluxoDeVideo[] = []
+  const semVideo: FonteDeQuadros = { quadro: async () => null, fechar: () => undefined }
+  return {
+    fontes,
+    fluxos,
+    quadros(fluxo: FluxoDeVideo): FonteDeQuadros {
+      fluxos.push(fluxo)
+      return fontes.fonte() ?? semVideo
+    },
+  }
+}
+
 export function criarVideoFalso() {
   const config = { conectarSozinha: true, trocaDaFaixa: true, videoDireto: true }
   const conexoesCriadas: ConexaoDeVideoFalsa[] = []
@@ -922,6 +942,8 @@ export function criarFalsosDeDispositivo(
     const t = setTimeout(f, ms)
     return () => clearTimeout(t)
   })
+  // E5 (PLA-006, Tarefa 6): a fonte de quadros falsa do domínio, pedida por fluxo como na composição real (`servicos.ts`)
+  const quadros = criarQuadrosFalsos()
   const chamadas = {
     ordem: [] as string[],
     parear: [] as { codigo: string; tipo: TipoDeDispositivo }[],
@@ -993,11 +1015,21 @@ export function criarFalsosDeDispositivo(
   }
 
   return {
-    servicos: { servico, palco, canais: canal.canais, conexoes: video.conexoes, aparelho: video.aparelho, gestos: gestos.repo } satisfies ServicosDoDispositivo,
+    servicos: {
+      servico,
+      palco,
+      canais: canal.canais,
+      conexoes: video.conexoes,
+      aparelho: video.aparelho,
+      gestos: gestos.repo,
+      reconhecedores: reconhecedores.fabrica,
+      quadros: quadros.quadros,
+    } satisfies ServicosDoDispositivo,
     canal,
     video,
     gestos,
     reconhecedores,
+    quadros,
     chamadas,
     definirSessao(s: { usuarioId: string; anonima: boolean } | null): void {
       sessao = s

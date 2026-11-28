@@ -290,6 +290,17 @@ describe('falsos dos gestos (E5)', () => {
     r.config.iniciar = 'sem_suporte'
     expect(await r.fabrica.criar().iniciar()).toEqual({ ok: false, motivo: 'sem_suporte' })
 
+    // E5 (Tarefa 6): os serviços levam a fábrica falsa e os quadros falsos, pedidos por fluxo como na composição real
+    expect(d.servicos.reconhecedores).toBe(r.fabrica)
+    const fluxo = { fluxo: 'camera' } as unknown as Parameters<typeof d.servicos.quadros>[0]
+    const fonte = d.servicos.quadros(fluxo)
+    expect(d.quadros.fluxos).toEqual([fluxo])
+    expect(await fonte.quadro()).not.toBeNull()
+    fonte.fechar()
+    expect(d.quadros.fontes.fechadas()).toBe(1)
+    d.quadros.fontes.config.sem = true
+    expect(await d.servicos.quadros(fluxo).quadro()).toBeNull()
+
     // ao vivo vazio: o interruptor devolve o valor pedido; onde reconhecer resolve sem efeito
     const vazio = aoVivoVazio()
     expect(await vazio.repo.definirGestosLigados(EP, true)).toBe(true)

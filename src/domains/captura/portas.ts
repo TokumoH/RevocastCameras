@@ -118,7 +118,10 @@ export type FalhaDoReconhecedor = 'sem_suporte' | 'integridade' | 'tempo' | 'out
 export interface ReconhecedorDeGestos {
   /** Cria o worker, confere a integridade e carrega o modelo. */
   iniciar(): Promise<{ ok: true } | { ok: false; motivo: FalhaDoReconhecedor }>
-  /** `null` = falha neste quadro; o quadro é transferido ao worker (não reutilizável). */
+  /**
+   * `null` = falha neste quadro; o quadro é transferido ao worker (não reutilizável). **Rejeição** = o reconhecedor
+   * morreu (o worker deu erro depois de pronto): o laço para com `falhou` (VER-063, rodada 1, N6).
+   */
   reconhecer(q: QuadroDeVideo, em: number): Promise<LeituraDoGesto | null>
   /** Encerra o worker (`terminate`: libera a memória do WASM e o GPU); idempotente. */
   fechar(): void

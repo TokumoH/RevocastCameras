@@ -3,7 +3,17 @@ import type { TipoDeDispositivo } from '../domains/acesso/dispositivos'
 import type { ServicosDeMembro } from '../domains/acesso/portas'
 import type { ServicoDeDispositivo } from '../domains/acesso/portasDeDispositivo'
 import type { FabricaDeCanais, FabricaDeCanaisDeGestosDoPalco, RepositorioDoAoVivo, RepositorioDoPalco } from '../domains/aovivo/portas'
-import type { CameraDoAparelho, FabricaDeCanaisDeGestos, FabricaDeCanaisDeVideo, FabricaDeConexoes, ManterTelaLigada, RepositorioDosGestos } from '../domains/captura/portas'
+import type {
+  CameraDoAparelho,
+  FabricaDeCanaisDeGestos,
+  FabricaDeCanaisDeVideo,
+  FabricaDeConexoes,
+  FabricaDeReconhecedores,
+  FluxoDeVideo,
+  FonteDeQuadros,
+  ManterTelaLigada,
+  RepositorioDosGestos,
+} from '../domains/captura/portas'
 import type { ServicosDePreparacao } from '../domains/preparacao/portas'
 import { criarAutenticacaoSupabase, criarRepositorioDeAcessoSupabase } from '../shared/infra/acessoSupabase'
 import { criarRepositorioDoAoVivo, criarRepositorioDoPalco } from '../shared/infra/aoVivoSupabase'
@@ -15,6 +25,8 @@ import { lerConfiguracao } from '../shared/infra/configuracao'
 import type { Configuracao } from '../shared/infra/configuracao'
 import { criarRepositorioDosGestosSupabase, criarServicoDeDispositivoSupabase } from '../shared/infra/dispositivoSupabase'
 import { criarRepositoriosDePreparacao } from '../shared/infra/preparacaoSupabase'
+import { criarFonteDeQuadros } from '../shared/infra/quadrosDeVideo'
+import { criarFabricaDeReconhecedores } from '../shared/infra/reconhecedorMediapipe'
 import { criarClienteSupabase } from '../shared/infra/supabase'
 
 /**
@@ -114,7 +126,8 @@ export type CanaisDoDispositivo = FabricaDeCanais & FabricaDeCanaisDeVideo & Fab
  * Serviços de uma rota de dispositivo (E3, D4): sessão anônima e pareamento, palco e canais, sobre o cliente do tipo; desde
  * a E4, o canal de vídeo (na mesma fábrica), as conexões WebRTC (STUN e o TURN opcional, D9) e o aparelho; desde a E5
  * (PLA-006, Tarefa 4), os canais de gestos (na mesma fábrica, só recepção) e o repositório dos gestos (`situacao_dos_gestos`
- * e `enviar_gesto`).
+ * e `enviar_gesto`); desde a Tarefa 6 da E5, a fábrica de reconhecedores (o worker do MediaPipe, só no `iniciar`) e a
+ * fonte de quadros de um fluxo (o `<video>` fora do DOM).
  */
 export interface ServicosDoDispositivo {
   servico: ServicoDeDispositivo
@@ -123,6 +136,10 @@ export interface ServicosDoDispositivo {
   conexoes: FabricaDeConexoes
   aparelho: AparelhoDoDispositivo
   gestos: RepositorioDosGestos
+  /** Uma por página, dividida pelos tipos; nenhum worker nasce antes de um `iniciar` (PLA-006, D11). */
+  reconhecedores: FabricaDeReconhecedores
+  /** Uma fonte nova por chamada, sobre o fluxo que a rota já tem (D10): nenhum `getUserMedia` novo. */
+  quadros: (fluxo: FluxoDeVideo) => FonteDeQuadros
 }
 
 /**
@@ -168,6 +185,12 @@ const APARELHO_DO_NAVEGADOR: AparelhoDoDispositivo = {
   videoDireto: () => typeof globalThis.RTCPeerConnection === 'function',
 }
 
+/** A fábrica de reconhecedores desta página, criada na primeira rota de dispositivo (só uma reconhece por vez). */
+let reconhecedores: FabricaDeReconhecedores | null = null
+
+/** A fonte de quadros de um fluxo (sem estado: cada rota guarda e fecha a sua). */
+const quadrosDoFluxo = (fluxo: FluxoDeVideo): FonteDeQuadros => criarFonteDeQuadros(fluxo)
+
 /**
  * Serviços da rota de dispositivo do `tipo`: cliente próprio (`storageKey` `revocast-auth-<tipo>`,
  * `detectSessionInUrl: false`), preguiçoso e uma vez por página; nunca o cliente de membro nem o de
@@ -187,6 +210,8 @@ export function obterServicosDeDispositivo(tipo: TipoDeDispositivo): ServicosDoD
       conexoes: criarFabricaDeConexoes({ ice: servidoresIce(config) }),
       aparelho: APARELHO_DO_NAVEGADOR,
       gestos: criarRepositorioDosGestosSupabase(cliente),
+      reconhecedores: (reconhecedores ??= criarFabricaDeReconhecedores()),
+      quadros: quadrosDoFluxo,
     }
     dispositivos.set(tipo, servicosDoTipo)
   }

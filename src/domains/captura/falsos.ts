@@ -303,6 +303,10 @@ export function criarReconhecedoresFalsos(agendar: (f: () => void, ms: number) =
     confianca: 0.9,
     /** O worker devolve `null` (falha neste quadro). */
     leituraNula: false,
+    /** O `reconhecer` rejeita (o worker morreu depois de pronto; VER-063, rodada 1, N6). */
+    reconhecerRejeita: false,
+    /** O `reconhecer` lança de forma síncrona (VER-063, rodada 2, R2-2). */
+    reconhecerLanca: false,
     /** O `ms` que o worker diz (no lugar de `msPorQuadro`); o quadro continua levando `msPorQuadro` no relógio. */
     msDoWorker: null as number | null,
     /** O gesto de cada quadro pelo instante (no lugar de `gesto`). */
@@ -330,6 +334,8 @@ export function criarReconhecedoresFalsos(agendar: (f: () => void, ms: number) =
         reconhecer(_q, em) {
           reconhecidos.push(em)
           if (config.segurarReconhecer) return new Promise<LeituraDoGesto | null>(() => {})
+          if (config.reconhecerRejeita) return Promise.reject(new Error('reconhecedor encerrado'))
+          if (config.reconhecerLanca) throw new Error('reconhecedor encerrado')
           const gesto = config.gestoNoQuadro === null ? config.gesto : config.gestoNoQuadro(em)
           const leitura: LeituraDoGesto | null = config.leituraNula ? null : { gesto, confianca: config.confianca, ms: config.msDoWorker ?? config.msPorQuadro }
           return new Promise<LeituraDoGesto | null>((r) => {

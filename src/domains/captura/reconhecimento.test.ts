@@ -369,6 +369,43 @@ describe('falha-do-iniciar', () => {
     expect(m.rec.criados).toHaveLength(1)
   })
 
+  test('reconhecedor-morto-vai-a-falhou: reconhecer que rejeita (worker morto depois de pronto) → falhou, fechar, sem quadros novos', async () => {
+    const m = montar()
+    m.r.definir(ATIVO)
+    await m.relogio.avancar(500)
+    expect(m.estado()).toBe('reconhecendo')
+    const antes = m.rec.ultimo()?.reconhecidos.length ?? 0
+    expect(antes).toBeGreaterThan(0)
+    m.rec.config.reconhecerRejeita = true
+    await m.relogio.avancar(500)
+    expect(m.estado()).toBe('falhou')
+    expect(m.rec.ultimo()?.fechado()).toBe(true)
+    const depois = m.rec.ultimo()?.reconhecidos.length ?? 0
+    await m.relogio.avancar(120_000)
+    expect(m.rec.ultimo()?.reconhecidos.length).toBe(depois)
+    expect(m.rec.criados).toHaveLength(1)
+    // um evento novo tenta outra vez (como as outras falhas)
+    m.rec.config.reconhecerRejeita = false
+    m.r.tentarDeNovo()
+    await m.relogio.avancar(500)
+    expect(m.rec.criados).toHaveLength(2)
+    expect(m.estado()).toBe('reconhecendo')
+  })
+
+  test('reconhecedor-morto-vai-a-falhou: reconhecer que lança de forma síncrona → falhou, sem rejeição solta (rodada 2, R2-2)', async () => {
+    const m = montar()
+    m.r.definir(ATIVO)
+    await m.relogio.avancar(500)
+    expect(m.estado()).toBe('reconhecendo')
+    m.rec.config.reconhecerLanca = true
+    await m.relogio.avancar(500)
+    expect(m.estado()).toBe('falhou')
+    expect(m.rec.ultimo()?.fechado()).toBe(true)
+    const depois = m.rec.ultimo()?.reconhecidos.length ?? 0
+    await m.relogio.avancar(120_000)
+    expect(m.rec.ultimo()?.reconhecidos.length).toBe(depois)
+  })
+
   test('a fábrica que lança → falhou, sem rejeição solta', async () => {
     const m = montar()
     m.rec.config.criarLanca = true

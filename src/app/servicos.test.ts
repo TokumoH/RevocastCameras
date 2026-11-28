@@ -171,7 +171,7 @@ describe('obterServicosDeDispositivo', () => {
     expect(createClient.mock.calls[0][2]).toMatchObject({ auth: { storageKey: 'revocast-auth-obs_palco', detectSessionInUrl: false } })
     expect(obterServicosDeDispositivo('obs_palco')).toBe(palco)
     expect(createClient).toHaveBeenCalledTimes(1)
-    expect(Object.keys(palco).sort()).toEqual(['aparelho', 'canais', 'conexoes', 'gestos', 'palco', 'servico'])
+    expect(Object.keys(palco).sort()).toEqual(['aparelho', 'canais', 'conexoes', 'gestos', 'palco', 'quadros', 'reconhecedores', 'servico'])
     expect(typeof palco.servico.parear).toBe('function')
     expect(typeof palco.palco.carregar).toBe('function')
     const ID = '5a1c9e2b-7d3f-4b6a-8c1d-2e3f4a5b6c7d'
@@ -280,5 +280,40 @@ describe('obterServicosDeDispositivo: vídeo (PLA-005, Tarefa 3)', () => {
     const ID = '5a1c9e2b-7d3f-4b6a-8c1d-2e3f4a5b6c7d'
     expect(typeof camera.canais(ID).videoDaCamera).toBe('function')
     expect(typeof obs.canais(ID).videoDaObs).toBe('function')
+  })
+})
+
+describe('obterServicosDeDispositivo: reconhecedores e quadros (PLA-006, Tarefa 6)', () => {
+  test('um por página e preguiçosos: nenhum worker ao montar nem ao criar o reconhecedor', async () => {
+    vi.stubEnv('VITE_SUPABASE_URL', URL_OK)
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', CHAVE_OK)
+    vi.resetModules()
+    const workers: unknown[] = []
+    vi.stubGlobal(
+      'Worker',
+      class {
+        constructor(...a: unknown[]) {
+          workers.push(a)
+        }
+        postMessage() {}
+        terminate() {}
+      },
+    )
+    const { obterServicosDeDispositivo } = await import('./servicos')
+    const camera = obterServicosDeDispositivo('camera')
+    const obs = obterServicosDeDispositivo('obs_camera')
+    // uma fábrica por página, dividida pelos tipos (só uma rota de dispositivo reconhece por vez)
+    expect(camera.reconhecedores).toBe(obs.reconhecedores)
+    expect(obterServicosDeDispositivo('camera').reconhecedores).toBe(camera.reconhecedores)
+    expect(typeof camera.reconhecedores.criar).toBe('function')
+    const reconhecedor = camera.reconhecedores.criar()
+    expect(typeof reconhecedor.iniciar).toBe('function')
+    expect(workers).toEqual([])
+    reconhecedor.fechar()
+    expect(await reconhecedor.iniciar()).toEqual({ ok: false, motivo: 'outro' }) // fechado antes: nenhum worker (VER-058)
+    expect(workers).toEqual([])
+    // quadros: uma fonte nova por fluxo, sobre o <video> fora do DOM
+    expect(typeof camera.quadros).toBe('function')
+    expect(camera.quadros).toBe(obs.quadros)
   })
 })

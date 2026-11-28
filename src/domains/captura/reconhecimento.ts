@@ -77,6 +77,8 @@ const PERIODO_REDUZIDO_MS = 1000 / QUADROS_REDUZIDOS
  *   desligados e ligados de novo.
  * - O gesto confirmado vai a `repo.enviar` sem segurar o laço; `negado` e `desligados` param o laço (situação
  *   `desligados`) até a próxima `definir` (revisão 1, N3; revisão 2, N14). Rejeição → `falhou`.
+ * - `reconhecer` que rejeita (ou lança) = o reconhecedor morreu (o worker deu erro depois de pronto): encerra e fica
+ *   `falhou`, como uma carga que falha (VER-063, rodada 1, N6); `null` é só falha deste quadro.
  */
 export function criarReconhecimento(d: DependenciasDoReconhecimento): {
   definir(c: CondicoesDoReconhecimento): void
@@ -258,16 +260,18 @@ export function criarReconhecimento(d: DependenciasDoReconhecimento): {
         try {
           leitura = s.reconhecedor.reconhecer(q, em)
         } catch {
-          leitura = Promise.resolve(null)
+          leitura = Promise.reject(new Error('reconhecer lançou'))
         }
-        leitura
-          .then(
-            (l) => l,
-            () => null,
-          )
-          .then((l) => {
+        // rejeição (ou exceção) = o reconhecedor morreu (porta, VER-063 N6): para com `falhou`, como uma carga que falha;
+        // `null` continua sendo falha só deste quadro
+        leitura.then(
+          (l) => {
             if (sessao === s) depoisDoQuadro(s, em, l)
-          })
+          },
+          () => {
+            if (sessao === s) bloquear('falhou')
+          },
+        )
       })
   }
 
