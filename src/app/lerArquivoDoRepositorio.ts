@@ -3,7 +3,7 @@
  * pelo `node:fs` (o Vitest roda na raiz). O projeto não tem `@types/node`, então o módulo é importado com o tipo mínimo
  * usado; o CSS por `?raw` volta vazio (o Vitest não processa CSS). Usado pelo `PalcoNoAr.test.tsx` (o `index.html` e o
  * `base.css`), pelo `CameraNoAr.test.tsx` (o `base.css` e o `tokens.css`) e, desde o VER-053, pelo `ObsCameraNoAr.test.tsx`
- * (o `index.html` e o `base.css`).
+ * (o `index.html` e o `base.css`) e, desde o VER-062, pelo `implantacao.test.ts` (o `vercel.json`).
  */
 export async function lerArquivoDoRepositorio(caminho: string): Promise<string> {
   const fs = (await import(/* @vite-ignore */ ['node', 'fs'].join(':'))) as { readFileSync(c: string, codificacao: 'utf8'): string }

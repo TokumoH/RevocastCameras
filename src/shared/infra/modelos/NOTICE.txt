@@ -1,0 +1,31 @@
+RevocastCameras - third-party notice (aviso de terceiros)
+=========================================================
+
+This application redistributes the following files from Google LLC,
+licensed under the Apache License, Version 2.0. A copy of the license is in
+LICENSE-APACHE-2.0.txt, in this same folder (served at /licencas/ by the
+deployed application), and at https://www.apache.org/licenses/LICENSE-2.0
+
+1. MediaPipe Tasks Vision - npm package @mediapipe/tasks-vision, version 1.2.3
+   (https://www.npmjs.com/package/@mediapipe/tasks-vision), Copyright Google LLC.
+   Redistributed without modification (copied to assets/ of the deploy):
+   - wasm/vision_wasm_module_internal.wasm (WebAssembly runtime)
+     SHA-256 a269e84b12aefc93c9d6a4d62b01f41e5434a9fa941533bb8e75b1e3d1669e46
+   - wasm/vision_wasm_module_internal.js (WebAssembly loader)
+     SHA-256 d29996249490361715c769c6a49b43ad47e6ac9a28a8e8bce8d02b238e897851
+   Redistributed in object form: vision_bundle.mjs (JavaScript API) is
+   bundled and minified by the application build (Vite) together with the
+   application code.
+   The package declares "license": "Apache-2.0" in its package.json and does
+   not ship a LICENSE or NOTICE file.
+
+2. MediaPipe Gesture Recognizer model - gesture_recognizer.task
+   (float16, version 1), Copyright Google LLC, distributed under the Apache
+   License, Version 2.0 alongside the MediaPipe release artifacts.
+   Redistributed without modification (copied to assets/ of the deploy).
+   Source: https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task
+   8373440 bytes, SHA-256 97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482
+
+O app confere o SHA-256 do WASM e do modelo antes de usa-los
+(src/shared/infra/integridadeDosGestos.ts).
+Registro: docs/verificacoes/2026-11-28-062-e5-dependencia-e-modelo.md (VER-062).

@@ -31,6 +31,7 @@
     "vitest": "5.1.0"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "1.2.3",
     "@supabase/supabase-js": "2.119.0",
     "lean-qr": "2.7.4",
     "react": "19.3.1",
