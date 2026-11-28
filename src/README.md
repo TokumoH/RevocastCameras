@@ -24,7 +24,7 @@ Criado na Tarefa 1 da etapa E0 ([PLA-001](../docs/planos/2026-11-17-e0-fundacao.
 ## Organização
 
 - `main.tsx` monta o app; `app/` decide qual tela mostrar pelo caminho da URL; `domains/` guarda as regras de negócio e as portas, sem React nem Supabase; `shared/` guarda estilos, componentes e infraestrutura reutilizáveis (os adaptadores que implementam as portas ficam em `shared/infra/`).
-- Pastas por responsabilidade (DDD e Componentes, como manda o `CLAUDE.md`); os domínios entram em `src/domains/<domínio>/` ([PLA-001](../docs/planos/2026-11-17-e0-fundacao.md)): o primeiro é `domains/acesso/`, desde a E1 ([PLA-002](../docs/planos/2026-11-26-e1-entrada-e-membros.md)); o segundo, `domains/preparacao/`, desde a E2 ([PLA-003](../docs/planos/2026-11-26-e2-preparar-episodio.md)); o terceiro, `domains/aovivo/`, desde a E3 ([PLA-004](../docs/planos/2026-11-27-e3-ao-vivo-por-toque.md)), junto do quarto, `domains/obs/`; o quinto, `domains/captura/`, desde a E4 ([PLA-005](../docs/planos/2026-11-27-e4-celular-como-camera.md)).
+- Pastas por responsabilidade (DDD e Componentes, como manda o `CLAUDE.md`); os domínios entram em `src/domains/<domínio>/` ([PLA-001](../docs/planos/2026-11-17-e0-fundacao.md)): o primeiro é `domains/acesso/`, desde a E1 ([PLA-002](../docs/planos/2026-11-26-e1-entrada-e-membros.md)); o segundo, `domains/preparacao/`, desde a E2 ([PLA-003](../docs/planos/2026-11-26-e2-preparar-episodio.md)); o terceiro, `domains/aovivo/`, desde a E3 ([PLA-004](../docs/planos/2026-11-27-e3-ao-vivo-por-toque.md)), junto do quarto, `domains/obs/`; o quinto, `domains/captura/`, desde a E4 ([PLA-005](../docs/planos/2026-11-27-e4-celular-como-camera.md)); e o núcleo comum `domains/canal/` (tipos de canal, sem regra de negócio), desde a E5 ([PLA-006](../docs/planos/2026-11-28-e5-gestos.md)), quando a Captura ganha os gestos.
 
 ## Por que esta organização
 
@@ -44,7 +44,7 @@ Separar a casca do app (`app/`) do que é reaproveitado (`shared/`) evita telas 
 | [`README.md`](README.md) | Este arquivo |
 | [`main.tsx`](main.tsx) | Ponto de entrada: monta `<App caminho={window.location.pathname} />` e carrega os estilos |
 | [`app/`](app/) | Rotas, `App`, telas (entrada real e guarda por papel desde a Tarefa 4 da E1; painel com abas e a aba Membros desde a Tarefa 5; as demais provisórias), estado de tela do acesso (`useAcesso`) e a composição dos serviços de membro (`servicos.ts`) |
-| [`domains/`](domains/) | Domínios (DDD): regras puras e portas; hoje `acesso/` (com o pareamento de dispositivos desde a E3), `preparacao/`, `aovivo/`, `obs/` (desde a E3) e `captura/` (desde a E4) |
+| [`domains/`](domains/) | Domínios (DDD): regras puras e portas; hoje `acesso/` (com o pareamento de dispositivos desde a E3), `preparacao/`, `aovivo/`, `obs/` (desde a E3) e `captura/` (desde a E4; com os gestos desde a E5), mais o núcleo `canal/` (desde a E5) |
 | [`shared/`](shared/) | Estilos, componentes e infraestrutura (cliente Supabase, configuração e adaptadores das portas) compartilhados |
 
 ## Lógica

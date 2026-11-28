@@ -1,4 +1,5 @@
 import type { TipoDeDispositivo } from '../acesso/dispositivos'
+import { lerSituacaoDosGestos, type SituacaoDosGestos } from '../captura/gestos'
 import { lerSituacaoDoVideo, type SituacaoDoVideo } from '../captura/sinais'
 import { UUID } from '../preparacao/midia'
 
@@ -58,11 +59,12 @@ export interface SituacaoDoObs {
 
 /**
  * Corpo da presença em `estudio` (D14): a chave é o `auth.uid()`; sem e-mail e sem nome. Desde a E4 (PLA-005, D13), a
- * presença de `camera` e `obs_camera` pode levar `video` (a situação do vídeo daquele lado); no `obs_palco`, não.
+ * presença de `camera` e `obs_camera` pode levar `video` (a situação do vídeo daquele lado); no `obs_palco`, não. Desde a E5
+ * (PLA-006, D12), as mesmas duas podem levar `gestos` (a situação do reconhecimento; nenhum quadro, ponto ou pontuação).
  */
 export type PresencaNoEstudio =
   | { tipo: 'membro'; papel: 'admin' | 'equipe' | 'apresentadora' }
-  | { tipo: TipoDeDispositivo; dispositivoId: string; obs: SituacaoDoObs | null; video?: SituacaoDoVideo }
+  | { tipo: TipoDeDispositivo; dispositivoId: string; obs: SituacaoDoObs | null; video?: SituacaoDoVideo; gestos?: SituacaoDosGestos }
 
 /** Comando por toque (D9); o `id` (uuid) deduplica no palco. */
 export type Comando = { id: string } & (
@@ -304,12 +306,13 @@ export function lerMensagemDoEstado(evento: string, payload: unknown): EstadoNoA
   return evento === EVENTOS_DO_ESTADO.estado ? lerEstadoNoAr(payload) : null
 }
 
-/** Tipos de dispositivo cuja presença pode levar `video` (D13 do PLA-005): só os dois lados do vídeo. */
+/** Tipos de dispositivo cuja presença pode levar `video` (D13 do PLA-005) e `gestos` (D12 do PLA-006): só os dois lados do vídeo. */
 const TIPOS_COM_VIDEO: readonly TipoDeDispositivo[] = Object.freeze(['camera', 'obs_camera'] as const)
 
 /**
  * Um registro de presença de `estudio` (o `presence_ref` do realtime-js é tolerado e descartado). O `video` opcional
  * (desde a E4) só vale em `camera` e `obs_camera` e passa por `lerSituacaoDoVideo`; no `obs_palco`, ou inválido → `null`.
+ * O `gestos` opcional (desde a E5, D12 do PLA-006) segue a mesma regra, por `lerSituacaoDosGestos`; os dois juntos valem.
  */
 export function lerPresenca(payload: unknown): PresencaNoEstudio | null {
   if (typeof payload !== 'object' || payload === null) return null
@@ -321,16 +324,26 @@ export function lerPresenca(payload: unknown): PresencaNoEstudio | null {
     return daLista(papel, PAPEIS) ? { tipo, papel } : null
   }
   if (!daLista(tipo, TIPOS_DE_DISPOSITIVO)) return null
-  const o = objetoComChaves(payload, ['tipo', 'dispositivoId', 'obs', 'video', 'presence_ref'])
+  const o = objetoComChaves(payload, ['tipo', 'dispositivoId', 'obs', 'video', 'gestos', 'presence_ref'])
   if (o === null || !referenciaValida(o) || !todasPresentes(o, ['dispositivoId', 'obs'])) return null
   const dispositivoId = campo(o, 'dispositivoId')
   if (!ehUuid(dispositivoId)) return null
   const obs = o.obs === null ? null : lerSituacaoDoObs(o.obs)
   if (o.obs !== null && obs === null) return null
-  if (!Object.hasOwn(o, 'video')) return { tipo, dispositivoId, obs }
+  const temVideo = Object.hasOwn(o, 'video')
+  const temGestos = Object.hasOwn(o, 'gestos')
+  if (!temVideo && !temGestos) return { tipo, dispositivoId, obs }
   if (!TIPOS_COM_VIDEO.includes(tipo)) return null
-  const video = lerSituacaoDoVideo(o.video)
-  return video === null ? null : { tipo, dispositivoId, obs, video }
+  const video = temVideo ? lerSituacaoDoVideo(o.video) : undefined
+  const gestos = temGestos ? lerSituacaoDosGestos(o.gestos) : undefined
+  if (video === null || gestos === null) return null
+  return {
+    tipo,
+    dispositivoId,
+    obs,
+    ...(video === undefined ? {} : { video }),
+    ...(gestos === undefined ? {} : { gestos }),
+  }
 }
 
 /** Por quanto tempo um remetente revogado é descartado: 15 min, mais que os 10 min do JWT (D5). */

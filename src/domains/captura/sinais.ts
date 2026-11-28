@@ -96,10 +96,13 @@ export function conferirSdp(sdp: string): 'ok' | 'grande' | 'forma' {
   return 'ok'
 }
 
-type Objeto = Record<string, unknown>
+export type Objeto = Record<string, unknown>
 
-/** Objeto simples, sem chave fora de `permitidas` (inclusive símbolos e `__proto__`). */
-function objetoComChaves(valor: unknown, permitidas: readonly string[]): Objeto | null {
+/**
+ * Objeto simples, sem chave fora de `permitidas` (inclusive símbolos e `__proto__`). Exportado desde a E5 para os leitores
+ * do tópico de gestos (`gestos.ts`) usarem a mesma regra.
+ */
+export function objetoComChaves(valor: unknown, permitidas: readonly string[]): Objeto | null {
   if (typeof valor !== 'object' || valor === null || Array.isArray(valor)) return null
   const prototipo: unknown = Object.getPrototypeOf(valor)
   if (prototipo !== Object.prototype && prototipo !== null) return null
@@ -110,16 +113,16 @@ function objetoComChaves(valor: unknown, permitidas: readonly string[]): Objeto 
 }
 
 /** Só a chave própria; herdada → `undefined`. */
-function campo(o: Objeto, chave: string): unknown {
+export function campo(o: Objeto, chave: string): unknown {
   return Object.hasOwn(o, chave) ? o[chave] : undefined
 }
 
-function ehUuid(v: unknown): v is string {
+export function ehUuid(v: unknown): v is string {
   return typeof v === 'string' && UUID.test(v)
 }
 
 /** `remetente` (posto pela função) e `id` (do `realtime.send`), quando presentes, são uuid; nunca entram no sinal. */
-function extrasValidos(o: Objeto): boolean {
+export function extrasValidos(o: Objeto): boolean {
   return (!Object.hasOwn(o, 'remetente') || ehUuid(o.remetente)) && (!Object.hasOwn(o, 'id') || ehUuid(o.id))
 }
 

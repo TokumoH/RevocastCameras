@@ -1,4 +1,4 @@
-import type { EstadoDoCanal } from '../aovivo/portas'
+import type { EstadoDoCanal } from '../canal/estados'
 import { criarAgenda } from './agenda'
 import type { CameraDoAparelho, CanalDeVideo, ConexaoDeVideo, EstadoDaConexao, FabricaDeConexoes, FaixaDeVideo, FalhaDaCamera, RespostaDoSinal } from './portas'
 import {

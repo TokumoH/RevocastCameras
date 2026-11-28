@@ -1,8 +1,26 @@
-import type { EstadoDoCanal } from '../aovivo/portas'
-import type { CameraDoAparelho, CanalDeVideo, ConexaoDeVideo, EstadoDaConexao, FabricaDeConexoes, FaixaDeVideo, FalhaDaCamera, FluxoDeVideo, RespostaDoSinal } from './portas'
+import type { EstadoDoCanal } from '../canal/estados'
+import type { Gesto } from '../preparacao/gestos'
+import type { LeituraDoGesto, RespostaDoGesto } from './gestos'
+import type {
+  CameraDoAparelho,
+  CanalDeVideo,
+  ConexaoDeVideo,
+  EstadoDaConexao,
+  FabricaDeConexoes,
+  FabricaDeReconhecedores,
+  FaixaDeVideo,
+  FalhaDaCamera,
+  FalhaDoReconhecedor,
+  FluxoDeVideo,
+  FonteDeQuadros,
+  QuadroDeVideo,
+  RepositorioDosGestos,
+  RespostaDoSinal,
+} from './portas'
 
 /*
- * Falsos das portas da Captura, só para os testes do emissor e do receptor (`emissor.test.ts`, `receptor.test.ts`).
+ * Falsos das portas da Captura, só para os testes do emissor e do receptor (`emissor.test.ts`, `receptor.test.ts`) e,
+ * desde a E5, do laço do reconhecimento (`reconhecimento.test.ts`).
  * Nenhum código do app importa este arquivo. Ficam num arquivo comum (e não repetidos em cada teste) para os dois lados
  * serem provados contra os mesmos falsos. Sem `vi` (o arquivo não é teste): cada falso guarda o que recebeu em listas.
  */
@@ -257,5 +275,146 @@ export function criarCameraFalsa() {
       for (const f of [...ouvintes]) f()
     },
     ouvintes: () => ouvintes.size,
+  }
+}
+
+export interface ReconhecedorFalso {
+  readonly numero: number
+  /** Os instantes passados a cada `reconhecer`. */
+  readonly reconhecidos: number[]
+  fechado(): boolean
+}
+
+/**
+ * Fábrica de reconhecedores falsos (E5). `config` decide o próximo `iniciar` (`ok`, uma falha, `rejeitar`, ou seguro até
+ * `soltarIniciar()` com `segurarIniciar`), se `criar` lança, e a leitura de cada quadro: `gesto` e `confianca`, devolvidos
+ * depois de `msPorQuadro` no relógio do `agendar` (ou nunca, com `segurarReconhecer`). `registro` guarda a ordem de
+ * `criar#n`, `iniciar#n` e `fechar#n`.
+ */
+export function criarReconhecedoresFalsos(agendar: (f: () => void, ms: number) => () => void) {
+  const config = {
+    iniciar: 'ok' as 'ok' | FalhaDoReconhecedor | 'rejeitar',
+    segurarIniciar: false,
+    segurarReconhecer: false,
+    criarLanca: false,
+    msPorQuadro: 20,
+    gesto: null as Gesto | null,
+    confianca: 0.9,
+    /** O worker devolve `null` (falha neste quadro). */
+    leituraNula: false,
+    /** O `ms` que o worker diz (no lugar de `msPorQuadro`); o quadro continua levando `msPorQuadro` no relógio. */
+    msDoWorker: null as number | null,
+    /** O gesto de cada quadro pelo instante (no lugar de `gesto`). */
+    gestoNoQuadro: null as ((em: number) => Gesto | null) | null,
+  }
+  const criados: ReconhecedorFalso[] = []
+  const registro: string[] = []
+  const iniciosSeguros: (() => void)[] = []
+
+  const fabrica: FabricaDeReconhecedores = {
+    criar() {
+      if (config.criarLanca) throw new Error('sem suporte')
+      const numero = criados.length
+      const reconhecidos: number[] = []
+      let fechado = false
+      criados.push({ numero, reconhecidos, fechado: () => fechado })
+      registro.push(`criar#${numero}`)
+      return {
+        async iniciar() {
+          registro.push(`iniciar#${numero}`)
+          if (config.segurarIniciar) await new Promise<void>((r) => iniciosSeguros.push(r))
+          if (config.iniciar === 'rejeitar') throw new Error('falha do worker')
+          return config.iniciar === 'ok' ? { ok: true as const } : { ok: false as const, motivo: config.iniciar }
+        },
+        reconhecer(_q, em) {
+          reconhecidos.push(em)
+          if (config.segurarReconhecer) return new Promise<LeituraDoGesto | null>(() => {})
+          const gesto = config.gestoNoQuadro === null ? config.gesto : config.gestoNoQuadro(em)
+          const leitura: LeituraDoGesto | null = config.leituraNula ? null : { gesto, confianca: config.confianca, ms: config.msDoWorker ?? config.msPorQuadro }
+          return new Promise<LeituraDoGesto | null>((r) => {
+            agendar(() => r(leitura), config.msPorQuadro)
+          })
+        },
+        fechar() {
+          if (!fechado) registro.push(`fechar#${numero}`)
+          fechado = true
+        },
+      }
+    },
+  }
+
+  return {
+    fabrica,
+    config,
+    criados,
+    registro,
+    ultimo: (): ReconhecedorFalso | undefined => criados.at(-1),
+    soltarIniciar(): void {
+      for (const r of iniciosSeguros.splice(0)) r()
+    },
+  }
+}
+
+/**
+ * Fonte de quadros falsa (E5): `fonte()` faz o papel da rota (com `config.sem`, devolve `null`: sem vídeo); cada fonte
+ * entrega quadros opacos (ou `null` com `config.quadroNulo`; seguros até `soltarQuadros()` com `config.segurarQuadro`). Conta as fontes pedidas, os quadros pedidos e as fechadas.
+ */
+export function criarFonteFalsa() {
+  const config = { sem: false, quadroNulo: false, segurarQuadro: false }
+  const contagem = { pedidas: 0, quadros: 0, fechadas: 0 }
+  const quadrosSeguros: (() => void)[] = []
+
+  function fonte(): FonteDeQuadros | null {
+    contagem.pedidas += 1
+    if (config.sem) return null
+    let fechada = false
+    return {
+      async quadro() {
+        contagem.quadros += 1
+        if (config.segurarQuadro) await new Promise<void>((r) => quadrosSeguros.push(r))
+        return config.quadroNulo ? null : ({} as QuadroDeVideo)
+      },
+      fechar() {
+        if (!fechada) contagem.fechadas += 1
+        fechada = true
+      },
+    }
+  }
+
+  return {
+    fonte,
+    config,
+    pedidas: () => contagem.pedidas,
+    quadrosPedidos: () => contagem.quadros,
+    fechadas: () => contagem.fechadas,
+    soltarQuadros(): void {
+      for (const r of quadrosSeguros.splice(0)) r()
+    },
+  }
+}
+
+/** Repositório dos gestos falso (E5): guarda cada `enviar` (cópia) e responde com `responderCom` (padrão `enviado`). */
+export function criarRepoDosGestosFalso() {
+  const enviados: { id: string; gesto: Gesto }[] = []
+  const situacao = { ligados: true, reconhecerAqui: true }
+  let responder: (g: { id: string; gesto: Gesto }) => Promise<RespostaDoGesto> = async () => 'enviado'
+
+  const repo: RepositorioDosGestos = {
+    async situacao() {
+      return { ...situacao }
+    },
+    enviar(g) {
+      enviados.push({ id: g.id, gesto: g.gesto })
+      return responder(g)
+    },
+  }
+
+  return {
+    repo,
+    enviados,
+    situacao,
+    responderCom(f: (g: { id: string; gesto: Gesto }) => Promise<RespostaDoGesto>): void {
+      responder = f
+    },
   }
 }

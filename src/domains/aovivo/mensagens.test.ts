@@ -273,6 +273,44 @@ describe('mensagens-validadas', () => {
     })
   })
 
+  describe('presenca-com-gestos', () => {
+    const GESTOS_OK = { estado: 'reconhecendo', quadrosPorSegundo: 10, msPorQuadro: 42 }
+    const VIDEO = { estado: 'conectado', telaLigada: 'travada', bateria: 0.8 }
+
+    test('camera e obs_camera com gestos válido → aceitos, com objeto novo', () => {
+      const lida = lerPresenca({ tipo: 'camera', dispositivoId: ID, obs: null, gestos: GESTOS_OK, presence_ref: 'r' })
+      expect(lida).toEqual({ tipo: 'camera', dispositivoId: ID, obs: null, gestos: GESTOS_OK })
+      expect(lida !== null && 'gestos' in lida ? lida.gestos : null).not.toBe(GESTOS_OK)
+      const semNumeros = { estado: 'sem_suporte', quadrosPorSegundo: null, msPorQuadro: null }
+      expect(lerPresenca({ tipo: 'obs_camera', dispositivoId: ID, obs: null, gestos: semNumeros })).toEqual({ tipo: 'obs_camera', dispositivoId: ID, obs: null, gestos: semNumeros })
+    })
+
+    test('com video e gestos juntos → aceito; sem gestos, a chave não aparece', () => {
+      expect(lerPresenca({ tipo: 'camera', dispositivoId: ID, obs: null, video: VIDEO, gestos: GESTOS_OK })).toEqual({
+        tipo: 'camera',
+        dispositivoId: ID,
+        obs: null,
+        video: VIDEO,
+        gestos: GESTOS_OK,
+      })
+      const soVideo = lerPresenca({ tipo: 'obs_camera', dispositivoId: ID, obs: null, video: VIDEO })
+      expect(Object.keys(soVideo ?? {})).not.toContain('gestos')
+    })
+
+    test.each<[string, unknown]>([
+      ['obs_palco com gestos', { tipo: 'obs_palco', dispositivoId: ID, obs: OBS, gestos: GESTOS_OK }],
+      ['membro com gestos', { tipo: 'membro', papel: 'equipe', gestos: GESTOS_OK }],
+      ['gestos com estado fora da lista', { tipo: 'camera', dispositivoId: ID, obs: null, gestos: { ...GESTOS_OK, estado: 'gravando' } }],
+      ['gestos com número negativo', { tipo: 'camera', dispositivoId: ID, obs: null, gestos: { ...GESTOS_OK, msPorQuadro: -1 } }],
+      ['gestos com campo extra (pontuação)', { tipo: 'obs_camera', dispositivoId: ID, obs: null, gestos: { ...GESTOS_OK, confianca: 0.9 } }],
+      ['gestos nulo', { tipo: 'camera', dispositivoId: ID, obs: null, gestos: null }],
+      ['gestos válido com video inválido', { tipo: 'camera', dispositivoId: ID, obs: null, video: { ...VIDEO, bateria: 2 }, gestos: GESTOS_OK }],
+      ['video válido com gestos inválido', { tipo: 'camera', dispositivoId: ID, obs: null, video: VIDEO, gestos: { estado: 'lento' } }],
+    ])('%s → null', (_nome, payload) => {
+      expect(lerPresenca(payload)).toBeNull()
+    })
+  })
+
   describe('lerRemetente', () => {
     test('uuid minúsculo próprio → texto; o resto → null', () => {
       expect(lerRemetente({ remetente: REMETENTE, id: ID })).toBe(REMETENTE)

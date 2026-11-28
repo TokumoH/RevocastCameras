@@ -1,4 +1,5 @@
 import type { Dispositivo, TipoDeDispositivo } from '../acesso/dispositivos'
+import type { EstadoDoCanal } from '../canal/estados'
 import type { Cena } from '../preparacao/cenas'
 import type { Aviso, Episodio } from '../preparacao/episodios'
 import type { Som } from '../preparacao/midia'
@@ -18,8 +19,11 @@ export class ErroDoAoVivo extends Error {
   }
 }
 
-/** Estados de um canal (D15): `fechado` (pelo servidor) é tratado como `negado` pelas telas (N3). */
-export type EstadoDoCanal = 'conectando' | 'conectado' | 'reconectando' | 'fechado' | 'negado'
+/**
+ * Estados de um canal (D15): desde a E5 (PLA-006, D1), definido no núcleo comum `../canal/estados.ts` e reexportado
+ * aqui, para nenhum importador de `aovivo/portas` mudar; `captura` o importa direto de `canal`.
+ */
+export type { EstadoDoCanal } from '../canal/estados'
 
 /** Resposta do `broadcast` com `ack` (D15): `sem_resposta` = `timed out` (rede ruim ou sem permissão de escrita); nada é reenviado sozinho. */
 export type RespostaDoEnvio = 'ok' | 'sem_resposta' | 'falhou'
