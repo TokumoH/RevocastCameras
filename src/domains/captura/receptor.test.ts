@@ -448,3 +448,42 @@ describe('receptor-falha-so-depois-de-responder', () => {
     expect(m.respostas()).toHaveLength(0)
   })
 })
+
+/** Rejeições soltas durante `f` (Node): o teste falha por conta própria, não só pelo relatório do Vitest (VER-051, rodada 1). */
+async function rejeicoesSoltas(f: () => Promise<void>): Promise<unknown[]> {
+  type Processo = { on(e: string, h: (r: unknown) => void): void; off(e: string, h: (r: unknown) => void): void }
+  const processo = (globalThis as unknown as { process: Processo }).process
+  const soltas: unknown[] = []
+  const anotar = (r: unknown) => soltas.push(r)
+  processo.on('unhandledRejection', anotar)
+  try {
+    await f()
+    await new Promise((r) => setTimeout(r, 0))
+  } finally {
+    processo.off('unhandledRejection', anotar)
+  }
+  return soltas
+}
+
+describe('receptor-criar-que-lanca', () => {
+  // VER-051, rodada 1 (I2): uma fábrica de conexões que lança não deixa rejeição solta; a oferta seguinte é respondida
+  test('criar() que lança → nenhuma resposta, nenhuma rejeição solta; a próxima oferta é respondida', async () => {
+    const m = montar()
+    const original = m.conexoes.fabrica.criar
+    let lancou = 0
+    m.conexoes.fabrica.criar = () => {
+      if (lancou === 0) {
+        lancou += 1
+        throw new Error('construtor do RTCPeerConnection recusou')
+      }
+      return original()
+    }
+    await noAr(m)
+    expect(await rejeicoesSoltas(() => m.oferta(sessao(1)))).toEqual([])
+    expect(lancou).toBe(1)
+    expect(m.respostas()).toHaveLength(0)
+    expect(m.situacao()).not.toBe('conectado')
+    await m.oferta(sessao(2))
+    expect(m.respostas().map((r) => r.sessao)).toEqual([sessao(2)])
+  })
+})

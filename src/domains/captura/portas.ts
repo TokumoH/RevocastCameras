@@ -28,7 +28,10 @@ export interface CanalDeVideo<Envia, Recebe> {
   /** Sinais do tópico da própria sessão, já validados pelo leitor do lado; o remetente é posto pelo banco (D2). */
   aoSinal(f: (s: Recebe, remetente: string) => void): () => void
   aoMudarEstado(f: (e: EstadoDoCanal) => void): () => void
-  /** `rpc('enviar_sinal_de_video')`; nunca Broadcast direto. */
+  /**
+   * `rpc('enviar_sinal_de_video')`; nunca Broadcast direto. Não depende do estado do canal (a `rpc` não vai pelo socket),
+   * mas depois de `fechar()` devolve `falhou` sem chamar a função: quem precisa do `encerrar` o envia antes de fechar.
+   */
   enviar(s: Envia): Promise<RespostaDoSinal>
   fechar(): Promise<void>
 }
@@ -59,6 +62,10 @@ export interface ConexaoDeVideo {
 }
 
 export interface FabricaDeConexoes {
+  /**
+   * Uma conexão nova. O adaptador não lança: se o navegador recusar a construção, devolve uma conexão cujas descrições
+   * rejeitam (o emissor e o receptor tratam como falha); o domínio também protege a chamada (VER-051, rodada 1, I2).
+   */
   criar(): ConexaoDeVideo
 }
 
@@ -66,6 +73,10 @@ export type FalhaDaCamera = 'sem_permissao' | 'sem_camera' | 'inseguro' | 'outro
 
 /** A câmera traseira, só vídeo (D7). */
 export interface CameraDoAparelho {
+  /**
+   * Pede a câmera. **Para o fluxo atual antes do pedido novo** (solta a câmera em aparelhos que não a abrem duas vezes):
+   * só chame sem faixa boa (primeira vez ou faixa perdida), senão a imagem some até o fluxo novo chegar (VER-051, N2).
+   */
   ligar(): Promise<{ ok: true; faixa: FaixaDeVideo } | { ok: false; motivo: FalhaDaCamera }>
   /** `ended`, ou `mute` por mais de 3 s. */
   aoPerderFaixa(f: () => void): () => void

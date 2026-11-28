@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import { ErroDeDispositivo } from '../domains/acesso/portasDeDispositivo'
-import { aoVivoVazio, criarCanalFalso, criarFalsos, criarFalsosDeDispositivo } from './servicosFalsos'
+import type { FluxoDeVideo } from '../domains/captura/portas'
+import { aoVivoVazio, criarCanalFalso, criarFalsos, criarFalsosDeDispositivo, criarVideoFalso } from './servicosFalsos'
 
 const EU = '5a1c9e2b-7d3f-4b6a-8c1d-2e3f4a5b6c7d'
 const OUTRO = '7b2d0f3c-8e4a-4c7b-9d2e-3f4a5b6c7d8e'
@@ -99,5 +100,131 @@ describe('falsos do ao vivo (E3)', () => {
     expect(await f.servicos.palco.urlDoArquivo('som/x.mp3')).toBe('https://armazenamento.revocast.test/assinada/som/x.mp3?token=teste')
     await expect(f.servicos.palco.carregar(DISP)).rejects.toMatchObject({ motivo: 'invalido' })
     expect(f.servicos.canais(EU)).toBe(f.servicos.canais(EU))
+  })
+})
+
+const SESSAO = '3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b'
+const SDP = 'v=0\r\no=- 1 2 IN IP4 192.0.2.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n'
+
+describe('falsos do vídeo (E4)', () => {
+  test('canal-de-video-falso: recebe no tópico da sessão e envia pela rpc', async () => {
+    const f = criarCanalFalso()
+    const camera = f.canais(EU).videoDaCamera()
+    const estados = vi.fn()
+    const sinais = vi.fn()
+    camera.aoMudarEstado(estados)
+    camera.aoSinal(sinais)
+    await tique()
+    await tique()
+    expect(f.abertos()).toEqual([`video:${EU}`])
+    expect(estados.mock.calls.map((c) => c[0])).toEqual(['conectando', 'conectado'])
+    expect(await camera.enviar({ tipo: 'oferta', sessao: SESSAO, sdp: SDP })).toBe('ok')
+    expect(f.sinaisDeVideo()).toEqual([{ p_tipo: 'oferta', p_sessao: SESSAO, p_sdp: SDP }])
+    expect(f.enviados(`video:${EU}`)).toEqual([]) // nada pelo Broadcast
+    f.responderSinal('sem_par')
+    expect(await camera.enviar({ tipo: 'encerrar', sessao: SESSAO })).toBe('sem_par')
+    f.responderSinal('limite')
+    expect(await camera.enviar({ tipo: 'encerrar', sessao: SESSAO })).toBe('limite')
+    f.responderSinal('falhou')
+    expect(await camera.enviar({ tipo: 'encerrar', sessao: SESSAO })).toBe('falhou')
+    f.entregar(`video:${EU}`, 'sinal', { tipo: 'resposta', sessao: SESSAO, sdp: SDP, remetente: OUTRO, id: DISP })
+    await tique()
+    expect(sinais.mock.calls).toEqual([[{ tipo: 'resposta', sessao: SESSAO, sdp: SDP }, OUTRO]])
+  })
+
+  test('criarVideoFalso: conexão', async () => {
+    const v = criarVideoFalso()
+    // lado da câmera: oferece, aceita a resposta e passa sozinha por conectando → conectado
+    const c = v.conexoes.criar()
+    const estados: string[] = []
+    c.aoMudar((e) => estados.push(e))
+    expect(await c.oferecer({} as never)).toBe(v.sdpDaOferta)
+    await c.aceitarResposta(SDP)
+    await tique()
+    expect(estados).toEqual(['conectando', 'conectado'])
+    const falsa = v.conexoesCriadas[0]
+    expect(falsa.respostasAceitas).toEqual([SDP])
+    // cair e falhar
+    falsa.cair()
+    falsa.falhar()
+    await tique()
+    expect(estados).toEqual(['conectando', 'conectado', 'caiu', 'falhou'])
+    expect(await c.trocarFaixa({} as never)).toBe(true)
+    v.config.trocaDaFaixa = false
+    expect(await c.trocarFaixa({} as never)).toBe(false)
+    c.fechar()
+    expect(falsa.fechada()).toBe(true)
+    falsa.conectar()
+    await tique()
+    expect(estados).toHaveLength(4) // fechada: nada mais
+
+    // lado do obs_camera: responde, recebe o vídeo e conecta; sem conexão sozinha, só quando o teste mandar
+    v.config.conectarSozinha = false
+    const r = v.conexoes.criar()
+    const er: string[] = []
+    const fluxos: FluxoDeVideo[] = []
+    r.aoMudar((e) => er.push(e))
+    r.aoVideo((f) => fluxos.push(f))
+    expect(await r.responder(SDP)).toBe(v.sdpDaResposta)
+    await tique()
+    expect(er).toEqual([])
+    v.conexoesCriadas[1].conectar()
+    await tique()
+    expect(er).toEqual(['conectando', 'conectado'])
+    expect(fluxos).toEqual([v.fluxoRecebido])
+    expect(v.conexoesCriadas[1].ofertasRespondidas).toEqual([SDP])
+  })
+
+  test('criarVideoFalso: câmera, tela e bateria', async () => {
+    const v = criarVideoFalso()
+    const camera = v.aparelho.camera()
+    expect(v.camera.criadas).toBe(1) // uma câmera nova a cada chamada, como a composição real
+    const perdida = vi.fn()
+    camera.aoPerderFaixa(perdida)
+    expect(camera.fluxoDaPrevia()).toBeNull()
+    const r = await camera.ligar()
+    expect(r.ok).toBe(true)
+    expect(v.camera.ligada()).toBe(true)
+    expect(camera.fluxoDaPrevia()).toBe(v.fluxoDaCamera)
+    v.camera.perder()
+    await tique()
+    expect(perdida).toHaveBeenCalledTimes(1)
+    camera.desligar()
+    expect(v.camera.ligada()).toBe(false)
+    expect(camera.fluxoDaPrevia()).toBeNull()
+    v.camera.proxima = 'sem_permissao'
+    expect(await camera.ligar()).toEqual({ ok: false, motivo: 'sem_permissao' })
+    expect(v.camera.ligacoes).toBe(2)
+    expect(v.camera.desligadas).toBe(1)
+    // outra câmera: estado próprio; perder() vale para a última criada
+    const outra = v.aparelho.camera()
+    expect(v.camera.criadas).toBe(2)
+    v.camera.proxima = null
+    await outra.ligar()
+    expect(outra.fluxoDaPrevia()).toBe(v.fluxoDaCamera)
+    expect(camera.fluxoDaPrevia()).toBeNull()
+    v.camera.perder()
+    await tique()
+    expect(perdida).toHaveBeenCalledTimes(1)
+
+    const tela = v.aparelho.tela()
+    expect(v.tela.criadas).toBe(1)
+    expect(await tela.travar()).toBe('travada')
+    v.tela.proxima = 'sem_trava'
+    expect(await tela.travar()).toBe('sem_trava')
+    tela.soltar()
+    expect(v.tela.travadas).toBe(2)
+    expect(v.tela.soltas).toBe(1)
+
+    expect(await v.aparelho.bateria()).toBeNull()
+    v.definirBateria(0.5)
+    expect(await v.aparelho.bateria()).toBe(0.5)
+  })
+
+  test('dispositivo-falso-com-video', () => {
+    const d = criarFalsosDeDispositivo()
+    expect(d.servicos.conexoes).toBe(d.video.conexoes)
+    expect(d.servicos.aparelho).toBe(d.video.aparelho)
+    expect(typeof d.servicos.canais(EU).videoDaObs).toBe('function')
   })
 })

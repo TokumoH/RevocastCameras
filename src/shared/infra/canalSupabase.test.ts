@@ -741,3 +741,218 @@ describe('criarFabricaDeCanais', () => {
     expect((rt.canal('estudio').config as { presence: { key: string } }).presence.key).toBe(OUTRO)
   })
 })
+
+/*
+ * Canal de vídeo (PLA-005, D1, D2): só recebe no tópico da própria sessão (`video:<usuarioId da fábrica>`) e envia pela
+ * `rpc('enviar_sinal_de_video')`, nunca pelo Broadcast. O cliente falso junta o Realtime falso a uma `rpc` falsa.
+ */
+const SESSAO = '3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b'
+const ID_DA_MENSAGEM = '4f5a6b7c-8d9e-4f0a-9b1c-2d3e4f5a6b7c'
+const TOPICO_VIDEO = `video:${EU}`
+const SDP = 'v=0\r\no=- 1 2 IN IP4 192.0.2.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n'
+
+type RespostaDaRpc = { data: unknown; error: { code?: string; message?: string } | null; status?: number }
+
+function montarVideo() {
+  const fila: (() => void)[] = []
+  const rt = criarRealtimeFalso()
+  const rpc = vi.fn(async (_fn: string, _args: Record<string, unknown>): Promise<RespostaDaRpc> => ({ data: 'enviado', error: null, status: 200 }))
+  const cliente = { channel: rt.cliente.channel, removeChannel: rt.cliente.removeChannel, rpc }
+  const fabrica = criarFabricaDeCanais(cliente as unknown as SupabaseClient, EU, (f) => fila.push(f))
+  return {
+    rt,
+    rpc,
+    fabrica,
+    rodar() {
+      while (fila.length > 0) fila.shift()!()
+    },
+  }
+}
+
+describe('canal de vídeo', () => {
+  test('video-topico-da-sessao', async () => {
+    const m = montarVideo()
+    m.fabrica.videoDaCamera()
+    await tique()
+    expect(m.rt.criados.map((c) => c.topico)).toEqual([TOPICO_VIDEO])
+    expect(m.rt.canal(TOPICO_VIDEO).config).toEqual({ private: true, broadcast: { ack: true, self: false }, presence: { key: EU } })
+    const m2 = montarVideo()
+    m2.fabrica.videoDaObs()
+    await tique()
+    expect(m2.rt.criados.map((c) => c.topico)).toEqual([TOPICO_VIDEO])
+    // usuário fora do formato uuid: lança (o tópico nunca sai do texto exato)
+    const rt = criarRealtimeFalso()
+    expect(() => criarFabricaDeCanais(rt.cliente as unknown as SupabaseClient, DISP.toUpperCase()).videoDaCamera()).toThrow()
+    expect(rt.criados).toHaveLength(0)
+  })
+
+  test('video-envia-pela-rpc', async () => {
+    const m = montarVideo()
+    const camera = m.fabrica.videoDaCamera()
+    const obs = m.fabrica.videoDaObs()
+    await tique()
+    m.rt.emitirStatus(m.rt.canal(TOPICO_VIDEO), 'SUBSCRIBED')
+    expect(await camera.enviar({ tipo: 'oferta', sessao: SESSAO, sdp: SDP })).toBe('ok')
+    expect(await camera.enviar({ tipo: 'encerrar', sessao: SESSAO })).toBe('ok')
+    expect(await obs.enviar({ tipo: 'pronto', sessao: SESSAO })).toBe('ok')
+    expect(await obs.enviar({ tipo: 'resposta', sessao: SESSAO, sdp: SDP })).toBe('ok')
+    expect(m.rpc.mock.calls).toEqual([
+      ['enviar_sinal_de_video', { p_tipo: 'oferta', p_sessao: SESSAO, p_sdp: SDP }],
+      ['enviar_sinal_de_video', { p_tipo: 'encerrar', p_sessao: SESSAO, p_sdp: null }],
+      ['enviar_sinal_de_video', { p_tipo: 'pronto', p_sessao: SESSAO, p_sdp: null }],
+      ['enviar_sinal_de_video', { p_tipo: 'resposta', p_sessao: SESSAO, p_sdp: SDP }],
+    ])
+    // nunca pelo Broadcast, nem com o canal conectado
+    expect(m.rt.canal(TOPICO_VIDEO).enviados).toEqual([])
+    expect(m.rt.contar('send')).toBe(0)
+
+    // respostas da função
+    const respostas: [RespostaDaRpc, string][] = [
+      [{ data: 'sem_par', error: null, status: 200 }, 'sem_par'],
+      [{ data: null, error: { code: '54000', message: 'limite de sinais' }, status: 400 }, 'limite'],
+      [{ data: null, error: { code: '42501', message: 'sem permissão' }, status: 403 }, 'falhou'],
+      [{ data: null, error: { code: '55000', message: 'sem episódio ativo' }, status: 400 }, 'falhou'],
+      [{ data: null, error: { code: '22023', message: 'sinal inválido' }, status: 400 }, 'falhou'],
+      [{ data: null, error: { code: '', message: 'TypeError: Failed to fetch' }, status: 0 }, 'falhou'], // rede ou tempo-limite
+      [{ data: 'outra coisa', error: null, status: 200 }, 'falhou'],
+      [{ data: null, error: null, status: 204 }, 'falhou'],
+    ]
+    for (const [resposta, esperado] of respostas) {
+      m.rpc.mockResolvedValueOnce(resposta)
+      expect(await camera.enviar({ tipo: 'encerrar', sessao: SESSAO })).toBe(esperado)
+    }
+    m.rpc.mockRejectedValueOnce(new Error('rede'))
+    expect(await obs.enviar({ tipo: 'pronto', sessao: SESSAO })).toBe('falhou')
+    expect(m.rt.contar('send')).toBe(0)
+  })
+
+  test('video-recebe-valida', async () => {
+    const m = montarVideo()
+    const camera = m.fabrica.videoDaCamera()
+    const recebidos = vi.fn()
+    camera.aoSinal(recebidos)
+    await tique()
+    const c = m.rt.canal(TOPICO_VIDEO)
+    // na câmera, só os sinais do obs_camera: oferta e encerrar com outro tipo... do lado errado, descartados
+    m.rt.emitirBroadcast(c, 'sinal', { tipo: 'oferta', sessao: SESSAO, sdp: SDP, remetente: OUTRO, id: ID_DA_MENSAGEM })
+    m.rt.emitirBroadcast(c, 'sinal', { tipo: 'resposta', sessao: SESSAO, sdp: SDP, id: ID_DA_MENSAGEM }) // sem remetente
+    m.rt.emitirBroadcast(c, 'sinal', { tipo: 'resposta', sessao: SESSAO, sdp: SDP, remetente: OUTRO.toUpperCase() })
+    m.rt.emitirBroadcast(c, 'outro', { tipo: 'resposta', sessao: SESSAO, sdp: SDP, remetente: OUTRO }) // evento diferente
+    m.rt.emitirBroadcast(c, 'sinal', { tipo: 'resposta', sessao: SESSAO, sdp: 'x', remetente: OUTRO }) // SDP fora da regra
+    m.rt.emitirBroadcast(c, 'sinal', { tipo: 'pronto', sessao: SESSAO, remetente: OUTRO, extra: 1 }) // chave a mais
+    m.rodar()
+    expect(recebidos).not.toHaveBeenCalled()
+    // válidos, com remetente e id: chegam com o remetente, sem o id
+    m.rt.emitirBroadcast(c, 'sinal', { tipo: 'resposta', sessao: SESSAO, sdp: SDP, remetente: OUTRO, id: ID_DA_MENSAGEM })
+    m.rt.emitirBroadcast(c, 'sinal', { tipo: 'pronto', sessao: SESSAO, remetente: OUTRO })
+    expect(recebidos).not.toHaveBeenCalled() // nunca dentro do callback do realtime-js
+    m.rodar()
+    expect(recebidos.mock.calls).toEqual([
+      [{ tipo: 'resposta', sessao: SESSAO, sdp: SDP }, OUTRO],
+      [{ tipo: 'pronto', sessao: SESSAO }, OUTRO],
+    ])
+
+    // no obs_camera, só os da câmera
+    const m2 = montarVideo()
+    const obs = m2.fabrica.videoDaObs()
+    const r2 = vi.fn()
+    obs.aoSinal(r2)
+    await tique()
+    const c2 = m2.rt.canal(TOPICO_VIDEO)
+    m2.rt.emitirBroadcast(c2, 'sinal', { tipo: 'resposta', sessao: SESSAO, sdp: SDP, remetente: OUTRO })
+    m2.rt.emitirBroadcast(c2, 'sinal', { tipo: 'pronto', sessao: SESSAO, remetente: OUTRO })
+    m2.rodar()
+    expect(r2).not.toHaveBeenCalled()
+    m2.rt.emitirBroadcast(c2, 'sinal', { tipo: 'oferta', sessao: SESSAO, sdp: SDP, remetente: OUTRO, id: ID_DA_MENSAGEM })
+    m2.rt.emitirBroadcast(c2, 'sinal', { tipo: 'encerrar', sessao: SESSAO, remetente: OUTRO })
+    m2.rodar()
+    expect(r2.mock.calls).toEqual([
+      [{ tipo: 'oferta', sessao: SESSAO, sdp: SDP }, OUTRO],
+      [{ tipo: 'encerrar', sessao: SESSAO }, OUTRO],
+    ])
+  })
+
+  test('video-um-canal-por-topico', async () => {
+    const m = montarVideo()
+    const a = m.fabrica.videoDaCamera()
+    const b = m.fabrica.videoDaCamera()
+    const ra = vi.fn()
+    const rb = vi.fn()
+    a.aoSinal(ra)
+    b.aoSinal(rb)
+    await tique()
+    expect(m.rt.contar('channel', TOPICO_VIDEO)).toBe(1)
+    m.rt.emitirBroadcast(m.rt.canal(TOPICO_VIDEO), 'sinal', { tipo: 'pronto', sessao: SESSAO, remetente: OUTRO })
+    m.rodar()
+    expect(ra).toHaveBeenCalledTimes(1)
+    expect(rb).toHaveBeenCalledTimes(1)
+    // o envio de uma alça não ecoa nas outras (nada passa pelo Broadcast)
+    await a.enviar({ tipo: 'encerrar', sessao: SESSAO })
+    m.rodar()
+    expect(rb).toHaveBeenCalledTimes(1)
+  })
+
+  test('video-fechar', async () => {
+    const m = montarVideo()
+    const a = m.fabrica.videoDaCamera()
+    const b = m.fabrica.videoDaCamera()
+    const estados = vi.fn()
+    b.aoMudarEstado(estados)
+    await tique()
+    m.rt.emitirStatus(m.rt.canal(TOPICO_VIDEO), 'SUBSCRIBED')
+    m.rodar()
+    expect(estados.mock.calls.map((x) => x[0])).toEqual(['conectando', 'conectado'])
+    await a.fechar()
+    expect(m.rt.contar('removeChannel')).toBe(0)
+    await b.fechar()
+    await b.fechar()
+    expect(m.rt.contar('removeChannel', TOPICO_VIDEO)).toBe(1)
+    expect(m.rt.contar('untrack')).toBe(0)
+    // negado (sem episódio ou sessão revogada): sai do mapa; a próxima abertura cria um canal novo
+    const c = m.fabrica.videoDaObs()
+    const ec = vi.fn()
+    c.aoMudarEstado(ec)
+    await tique()
+    m.rt.emitirStatus(m.rt.canal(TOPICO_VIDEO), 'CHANNEL_ERROR', new Error(`Unauthorized: You do not have permissions to read from this Channel topic: ${TOPICO_VIDEO}`))
+    m.rodar()
+    expect(ec.mock.calls.map((x) => x[0])).toEqual(['conectando', 'negado'])
+    m.fabrica.videoDaObs()
+    await tique()
+    expect(m.rt.contar('channel', TOPICO_VIDEO)).toBe(3)
+  })
+
+  test('video-enviar-depois-de-fechar', async () => {
+    // VER-051, rodada 1 (N1): a alça fechada não chama a rpc (como as outras alças); antes de fechar, chama mesmo sem canal conectado
+    const m = montarVideo()
+    const a = m.fabrica.videoDaCamera()
+    expect(await a.enviar({ tipo: 'encerrar', sessao: SESSAO })).toBe('ok') // canal ainda conectando: a rpc não depende dele
+    expect(m.rpc).toHaveBeenCalledTimes(1)
+    await a.fechar()
+    expect(await a.enviar({ tipo: 'encerrar', sessao: SESSAO })).toBe('falhou')
+    expect(m.rpc).toHaveBeenCalledTimes(1)
+    // outra alça do mesmo tópico, ainda aberta, continua enviando
+    const b = m.fabrica.videoDaObs()
+    const c = m.fabrica.videoDaObs()
+    await c.fechar()
+    expect(await b.enviar({ tipo: 'pronto', sessao: SESSAO })).toBe('ok')
+    expect(await c.enviar({ tipo: 'pronto', sessao: SESSAO })).toBe('falhou')
+    expect(m.rpc).toHaveBeenCalledTimes(2)
+  })
+
+  test('video-sem-presenca', async () => {
+    const m = montarVideo()
+    const a = m.fabrica.videoDaCamera()
+    await tique()
+    const canal = m.rt.canal(TOPICO_VIDEO)
+    m.rt.emitirStatus(canal, 'SUBSCRIBED')
+    m.rt.emitirStatus(canal, 'TIMED_OUT')
+    m.rt.emitirStatus(canal, 'SUBSCRIBED')
+    await a.enviar({ tipo: 'encerrar', sessao: SESSAO })
+    await a.fechar()
+    expect(m.rt.contar('track')).toBe(0)
+    expect(m.rt.contar('untrack')).toBe(0)
+    expect(canal.presencas).toEqual([])
+    // a alça de vídeo não oferece marcarPresenca nem enviar pelo Broadcast
+    expect(Object.keys(a).sort()).toEqual(['aoMudarEstado', 'aoSinal', 'enviar', 'fechar'])
+  })
+})

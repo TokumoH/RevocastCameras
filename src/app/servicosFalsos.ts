@@ -21,6 +21,18 @@ import type { ServicoDeDispositivo } from '../domains/acesso/portasDeDispositivo
 import type { LinhaDoRegistro } from '../domains/aovivo/comandos'
 import { ErroDoAoVivo } from '../domains/aovivo/portas'
 import type { EstadoDoCanal, FabricaDeCanais, RepositorioDoAoVivo, RepositorioDoPalco, RespostaDoEnvio } from '../domains/aovivo/portas'
+import type {
+  CameraDoAparelho,
+  ConexaoDeVideo,
+  EstadoDaConexao,
+  FabricaDeCanaisDeVideo,
+  FabricaDeConexoes,
+  FaixaDeVideo,
+  FalhaDaCamera,
+  FluxoDeVideo,
+  ManterTelaLigada,
+  RespostaDoSinal,
+} from '../domains/captura/portas'
 import type { Cena } from '../domains/preparacao/cenas'
 import type { Aviso, Episodio } from '../domains/preparacao/episodios'
 import { GESTOS } from '../domains/preparacao/gestos'
@@ -31,7 +43,7 @@ import type { NovaMidia, OpcoesDoEnvio, ServicosDePreparacao } from '../domains/
 import { criarFabricaDeCanais } from '../shared/infra/canalSupabase'
 import { criarRealtimeFalso } from '../shared/infra/realtimeFalso'
 import type { Dependencias } from './dependencias'
-import type { ServicosDeAoVivo, ServicosDoDispositivo } from './servicos'
+import type { AparelhoDoDispositivo, ServicosDeAoVivo, ServicosDoDispositivo } from './servicos'
 
 /**
  * Serviços da Preparação sem nada: listas vazias; escritas, envio, remoção e prévia resolvem sem efeito
@@ -571,6 +583,14 @@ const STATUS_DO_ESTADO: Readonly<Record<Exclude<EstadoDoCanal, 'conectando'>, ['
 
 const RESPOSTA_DO_SEND: Readonly<Record<RespostaDoEnvio, 'ok' | 'timed out' | 'error'>> = { ok: 'ok', sem_resposta: 'timed out', falhou: 'error' }
 
+/** O que a `rpc('enviar_sinal_de_video')` devolve para cada resposta do canal de vídeo (o adaptador real traduz de volta). */
+const RESPOSTA_DA_FUNCAO: Readonly<Record<RespostaDoSinal, { data: unknown; error: { code: string } | null }>> = {
+  ok: { data: 'enviado', error: null },
+  sem_par: { data: 'sem_par', error: null },
+  limite: { data: null, error: { code: '54000' } },
+  falhou: { data: null, error: { code: '42501' } },
+}
+
 /**
  * Canais falsos para os testes de tela (E3): o **adaptador real** (`criarFabricaDeCanais`) sobre o
  * cliente Realtime falso de `realtimeFalso.ts`, para que as telas recebam exatamente o que o adaptador
@@ -579,18 +599,32 @@ const RESPOSTA_DO_SEND: Readonly<Record<RespostaDoEnvio, 'ok' | 'timed out' | 'e
  * `conectando` a `conectado` (num microtask); `definirEstado` o derruba para `reconectando`, `fechado`
  * ou `negado` e o traz de volta; `responderEnvio('sem_resposta')` faz o `ack` não responder. Os
  * ouvintes são agendados por `queueMicrotask` (fora do callback, como o `setTimeout` do app, e sem
- * depender dos relógios falsos). `entregar` manda pelo canal o que vier, válido ou não.
+ * depender dos relógios falsos). `entregar` manda pelo canal o que vier, válido ou não. Desde a E4, o canal
+ * de vídeo (`videoDaCamera`, `videoDaObs`) usa o mesmo adaptador e envia pela `rpc` falsa: `sinaisDeVideo()`
+ * lista o que saiu e `responderSinal` escolhe a resposta da função.
  */
 export function criarCanalFalso(opcoes: { conectarSozinho?: boolean } = {}) {
   const realtime = criarRealtimeFalso({ conectarSozinho: opcoes.conectarSozinho ?? true })
-  const fabricas = new Map<string, FabricaDeCanais>()
+  const fabricas = new Map<string, FabricaDeCanais & FabricaDeCanaisDeVideo>()
+  // E4: o canal de vídeo envia pela `rpc('enviar_sinal_de_video')` (D2); o cliente falso junta o Realtime falso a uma `rpc` falsa.
+  const sinais: Record<string, unknown>[] = []
+  let respostaDoSinal: RespostaDoSinal = 'ok'
+  const cliente = {
+    channel: realtime.cliente.channel,
+    removeChannel: realtime.cliente.removeChannel,
+    async rpc(fn: string, args: Record<string, unknown>) {
+      if (fn !== 'enviar_sinal_de_video') return { data: null, error: { code: 'PGRST202' }, status: 404 }
+      sinais.push({ ...args })
+      return { ...RESPOSTA_DA_FUNCAO[respostaDoSinal], status: 200 }
+    },
+  }
   return {
     realtime,
     /** A mesma fábrica para o mesmo usuário, como `obterServicosDeAoVivo` e `obterServicosDeDispositivo`. */
-    canais(usuarioId: string): FabricaDeCanais {
+    canais(usuarioId: string): FabricaDeCanais & FabricaDeCanaisDeVideo {
       let fabrica = fabricas.get(usuarioId)
       if (fabrica === undefined) {
-        fabrica = criarFabricaDeCanais(realtime.cliente as unknown as SupabaseClient, usuarioId, (f) => queueMicrotask(f))
+        fabrica = criarFabricaDeCanais(cliente as unknown as SupabaseClient, usuarioId, (f) => queueMicrotask(f))
         fabricas.set(usuarioId, fabrica)
       }
       return fabrica
@@ -625,10 +659,204 @@ export function criarCanalFalso(opcoes: { conectarSozinho?: boolean } = {}) {
     presencas(topico: string): unknown[] {
       return realtime.criados.filter((c) => c.topico === topico).flatMap((c) => c.presencas)
     },
+    /** Sinais de vídeo enviados pela `rpc` (`p_tipo`, `p_sessao`, `p_sdp`), na ordem. */
+    sinaisDeVideo(): Record<string, unknown>[] {
+      return sinais.map((x) => ({ ...x }))
+    },
+    /** O que a função responde aos próximos sinais de vídeo (padrão: `ok`). */
+    responderSinal(r: RespostaDoSinal): void {
+      respostaDoSinal = r
+    },
   }
 }
 
 export type CanalFalso = ReturnType<typeof criarCanalFalso>
+
+/** SDPs de teste do vídeo (IP da faixa de documentação, RFC 5737): nunca um SDP real. */
+const SDP_DA_OFERTA_FALSA = 'v=0\r\no=- 1 2 IN IP4 192.0.2.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=sendonly\r\n'
+const SDP_DA_RESPOSTA_FALSA = 'v=0\r\no=- 3 4 IN IP4 192.0.2.2\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=recvonly\r\n'
+
+/** Uma conexão falsa e o que o teste faz com ela. */
+export interface ConexaoDeVideoFalsa {
+  readonly conexao: ConexaoDeVideo
+  readonly ofertas: FaixaDeVideo[]
+  readonly respostasAceitas: string[]
+  readonly ofertasRespondidas: string[]
+  readonly trocas: FaixaDeVideo[]
+  fechada(): boolean
+  /** `conectando` → `conectado` (e, no lado que respondeu, o fluxo recebido antes). */
+  conectar(): void
+  cair(): void
+  falhar(): void
+}
+
+/**
+ * Vídeo falso para os testes de tela (E4; jsdom não tem WebRTC, `getUserMedia` nem Wake Lock): as portas da Captura que a
+ * composição real monta em `obterServicosDeDispositivo` (`conexoes` e `aparelho`), com o que muda a tela:
+ * - **conexão:** com `config.conectarSozinha` (padrão), passa sozinha por `conectando` → `conectado` depois de
+ *   `aceitarResposta` (câmera) ou de `responder` (`obs_camera`, que antes recebe `fluxoRecebido`); `cair()` e `falhar()`
+ *   derrubam; `config.trocaDaFaixa = false` recusa o `replaceTrack`; depois de `fechar()` nada mais é avisado;
+ * - **câmera:** uma nova a cada `aparelho.camera()`, como na composição real (`camera.criadas` conta); `camera.proxima`
+ *   faz o próximo `ligar` recusar (`sem_permissao`, `sem_camera`...); `camera.perder()` avisa a faixa perdida na última
+ *   criada; `fluxoDaPrevia` só com a câmera ligada;
+ * - **tela:** uma nova a cada `aparelho.tela()` (`tela.criadas`); `tela.proxima` decide o próximo `travar` (`travada` ou
+ *   `sem_trava`);
+ * - **bateria:** `null` até `definirBateria`.
+ * Os avisos são agendados por `queueMicrotask` (fora da chamada, como o `setTimeout` dos adaptadores).
+ */
+export function criarVideoFalso() {
+  const config = { conectarSozinha: true, trocaDaFaixa: true }
+  const conexoesCriadas: ConexaoDeVideoFalsa[] = []
+  const fluxoRecebido = { fluxo: 'recebido' } as unknown as FluxoDeVideo
+  const fluxoDaCamera = { fluxo: 'camera' } as unknown as FluxoDeVideo
+
+  const conexoes: FabricaDeConexoes = {
+    criar() {
+      const ouvintesDoEstado = new Set<(e: EstadoDaConexao) => void>()
+      const ouvintesDoVideo = new Set<(f: FluxoDeVideo) => void>()
+      let fechada = false
+      let respondeu = false
+      const avisar = (e: EstadoDaConexao) =>
+        queueMicrotask(() => {
+          if (!fechada) for (const f of [...ouvintesDoEstado]) f(e)
+        })
+      const falsa: ConexaoDeVideoFalsa = {
+        ofertas: [],
+        respostasAceitas: [],
+        ofertasRespondidas: [],
+        trocas: [],
+        fechada: () => fechada,
+        conectar() {
+          if (respondeu) {
+            queueMicrotask(() => {
+              if (!fechada) for (const f of [...ouvintesDoVideo]) f(fluxoRecebido)
+            })
+          }
+          avisar('conectando')
+          avisar('conectado')
+        },
+        cair: () => avisar('caiu'),
+        falhar: () => avisar('falhou'),
+        conexao: {
+          async oferecer(faixa) {
+            falsa.ofertas.push(faixa)
+            return SDP_DA_OFERTA_FALSA
+          },
+          async aceitarResposta(sdp) {
+            falsa.respostasAceitas.push(sdp)
+            if (config.conectarSozinha) falsa.conectar()
+          },
+          async responder(oferta) {
+            falsa.ofertasRespondidas.push(oferta)
+            respondeu = true
+            if (config.conectarSozinha) falsa.conectar()
+            return SDP_DA_RESPOSTA_FALSA
+          },
+          async trocarFaixa(faixa) {
+            falsa.trocas.push(faixa)
+            return config.trocaDaFaixa
+          },
+          aoMudar(f) {
+            ouvintesDoEstado.add(f)
+            return () => {
+              ouvintesDoEstado.delete(f)
+            }
+          },
+          aoVideo(f) {
+            ouvintesDoVideo.add(f)
+            return () => {
+              ouvintesDoVideo.delete(f)
+            }
+          },
+          fechar() {
+            fechada = true
+          },
+        },
+      }
+      conexoesCriadas.push(falsa)
+      return falsa.conexao
+    },
+  }
+
+  const controleDaCamera = {
+    proxima: null as FalhaDaCamera | null,
+    /** Chamadas de `aparelho.camera()` (a composição real cria uma câmera nova a cada chamada). */
+    criadas: 0,
+    ligacoes: 0,
+    desligadas: 0,
+    /** A última câmera criada está ligada. */
+    ligada: () => cameras.at(-1)?.ligada === true,
+    /** Faixa perdida na última câmera criada. */
+    perder(): void {
+      const ultima = cameras.at(-1)
+      if (ultima === undefined) return
+      queueMicrotask(() => {
+        for (const f of [...ultima.ouvintes]) f()
+      })
+    },
+  }
+  const cameras: { ligada: boolean; ouvintes: Set<() => void> }[] = []
+  function criarCamera(): CameraDoAparelho {
+    const estado = { ligada: false, ouvintes: new Set<() => void>() }
+    cameras.push(estado)
+    controleDaCamera.criadas += 1
+    return {
+      async ligar() {
+        controleDaCamera.ligacoes += 1
+        const motivo = controleDaCamera.proxima
+        if (motivo !== null) return { ok: false, motivo }
+        estado.ligada = true
+        return { ok: true, faixa: { faixa: controleDaCamera.ligacoes } as unknown as FaixaDeVideo }
+      },
+      aoPerderFaixa(f) {
+        estado.ouvintes.add(f)
+        return () => {
+          estado.ouvintes.delete(f)
+        }
+      },
+      desligar() {
+        controleDaCamera.desligadas += 1
+        estado.ligada = false
+      },
+      fluxoDaPrevia: () => (estado.ligada ? fluxoDaCamera : null),
+    }
+  }
+
+  const controleDaTela = { proxima: 'travada' as 'travada' | 'sem_trava', criadas: 0, travadas: 0, soltas: 0 }
+  function criarTela(): ManterTelaLigada {
+    controleDaTela.criadas += 1
+    return {
+      async travar() {
+        controleDaTela.travadas += 1
+        return controleDaTela.proxima
+      },
+      soltar() {
+        controleDaTela.soltas += 1
+      },
+    }
+  }
+
+  let bateria: number | null = null
+  const aparelho: AparelhoDoDispositivo = { camera: criarCamera, tela: criarTela, bateria: async () => bateria }
+
+  return {
+    conexoes,
+    aparelho,
+    config,
+    conexoesCriadas,
+    fluxoRecebido,
+    fluxoDaCamera,
+    sdpDaOferta: SDP_DA_OFERTA_FALSA,
+    sdpDaResposta: SDP_DA_RESPOSTA_FALSA,
+    camera: controleDaCamera,
+    tela: controleDaTela,
+    definirBateria(n: number | null): void {
+      bateria = n
+    },
+  }
+}
+
+export type VideoFalso = ReturnType<typeof criarVideoFalso>
 
 /**
  * Ao vivo sem nada, para as telas de membro que não o usam: nenhum episódio ativo, nenhum dispositivo;
@@ -661,7 +889,8 @@ type MetodoDoDispositivo = 'sessaoAtual' | 'entrarAnonimo' | 'parear' | 'disposi
  * nova (um `usuarioId` novo a cada vez); `parear` responde o que foi programado (padrão: `pareado`) e,
  * pareado, liga o dispositivo à sessão; `dispositivoAtual` só devolve o dispositivo com sessão anônima;
  * `sair` apaga a sessão. `ordem` anota cada chamada (para conferir, por exemplo, que o fragmento foi
- * limpo antes de qualquer rede). Uma falha programada (`falharProxima`) vale uma chamada.
+ * limpo antes de qualquer rede). Uma falha programada (`falharProxima`) vale uma chamada. Desde a E4, os
+ * serviços trazem as conexões e o aparelho de `criarVideoFalso` (em `video`).
  */
 export function criarFalsosDeDispositivo(
   inicial: {
@@ -680,6 +909,7 @@ export function criarFalsosDeDispositivo(
   let proximoUsuario = 1
   const falhas = new Map<MetodoDoDispositivo, ErroDeDispositivo>()
   const canal = criarCanalFalso()
+  const video = criarVideoFalso()
   const chamadas = {
     ordem: [] as string[],
     parear: [] as { codigo: string; tipo: TipoDeDispositivo }[],
@@ -747,8 +977,9 @@ export function criarFalsosDeDispositivo(
   }
 
   return {
-    servicos: { servico, palco, canais: canal.canais } satisfies ServicosDoDispositivo,
+    servicos: { servico, palco, canais: canal.canais, conexoes: video.conexoes, aparelho: video.aparelho } satisfies ServicosDoDispositivo,
     canal,
+    video,
     chamadas,
     definirSessao(s: { usuarioId: string; anonima: boolean } | null): void {
       sessao = s

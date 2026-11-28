@@ -3,11 +3,14 @@ import type { TipoDeDispositivo } from '../domains/acesso/dispositivos'
 import type { ServicosDeMembro } from '../domains/acesso/portas'
 import type { ServicoDeDispositivo } from '../domains/acesso/portasDeDispositivo'
 import type { FabricaDeCanais, RepositorioDoAoVivo, RepositorioDoPalco } from '../domains/aovivo/portas'
+import type { CameraDoAparelho, FabricaDeCanaisDeVideo, FabricaDeConexoes, ManterTelaLigada } from '../domains/captura/portas'
 import type { ServicosDePreparacao } from '../domains/preparacao/portas'
 import { criarAutenticacaoSupabase, criarRepositorioDeAcessoSupabase } from '../shared/infra/acessoSupabase'
 import { criarRepositorioDoAoVivo, criarRepositorioDoPalco } from '../shared/infra/aoVivoSupabase'
 import { criarArmazenamentoSupabase } from '../shared/infra/armazenamentoSupabase'
+import { criarCameraDoAparelho, criarManterTelaLigada, lerBateria } from '../shared/infra/cameraNavegador'
 import { criarFabricaDeCanais } from '../shared/infra/canalSupabase'
+import { criarFabricaDeConexoes, servidoresIce } from '../shared/infra/conexaoWebrtc'
 import { lerConfiguracao } from '../shared/infra/configuracao'
 import type { Configuracao } from '../shared/infra/configuracao'
 import { criarServicoDeDispositivoSupabase } from '../shared/infra/dispositivoSupabase'
@@ -15,13 +18,17 @@ import { criarRepositoriosDePreparacao } from '../shared/infra/preparacaoSupabas
 import { criarClienteSupabase } from '../shared/infra/supabase'
 
 /**
- * Só as duas variáveis do Supabase, lidas de `import.meta.env` uma a uma: o Vite troca cada acesso
- * estático pelo valor, e nada mais do ambiente (`DEV`, `MODE`, TURN) entra no objeto.
+ * As duas variáveis do Supabase e, desde a E4 (PLA-005, D9), as três opcionais do TURN, lidas de `import.meta.env` uma a
+ * uma: o Vite troca cada acesso estático pelo valor, e nada mais do ambiente (`DEV`, `MODE`) entra no objeto. Sem as três
+ * do TURN, `lerConfiguracao` não monta `turn` e a conexão usa só o STUN público.
  */
 export function ambienteDoVite(): Record<string, string | undefined> {
   return {
     VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL as string | undefined,
     VITE_SUPABASE_PUBLISHABLE_KEY: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined,
+    VITE_TURN_URL: import.meta.env.VITE_TURN_URL as string | undefined,
+    VITE_TURN_USUARIO: import.meta.env.VITE_TURN_USUARIO as string | undefined,
+    VITE_TURN_SENHA: import.meta.env.VITE_TURN_SENHA as string | undefined,
   }
 }
 
@@ -87,11 +94,24 @@ export interface ServicosDeAoVivo {
   canais: (usuarioId: string) => FabricaDeCanais
 }
 
-/** Serviços de uma rota de dispositivo (E3, D4): sessão anônima e pareamento, palco e canais, sobre o cliente do tipo. */
+/** O aparelho da rota de dispositivo (PLA-005, D7, D13): câmera, tela ligada e bateria, sobre as APIs do navegador. */
+export interface AparelhoDoDispositivo {
+  /** Uma câmera nova a cada chamada (a rota guarda a sua). */
+  camera(): CameraDoAparelho
+  tela(): ManterTelaLigada
+  bateria(): Promise<number | null>
+}
+
+/**
+ * Serviços de uma rota de dispositivo (E3, D4): sessão anônima e pareamento, palco e canais, sobre o cliente do tipo; desde
+ * a E4, o canal de vídeo (na mesma fábrica), as conexões WebRTC (STUN e o TURN opcional, D9) e o aparelho.
+ */
 export interface ServicosDoDispositivo {
   servico: ServicoDeDispositivo
   palco: RepositorioDoPalco
-  canais: (usuarioId: string) => FabricaDeCanais
+  canais: (usuarioId: string) => FabricaDeCanais & FabricaDeCanaisDeVideo
+  conexoes: FabricaDeConexoes
+  aparelho: AparelhoDoDispositivo
 }
 
 /**
@@ -100,8 +120,8 @@ export interface ServicosDoDispositivo {
  * `on('presence')` cairia no canal já inscrito pelo primeiro. Usuário novo no mesmo cliente → fábrica
  * nova (Riscos do VER-038: os canais do usuário anterior já devem estar fechados).
  */
-function canaisPorUsuario(cliente: SupabaseClient): (usuarioId: string) => FabricaDeCanais {
-  const fabricas = new Map<string, FabricaDeCanais>()
+function canaisPorUsuario(cliente: SupabaseClient): (usuarioId: string) => FabricaDeCanais & FabricaDeCanaisDeVideo {
+  const fabricas = new Map<string, FabricaDeCanais & FabricaDeCanaisDeVideo>()
   return (usuarioId) => {
     let fabrica = fabricas.get(usuarioId)
     if (fabrica === undefined) {
@@ -129,19 +149,31 @@ export function obterServicosDeAoVivo(): ServicosDeAoVivo {
 /** Um cliente por tipo de dispositivo nesta página (D4), criado só quando a rota daquele tipo pede. */
 const dispositivos = new Map<TipoDeDispositivo, ServicosDoDispositivo>()
 
+/** O aparelho real: as fabricações de `cameraNavegador.ts` sobre `navigator` e `document`, lidos na hora de cada uso. */
+const APARELHO_DO_NAVEGADOR: AparelhoDoDispositivo = {
+  camera: () => criarCameraDoAparelho(),
+  tela: () => criarManterTelaLigada(),
+  bateria: () => lerBateria(),
+}
+
 /**
  * Serviços da rota de dispositivo do `tipo`: cliente próprio (`storageKey` `revocast-auth-<tipo>`,
  * `detectSessionInUrl: false`), preguiçoso e uma vez por página; nunca o cliente de membro nem o de
- * outro tipo. Configuração inválida → `ErroDeConfiguracao`, sem cliente e sem guardar nada.
+ * outro tipo. Configuração inválida → `ErroDeConfiguracao`, sem cliente e sem guardar nada. As conexões
+ * WebRTC usam os servidores ICE da mesma configuração (só STUN sem as três variáveis do TURN, D9); nenhum
+ * `RTCPeerConnection` nasce antes de a rota pedir uma conexão.
  */
 export function obterServicosDeDispositivo(tipo: TipoDeDispositivo): ServicosDoDispositivo {
   let servicosDoTipo = dispositivos.get(tipo)
   if (servicosDoTipo === undefined) {
-    const cliente = criarClienteSupabase(lerConfiguracao(ambienteDoVite()), tipo)
+    const config = lerConfiguracao(ambienteDoVite())
+    const cliente = criarClienteSupabase(config, tipo)
     servicosDoTipo = {
       servico: criarServicoDeDispositivoSupabase(cliente),
       palco: criarRepositorioDoPalco(cliente),
       canais: canaisPorUsuario(cliente),
+      conexoes: criarFabricaDeConexoes({ ice: servidoresIce(config) }),
+      aparelho: APARELHO_DO_NAVEGADOR,
     }
     dispositivos.set(tipo, servicosDoTipo)
   }

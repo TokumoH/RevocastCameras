@@ -8,11 +8,13 @@ import { ambienteDoVite, criarServicosDeMembro } from './servicos'
 
 const URL_OK = 'https://abc.supabase.co'
 const CHAVE_OK = 'sb_publishable_x'
+const TURN_URL = 'turn:turn.revocast.test:3478'
 
 beforeEach(() => createClient.mockClear())
 
 afterEach(() => {
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
   vi.resetModules()
 })
 
@@ -38,15 +40,25 @@ describe('criarServicosDeMembro', () => {
 })
 
 describe('ambienteDoVite', () => {
-  test('devolve só as duas variáveis do Supabase', () => {
+  test('devolve só as cinco variáveis (Supabase e TURN opcional, PLA-005 D9)', () => {
     vi.stubEnv('VITE_SUPABASE_URL', URL_OK)
     vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', CHAVE_OK)
-    vi.stubEnv('VITE_TURN_SENHA', 'nao-deve-aparecer')
+    vi.stubEnv('VITE_TURN_URL', TURN_URL)
+    vi.stubEnv('VITE_TURN_USUARIO', 'usuario-de-teste')
+    vi.stubEnv('VITE_TURN_SENHA', 'senha-de-teste')
+    vi.stubEnv('VITE_OUTRA', 'nao-deve-aparecer')
     const env = ambienteDoVite()
-    expect(Object.keys(env).sort()).toEqual(['VITE_SUPABASE_PUBLISHABLE_KEY', 'VITE_SUPABASE_URL'])
-    expect(env).toEqual({ VITE_SUPABASE_URL: URL_OK, VITE_SUPABASE_PUBLISHABLE_KEY: CHAVE_OK })
+    expect(Object.keys(env).sort()).toEqual(['VITE_SUPABASE_PUBLISHABLE_KEY', 'VITE_SUPABASE_URL', 'VITE_TURN_SENHA', 'VITE_TURN_URL', 'VITE_TURN_USUARIO'])
+    expect(env).toEqual({
+      VITE_SUPABASE_URL: URL_OK,
+      VITE_SUPABASE_PUBLISHABLE_KEY: CHAVE_OK,
+      VITE_TURN_URL: TURN_URL,
+      VITE_TURN_USUARIO: 'usuario-de-teste',
+      VITE_TURN_SENHA: 'senha-de-teste',
+    })
     expect(env).not.toHaveProperty('DEV')
     expect(env).not.toHaveProperty('MODE')
+    expect(env).not.toHaveProperty('VITE_OUTRA')
   })
 })
 
@@ -159,7 +171,7 @@ describe('obterServicosDeDispositivo', () => {
     expect(createClient.mock.calls[0][2]).toMatchObject({ auth: { storageKey: 'revocast-auth-obs_palco', detectSessionInUrl: false } })
     expect(obterServicosDeDispositivo('obs_palco')).toBe(palco)
     expect(createClient).toHaveBeenCalledTimes(1)
-    expect(Object.keys(palco).sort()).toEqual(['canais', 'palco', 'servico'])
+    expect(Object.keys(palco).sort()).toEqual(['aparelho', 'canais', 'conexoes', 'palco', 'servico'])
     expect(typeof palco.servico.parear).toBe('function')
     expect(typeof palco.palco.carregar).toBe('function')
     const ID = '5a1c9e2b-7d3f-4b6a-8c1d-2e3f4a5b6c7d'
@@ -185,5 +197,78 @@ describe('obterServicosDeDispositivo', () => {
     vi.stubEnv('VITE_SUPABASE_URL', URL_OK)
     servicos.obterServicosDeDispositivo('obs_camera')
     expect(createClient).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('obterServicosDeDispositivo: vídeo (PLA-005, Tarefa 3)', () => {
+  /** `RTCPeerConnection` falso só para ler a configuração com que o adaptador o cria. */
+  function capturarConfiguracoes(): RTCConfiguration[] {
+    const configuracoes: RTCConfiguration[] = []
+    vi.stubGlobal(
+      'RTCPeerConnection',
+      class {
+        constructor(c: RTCConfiguration) {
+          configuracoes.push(c)
+        }
+        addEventListener() {}
+        close() {}
+      },
+    )
+    return configuracoes
+  }
+
+  test('conexoes-com-turn', async () => {
+    vi.stubEnv('VITE_SUPABASE_URL', URL_OK)
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', CHAVE_OK)
+    vi.stubEnv('VITE_TURN_URL', TURN_URL)
+    vi.stubEnv('VITE_TURN_USUARIO', 'usuario-de-teste')
+    vi.stubEnv('VITE_TURN_SENHA', 'senha-de-teste')
+    vi.resetModules()
+    const configuracoes = capturarConfiguracoes()
+    const { obterServicosDeDispositivo } = await import('./servicos')
+    const camera = obterServicosDeDispositivo('camera')
+    expect(configuracoes).toEqual([]) // nada de RTCPeerConnection antes de pedir uma conexão
+    camera.conexoes.criar().fechar()
+    expect(configuracoes).toEqual([
+      {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: TURN_URL, username: 'usuario-de-teste', credential: 'senha-de-teste' },
+        ],
+        bundlePolicy: 'max-bundle',
+      },
+    ])
+    expect(createClient).toHaveBeenCalledTimes(1)
+  })
+
+  test('conexoes-sem-turn: só o STUN (uma das três ausente)', async () => {
+    vi.stubEnv('VITE_SUPABASE_URL', URL_OK)
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', CHAVE_OK)
+    vi.stubEnv('VITE_TURN_URL', TURN_URL)
+    vi.stubEnv('VITE_TURN_USUARIO', 'usuario-de-teste')
+    vi.resetModules()
+    const configuracoes = capturarConfiguracoes()
+    const { obterServicosDeDispositivo } = await import('./servicos')
+    obterServicosDeDispositivo('obs_camera').conexoes.criar().fechar()
+    expect(configuracoes.map((c) => c.iceServers)).toEqual([[{ urls: 'stun:stun.l.google.com:19302' }]])
+  })
+
+  test('aparelho e um cliente por tipo', async () => {
+    vi.stubEnv('VITE_SUPABASE_URL', URL_OK)
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', CHAVE_OK)
+    vi.resetModules()
+    const { obterServicosDeDispositivo } = await import('./servicos')
+    const camera = obterServicosDeDispositivo('camera')
+    const obs = obterServicosDeDispositivo('obs_camera')
+    expect(obterServicosDeDispositivo('camera')).toBe(camera)
+    expect(createClient).toHaveBeenCalledTimes(2)
+    expect(Object.keys(camera.aparelho).sort()).toEqual(['bateria', 'camera', 'tela'])
+    expect(typeof camera.aparelho.camera().ligar).toBe('function')
+    expect(typeof camera.aparelho.tela().travar).toBe('function')
+    expect(await camera.aparelho.bateria()).toBeNull() // o ambiente de teste não tem getBattery
+    expect(camera.conexoes).not.toBe(obs.conexoes)
+    const ID = '5a1c9e2b-7d3f-4b6a-8c1d-2e3f4a5b6c7d'
+    expect(typeof camera.canais(ID).videoDaCamera).toBe('function')
+    expect(typeof obs.canais(ID).videoDaObs).toBe('function')
   })
 })

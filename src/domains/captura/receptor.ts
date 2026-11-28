@@ -167,7 +167,15 @@ export function criarReceptorDeVideo(d: DependenciasDoReceptor): {
     if (anterior !== null && anterior.respondida && !anterior.conectou) falhasSeguidas += 1
     fecharSessao()
     sinalGrande = false
-    const conexao = d.conexoes.criar()
+    let conexao: ConexaoDeVideo
+    try {
+      conexao = d.conexoes.criar()
+    } catch {
+      // a fábrica recusou (VER-051, rodada 1, I2): como um `responder` que falha, sem rejeição solta
+      atualizar()
+      avaliarPronto()
+      return
+    }
     const s: Sessao = { id, conexao, remetente, estado: null, respondida: false, conectou: false, fluxo: null, entregue: false, soltar: () => {} }
     sessao = s
     const soltarEstado = conexao.aoMudar((e) => agenda.depois(() => aoMudarConexao(s, e)))

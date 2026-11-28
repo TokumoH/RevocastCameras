@@ -166,7 +166,13 @@ export function criarEmissorDeVideo(d: DependenciasDoEmissor): {
     if (!podeOferecer() || f === null) return
     fecharSessao()
     cancelarEspera()
-    const conexao = d.conexoes.criar()
+    let conexao: ConexaoDeVideo
+    try {
+      conexao = d.conexoes.criar()
+    } catch {
+      falhar(false) // a fábrica recusou (VER-051, rodada 1, I2): conta como falha da conexão, sem rejeição solta
+      return
+    }
     const s: Sessao = { id: d.novaSessao(), conexao, estado: null, aguardandoResposta: true, par: null, soltar: () => {} }
     sessao = s
     s.soltar = conexao.aoMudar((e) => agenda.depois(() => aoMudarConexao(s, e)))

@@ -2,6 +2,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { EVENTOS_DO_CONTROLE, EVENTOS_DO_ESTADO, UUID, lerMensagemDoControle, lerMensagemDoEstado, lerMensagemDoEstudio, lerPresenca, lerRemetente, topicoDoControle, topicoDoEstado } from '../../domains/aovivo/mensagens'
 import type { PresencaNoEstudio } from '../../domains/aovivo/mensagens'
 import type { CanalDoControle, CanalDoEstado, CanalDoEstudio, EstadoDoCanal, FabricaDeCanais, RespostaDoEnvio } from '../../domains/aovivo/portas'
+import type { CanalDeVideo, FabricaDeCanaisDeVideo, RespostaDoSinal } from '../../domains/captura/portas'
+import { lerSinalDaCamera, lerSinalDaObs, topicoDoVideo } from '../../domains/captura/sinais'
+import type { SinalDaCamera, SinalDaObs } from '../../domains/captura/sinais'
 
 type Canal = ReturnType<SupabaseClient['channel']>
 
@@ -69,8 +72,15 @@ const NAO_AUTORIZADO = /unauthorized/i
  *   callback do `realtime-js`.
  * - Enviar só com o canal `conectado`: fora dele, `falhou` sem chamar `send` (o `send` do `realtime-js`
  *   cairia para o REST).
+ * - **Vídeo (PLA-005, D1, D2; desde a E4):** `videoDaCamera()` e `videoDaObs()` abrem, pelo mesmo registro, só o tópico
+ *   da própria sessão (`video:<usuarioId>`), só para **receber** (mesma configuração privada; nenhuma presença marcada);
+ *   o envio é a `rpc('enviar_sinal_de_video')`, nunca `canal.send` nesses tópicos (o banco põe o remetente e publica).
  */
-export function criarFabricaDeCanais(cliente: SupabaseClient, usuarioId: string, agendar: (f: () => void) => void = (f) => setTimeout(f, 0)): FabricaDeCanais {
+export function criarFabricaDeCanais(
+  cliente: SupabaseClient,
+  usuarioId: string,
+  agendar: (f: () => void) => void = (f) => setTimeout(f, 0),
+): FabricaDeCanais & FabricaDeCanaisDeVideo {
   const registros = new Map<string, Registro>()
   const removendo = remocoesDo(cliente)
 
@@ -271,6 +281,47 @@ export function criarFabricaDeCanais(cliente: SupabaseClient, usuarioId: string,
     return { ouvintes, aoEstado, aoBroadcast, aoPresenca, aoSincronizar, marcar, fechar, enviar: (evento: string, corpo: Record<string, unknown>) => (fechada ? Promise.resolve<RespostaDoEnvio>('falhou') : enviar(r, ouvintes, evento, corpo)) }
   }
 
+  /**
+   * Um sinal pela função do banco (D2): só `tipo`, `sessao` e `sdp` (nulo nos tipos sem SDP) saem do cliente. Resposta:
+   * `enviado` → `ok`; `sem_par` → `sem_par`; erro `54000` → `limite` (revisão 2, I7); qualquer outro erro (`42501`,
+   * `55000`, `22023`, rede, tempo-limite de 15 s do `fetch`, VER-021) ou resposta fora da forma → `falhou` (o emissor
+   * segue a D6). Não depende do estado do canal (a `rpc` vai pelo PostgREST, não pelo socket), só da alça aberta.
+   */
+  async function enviarSinal(s: SinalDaCamera | SinalDaObs): Promise<RespostaDoSinal> {
+    const args = { p_tipo: s.tipo, p_sessao: s.sessao, p_sdp: 'sdp' in s ? s.sdp : null }
+    let resposta: { data: unknown; error: { code?: string } | null }
+    try {
+      resposta = await cliente.rpc('enviar_sinal_de_video', args)
+    } catch {
+      return 'falhou'
+    }
+    if (resposta.error) return resposta.error.code === '54000' ? 'limite' : 'falhou'
+    if (resposta.data === 'enviado') return 'ok'
+    return resposta.data === 'sem_par' ? 'sem_par' : 'falhou'
+  }
+
+  /** Canal de vídeo de um lado: recebe pelo leitor do lado (`ler`) no tópico da própria sessão; envia pela função. */
+  function canalDeVideo<Envia extends SinalDaCamera | SinalDaObs, Recebe>(ler: (evento: string, payload: unknown) => Recebe | null): CanalDeVideo<Envia, Recebe> {
+    const alca = criarAlca(abrir(topicoDoVideo(usuarioId)))
+    let fechada = false
+    return {
+      aoSinal(f) {
+        return alca.aoBroadcast((evento, payload, remetente) => {
+          const s = ler(evento, payload)
+          if (s !== null) f(s, remetente)
+        })
+      },
+      aoMudarEstado: alca.aoEstado,
+      // alça fechada → `falhou` sem chamar a rpc, como as outras alças (VER-051, rodada 1, N1; o emissor manda o
+      // `encerrar` antes de fechar)
+      enviar: (s) => (fechada ? Promise.resolve<RespostaDoSinal>('falhou') : enviarSinal(s)),
+      fechar() {
+        fechada = true
+        return alca.fechar()
+      },
+    }
+  }
+
   return {
     estudio(): CanalDoEstudio {
       const alca = criarAlca(abrir('estudio'))
@@ -359,6 +410,16 @@ export function criarFabricaDeCanais(cliente: SupabaseClient, usuarioId: string,
         },
         fechar: alca.fechar,
       }
+    },
+
+    /** Câmera: recebe `pronto`, `resposta` e `encerrar` do `obs_camera` em `video:<seu uid>`; envia oferta e encerrar pela função. */
+    videoDaCamera(): CanalDeVideo<SinalDaCamera, SinalDaObs> {
+      return canalDeVideo<SinalDaCamera, SinalDaObs>(lerSinalDaObs)
+    },
+
+    /** `obs_camera`: recebe `oferta` e `encerrar` da câmera em `video:<seu uid>`; envia pronto, resposta e encerrar pela função. */
+    videoDaObs(): CanalDeVideo<SinalDaObs, SinalDaCamera> {
+      return canalDeVideo<SinalDaObs, SinalDaCamera>(lerSinalDaCamera)
     },
   }
 }
