@@ -219,6 +219,11 @@ describe('falsos do vídeo (E4)', () => {
     expect(await v.aparelho.bateria()).toBeNull()
     v.definirBateria(0.5)
     expect(await v.aparelho.bateria()).toBe(0.5)
+
+    // VER-052: o navegador tem WebRTC por padrão; `config.videoDireto = false` imita um sem `RTCPeerConnection`
+    expect(v.aparelho.videoDireto()).toBe(true)
+    v.config.videoDireto = false
+    expect(v.aparelho.videoDireto()).toBe(false)
   })
 
   test('dispositivo-falso-com-video', () => {

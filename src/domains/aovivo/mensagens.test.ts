@@ -241,6 +241,11 @@ describe('mensagens-validadas', () => {
   describe('presenca-com-video', () => {
     const VIDEO = { estado: 'conectado', telaLigada: 'travada', bateria: 0.8 }
 
+    test('camera com video sem_video_direto (VER-052, rodada 1, I2) → aceita', () => {
+      const video = { estado: 'sem_video_direto', telaLigada: null, bateria: 0.4 }
+      expect(lerPresenca({ tipo: 'camera', dispositivoId: ID, obs: null, video })).toEqual({ tipo: 'camera', dispositivoId: ID, obs: null, video })
+    })
+
     test('camera e obs_camera com video válido → aceitos, com objeto novo; sem video → aceito, como na E3', () => {
       const lida = lerPresenca({ tipo: 'camera', dispositivoId: ID, obs: null, video: VIDEO, presence_ref: 'r' })
       expect(lida).toEqual({ tipo: 'camera', dispositivoId: ID, obs: null, video: VIDEO })

@@ -471,3 +471,57 @@ html.palco { color-scheme: light; }
 }
 .checklist__item--pronto .checklist__sinal { background: var(--cyan-soft); }
 .checklist__item--pendente .checklist__sinal { background: var(--pink-soft); }
+
+/* /camera pareado (E4, PLA-005 D7 e D10): tela preta com um ponto discreto; o celular é a lente, de costas para as
+   apresentadoras. O preto (#000) é exceção declarada, como o fundo transparente do palco: a tela não pode iluminar a sala
+   nem gastar bateria à toa; o texto usa `--texto-na-tela-preta` (cinza baixo, igual nos dois modos, 5,7:1), sem fundo claro. A área de toque cobre a tela inteira, e a
+   coluna por cima dela também recebe o toque e rola quando não cabe (celular deitado com as barras do navegador; VER-052,
+   rodada 2); os botões ficam na coluna, com pelo menos 44 px e sem depender de `hover`. Nada passa de 320 px (frases quebram). */
+.tela-preta { position: fixed; inset: 0; overflow: hidden; color: var(--texto-na-tela-preta); background: #000; }
+.toque-da-camera {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.toque-da-camera:focus-visible { outline-offset: -6px; }
+.camera-no-ar {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
+  gap: 12px;
+  padding: 36px 16px 16px;
+  text-align: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  cursor: pointer;
+}
+.camera-no-ar > * { flex-shrink: 0; max-width: min(100%, 36rem); overflow-wrap: anywhere; }
+/* só a prévia encolhe: com a tela baixa ou deitada, o texto e o botão "Esconder" ficam inteiros na tela (rodada 1, I1) */
+.camera-no-ar > .previa-da-camera { flex: 0 1 auto; min-height: 0; }
+.ponto-da-camera { position: absolute; top: 16px; right: 16px; width: 10px; height: 10px; border-radius: 50%; opacity: 0.6; }
+.ponto-da-camera--cinza { background: var(--gray); }
+.ponto-da-camera--ciano { background: var(--cyan); }
+.ponto-da-camera--rosa { background: var(--pink); }
+.status-da-camera { font-size: 15px; line-height: 1.4; }
+.status-da-camera--instrucoes { display: grid; gap: 6px; text-align: left; }
+.botao-da-camera {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 18px;
+  color: var(--texto-na-tela-preta);
+  font: inherit;
+  font-size: 15px;
+  background: transparent;
+  border: 1px solid var(--texto-na-tela-preta);
+  border-radius: 999px;
+}
+.previa-da-camera { display: block; width: 100%; max-width: 100%; height: auto; max-height: 60vh; object-fit: contain; background: #000; }

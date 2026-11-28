@@ -1,11 +1,12 @@
 import type { Dependencias } from '../dependencias'
-import { CameraPareada, TelaDeDispositivo } from './TelaDeDispositivo'
+import { CameraNoAr } from './CameraNoAr'
+import { TelaDeDispositivo } from './TelaDeDispositivo'
 
-/** `/camera` (celular de gravação): pareamento pelo link ou QR (E3); o vídeo chega na E4. */
+/** `/camera` (celular de gravação): pareamento pelo link ou QR (E3) e, pareado, a tela preta com o vídeo (E4, `CameraNoAr`). */
 export function Camera({ titulo, dependencias }: { titulo: string; dependencias: Dependencias }) {
   return (
     <TelaDeDispositivo tipo="camera" titulo={titulo} dependencias={dependencias}>
-      {(pareado) => <CameraPareada tipo="camera" titulo={titulo} pareado={pareado} />}
+      {(pareado) => <CameraNoAr {...pareado} aoVoltarAVer={dependencias.aoVoltarAVer} />}
     </TelaDeDispositivo>
   )
 }

@@ -186,6 +186,12 @@ describe('situacao-do-video', () => {
     expect(lerSituacaoDoVideo({ estado: 'aguardando_toque', telaLigada: 'sem_trava', bateria: 1 })).not.toBeNull()
   })
 
+  test('sem_video_direto (VER-052, rodada 1, I2): o navegador sem WebRTC tem situação própria', () => {
+    expect(lerSituacaoDoVideo({ estado: 'sem_video_direto', telaLigada: null, bateria: null })).toEqual({ estado: 'sem_video_direto', telaLigada: null, bateria: null })
+    expect(lerSituacaoDoVideo({ estado: 'sem_video_direto ', telaLigada: null, bateria: null })).toBeNull()
+    expect(lerSituacaoDoVideo({ estado: 'SEM_VIDEO_DIRETO', telaLigada: null, bateria: null })).toBeNull()
+  })
+
   test.each<[string, unknown]>([
     ['bateria 1.2', { estado: 'conectado', telaLigada: null, bateria: 1.2 }],
     ['bateria -0.1', { estado: 'conectado', telaLigada: null, bateria: -0.1 }],

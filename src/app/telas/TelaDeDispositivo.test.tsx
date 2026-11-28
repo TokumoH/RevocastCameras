@@ -9,6 +9,7 @@ import { dependenciasDoNavegador } from '../dependencias'
 import type { Dependencias } from '../dependencias'
 import { criarFalsos, criarFalsosDeDispositivo } from '../servicosFalsos'
 import { TEXTO_DO_DISPOSITIVO } from './TelaDeDispositivo'
+import { TEXTO_DA_CAMERA } from './CameraNoAr'
 
 afterEach(() => {
   cleanup()
@@ -57,15 +58,16 @@ describe('rotas de dispositivo: pareamento (D3, D4)', () => {
     expect(ordem.filter((m) => m === 'limparFragmento')).toHaveLength(1)
   })
 
+  // desde a E4 (VER-052), o `/camera` pareado é a tela preta (`CameraNoAr`), com a situação do vídeo na presença
   test.each([
-    ['/camera', 'camera'],
-    ['/obs/camera', 'obs_camera'],
-  ] as const)('pareia-e-mostra (%s)', async (caminho, tipo) => {
+    ['/camera', 'camera', TEXTO_DA_CAMERA.aguardando_toque, { video: { estado: 'aguardando_toque', telaLigada: null, bateria: null } }],
+    ['/obs/camera', 'obs_camera', 'Pareado como Celular de gravação. O vídeo chega na etapa E4.', {}],
+  ] as const)('pareia-e-mostra (%s)', async (caminho, tipo, frase, extra) => {
     const d = criarFalsosDeDispositivo({ pareamento: { resultado: 'pareado', dispositivo: { id: DISPOSITIVO, rotulo: 'Celular de gravação' } } })
     render(<App caminho={caminho} dependencias={montar(d, `#${CODIGO}`)} />)
-    expect(await screen.findByText('Pareado como Celular de gravação. O vídeo chega na etapa E4.')).toBeTruthy()
+    expect(await screen.findByText(frase)).toBeTruthy()
     // presença em `estudio` com o próprio dispositivo, sem OBS
-    await waitFor(() => expect(d.canal.presencas('estudio')).toEqual([{ tipo, dispositivoId: DISPOSITIVO, obs: null }]))
+    await waitFor(() => expect(d.canal.presencas('estudio')).toEqual([{ tipo, dispositivoId: DISPOSITIVO, obs: null, ...extra }]))
     expect(d.canal.abertos()).toEqual(['estudio'])
   })
 
@@ -106,7 +108,7 @@ describe('rotas de dispositivo: pareamento (D3, D4)', () => {
     expect(d.chamadas.parear).toEqual([])
     fireEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
     // refaz a avaliação; o código (só em memória) ainda vale, porque nada o consumiu
-    expect(await screen.findByText('Pareado como Celular de gravação. O vídeo chega na etapa E4.')).toBeTruthy()
+    expect(await screen.findByText(TEXTO_DA_CAMERA.aguardando_toque)).toBeTruthy()
     expect(d.chamadas.parear).toEqual([{ codigo: CODIGO, tipo: 'camera' }])
     expect(d.chamadas.ordem.filter((m) => m === 'limparFragmento')).toHaveLength(1)
   })
@@ -171,7 +173,7 @@ describe('rotas de dispositivo: pareamento (D3, D4)', () => {
   test('revogado-na-hora', async () => {
     const d = criarFalsosDeDispositivo({ pareamento: { resultado: 'pareado', dispositivo: { id: DISPOSITIVO, rotulo: 'Celular de gravação' } } })
     render(<App caminho="/camera" dependencias={montar(d, `#${CODIGO}`)} />)
-    expect(await screen.findByText(/Pareado como Celular de gravação/)).toBeTruthy()
+    expect(await screen.findByText(TEXTO_DA_CAMERA.aguardando_toque)).toBeTruthy()
     await waitFor(() => expect(d.canal.presencas('estudio')).toHaveLength(1))
     const eu = '5a1c9e2b-7d3f-4b6a-8c1d-000000000001' // o usuário do login anônimo do falso
     expect(d.chamadas.sair).toBe(0)
@@ -181,7 +183,7 @@ describe('rotas de dispositivo: pareamento (D3, D4)', () => {
     await act(async () => {
       for (let i = 0; i < 10; i++) await Promise.resolve()
     })
-    expect(screen.getByText(/Pareado como Celular de gravação/)).toBeTruthy()
+    expect(screen.getByText(TEXTO_DA_CAMERA.aguardando_toque)).toBeTruthy()
     expect(d.chamadas.sair).toBe(0)
     expect(d.canal.abertos()).toEqual(['estudio'])
 
@@ -190,7 +192,7 @@ describe('rotas de dispositivo: pareamento (D3, D4)', () => {
     expect(await screen.findByText('Este dispositivo foi revogado. Gere um novo link no painel.')).toBeTruthy()
     expect(d.chamadas.sair).toBe(1)
     expect(d.canal.abertos()).toEqual([])
-    expect(screen.queryByText(/Pareado como/)).toBeNull()
+    expect(screen.queryByText(TEXTO_DA_CAMERA.aguardando_toque)).toBeNull()
   })
 
   test('canal fechado na câmera: com dispositivo reabre, sem dispositivo vira revogado', async () => {
@@ -202,7 +204,7 @@ describe('rotas de dispositivo: pareamento (D3, D4)', () => {
         for (let i = 0; i < 30; i++) await Promise.resolve()
       })
       await esvaziar()
-      expect(screen.getByText(/Pareado como/)).toBeTruthy()
+      expect(screen.getByText(TEXTO_DA_CAMERA.aguardando_toque)).toBeTruthy()
       act(() => d.canal.definirEstado('estudio', 'fechado'))
       await esvaziar()
       expect(d.canal.abertos()).toEqual([])
@@ -254,7 +256,7 @@ describe('rotas de dispositivo: pareamento (D3, D4)', () => {
         <App caminho="/camera" dependencias={montar(d, `#${CODIGO}`)} />
       </StrictMode>,
     )
-    expect(await screen.findByText(/Pareado como Celular de gravação/)).toBeTruthy()
+    expect(await screen.findByText(TEXTO_DA_CAMERA.aguardando_toque)).toBeTruthy()
     expect(d.chamadas.parear).toHaveLength(1)
     expect(d.chamadas.sair).toBe(0)
   })

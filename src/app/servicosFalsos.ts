@@ -701,11 +701,13 @@ export interface ConexaoDeVideoFalsa {
  *   criada; `fluxoDaPrevia` só com a câmera ligada;
  * - **tela:** uma nova a cada `aparelho.tela()` (`tela.criadas`); `tela.proxima` decide o próximo `travar` (`travada` ou
  *   `sem_trava`);
- * - **bateria:** `null` até `definirBateria`.
+ * - **bateria:** `null` até `definirBateria`;
+ * - **WebRTC:** `aparelho.videoDireto()` devolve `config.videoDireto` (padrão `true`; `false` imita o navegador sem
+ *   `RTCPeerConnection`, VER-052).
  * Os avisos são agendados por `queueMicrotask` (fora da chamada, como o `setTimeout` dos adaptadores).
  */
 export function criarVideoFalso() {
-  const config = { conectarSozinha: true, trocaDaFaixa: true }
+  const config = { conectarSozinha: true, trocaDaFaixa: true, videoDireto: true }
   const conexoesCriadas: ConexaoDeVideoFalsa[] = []
   const fluxoRecebido = { fluxo: 'recebido' } as unknown as FluxoDeVideo
   const fluxoDaCamera = { fluxo: 'camera' } as unknown as FluxoDeVideo
@@ -837,7 +839,7 @@ export function criarVideoFalso() {
   }
 
   let bateria: number | null = null
-  const aparelho: AparelhoDoDispositivo = { camera: criarCamera, tela: criarTela, bateria: async () => bateria }
+  const aparelho: AparelhoDoDispositivo = { camera: criarCamera, tela: criarTela, bateria: async () => bateria, videoDireto: () => config.videoDireto }
 
   return {
     conexoes,

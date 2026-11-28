@@ -16,6 +16,7 @@
   --on-accent: #1b1b22; /* texto sobre rosa e ciano; igual nos dois modos */
   --qr-fundo: #ffffff; /* QR de pareamento: escuro sobre claro nos dois modos (os leitores de QR esperam assim) */
   --qr-modulo: #1b1b22;
+  --texto-na-tela-preta: #858589; /* texto do /camera sobre o preto: igual nos dois modos, cinza baixo com 5,7:1 (VER-052) */
 
   --radius: 20px;
   --border: 3px solid var(--ink);

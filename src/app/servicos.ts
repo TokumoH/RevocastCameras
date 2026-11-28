@@ -100,6 +100,11 @@ export interface AparelhoDoDispositivo {
   camera(): CameraDoAparelho
   tela(): ManterTelaLigada
   bateria(): Promise<number | null>
+  /**
+   * O navegador tem `RTCPeerConnection` (VER-052, Riscos do VER-051): sem ele, cada oferta falharia sem contar para
+   * `sem_conexao_direta` e a câmera ficaria em `conectando` para sempre; a tela avisa a causa e não liga a câmera.
+   */
+  videoDireto(): boolean
 }
 
 /**
@@ -154,6 +159,7 @@ const APARELHO_DO_NAVEGADOR: AparelhoDoDispositivo = {
   camera: () => criarCameraDoAparelho(),
   tela: () => criarManterTelaLigada(),
   bateria: () => lerBateria(),
+  videoDireto: () => typeof globalThis.RTCPeerConnection === 'function',
 }
 
 /**

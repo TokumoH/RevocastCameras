@@ -51,7 +51,7 @@ Cada perigo do "Foco da revisão" do PLA-005 que é do domínio tem um lugar e u
 |---|---|
 | [`README.md`](README.md) | Este arquivo |
 | [`sinais.ts`](sinais.ts) | Tópico, evento, sinais e leitores, `conferirSdp`, situação do vídeo e esperas (D2–D4, D6, D13) |
-| [`sinais.test.ts`](sinais.test.ts) | 85 testes (protótipo diferente de `Object.prototype` e instância de classe recusados desde a rodada 1 da revisão): constantes; `topico-do-video`; `conferir-sdp`; `sinais-validados` (`test.each` com os dois leitores); `sinal-do-lado-errado`; `situacao-do-video`; `espera-da-tentativa` |
+| [`sinais.test.ts`](sinais.test.ts) | 86 testes (desde o VER-052, rodada 1, também `sem_video_direto` aceito em `lerSituacaoDoVideo`, com espaço ou maiúsculas recusados) (protótipo diferente de `Object.prototype` e instância de classe recusados desde a rodada 1 da revisão): constantes; `topico-do-video`; `conferir-sdp`; `sinais-validados` (`test.each` com os dois leitores); `sinal-do-lado-errado`; `situacao-do-video`; `espera-da-tentativa` |
 | [`portas.ts`](portas.ts) | `FaixaDeVideo`, `FluxoDeVideo`, `RespostaDoSinal`, `CanalDeVideo`, `FabricaDeCanaisDeVideo`, `EstadoDaConexao`, `ConexaoDeVideo`, `FabricaDeConexoes`, `FalhaDaCamera`, `CameraDoAparelho`, `ManterTelaLigada` |
 | [`agenda.ts`](agenda.ts) | `criarAgenda`: um agendamento por motivo, `depois` (0 ms), `parar` |
 | [`emissor.ts`](emissor.ts) | `DependenciasDoEmissor`, `criarEmissorDeVideo` (`ligarPeloToque`, `definirEpisodio`, `revogarPar`, `voltarAVer`, `parar`) |
@@ -103,6 +103,7 @@ Estados do vídeo (`EstadoDoVideo`), em ordem de precedência no emissor (o rece
 | `sem_conexao_direta` | duas falhas seguidas depois de resposta aceita (ou respondida, no receptor); segue tentando a cada 30 s | câmera, R |
 | `aguardando_par` | `sem_par`, 15 s sem resposta, ou o par encerrou (câmera); nenhuma oferta (receptor) | câmera, R |
 | `conectando` | o resto: oferta montada ou enviada, resposta aceita, queda breve, espera crescente | câmera, R |
+| `sem_video_direto` | o navegador não tem `RTCPeerConnection` (VER-052, rodada 1, I2): **publicada pela rota**, nunca pelo emissor nem pelo receptor; a aba Ao vivo (Tarefa 6) mostra a causa | rota da câmera (a do `obs_camera` pode usar na Tarefa 5) |
 
 Vídeo no receptor (D3, D8): o fluxo do evento `track` fica guardado e só vai à tela (`aoVideo(fluxo)`) com a conexão em `conectado`; ao sair de `conectado` (`caiu`, `conectando`, `falhou`, fechamento) sai `aoVideo(null)`, e o mesmo fluxo volta com o `conectado`.
 
@@ -122,7 +123,7 @@ Para seguir um caso no emissor: `emissor.test.ts`, `emissor-prazo-da-conexao` (r
 
 ## Verificação
 
-- `npx vitest run src/domains/captura`: 3 arquivos, 156 testes desde o VER-051, rodada 1 (`emissor.ts` e `receptor.ts` protegem `conexoes.criar()`; `portas.ts` documenta `criar`, `enviar` com a alça fechada e o `ligar` que para o fluxo atual); 154 testes (139 antes da rodada 1 da revisão, 153 antes da rodada 2; mais 5 de `../arquitetura.test.ts`, que cobre esta pasta sem configuração, inclusive `dominio-sem-navegador`).
+- `npx vitest run src/domains/captura`: 3 arquivos, 157 testes desde o VER-052, rodada 1 (`sem_video_direto` em `EstadoDoVideo`); 156 desde o VER-051, rodada 1 (`emissor.ts` e `receptor.ts` protegem `conexoes.criar()`; `portas.ts` documenta `criar`, `enviar` com a alça fechada e o `ligar` que para o fluxo atual); 154 testes (139 antes da rodada 1 da revisão, 153 antes da rodada 2; mais 5 de `../arquitetura.test.ts`, que cobre esta pasta sem configuração, inclusive `dominio-sem-navegador`).
 - TDD: os testes foram escritos antes do código (o primeiro `npx vitest run src/domains` falhou com os módulos inexistentes, o campo `video` recusado e `./captura/emissor.ts` fora do glob).
 - 52 sabotagens, uma de cada vez, numa cópia do repositório, com o cache do Vitest desligado e `sha256sum` igual antes e depois: as 16 do brief (17 corridas, com a S7 em duas), 22 a mais na primeira versão, 12 da rodada 1 da revisão e 1 da rodada 2 (X4); todas derrubam o teste citado (tabela no [VER-049](../../../docs/verificacoes/2026-11-27-049-e4-dominio-captura.md)).
 - Links relativos, "Onde" e campo "Arquivos" conferidos por `npm run check-docs`. Não há subdiretórios.

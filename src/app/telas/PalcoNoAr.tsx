@@ -592,6 +592,9 @@ export function PalcoNoAr({
       dispositivo,
       servicos,
       presenca: () => ({ tipo: 'obs_palco', dispositivoId: dispositivo.id, obs: atual().situacao() }),
+      // a janela de 10 s da presença (D13 do PLA-005) é da situação do vídeo; o palco já só remarca quando a situação
+      // do OBS muda (`situacaoPublicada`) e segue como na E3, marcando na hora (VER-052)
+      presencaMinimaMs: 0,
       marcarRevogado,
       agendar,
       aoConectar: () => void consultarEpisodio(),

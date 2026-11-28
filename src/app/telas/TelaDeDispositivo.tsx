@@ -105,8 +105,8 @@ export function TelaDeDispositivo({
 }
 
 /**
- * `/camera` e `/obs/camera` pareados (o vídeo chega na E4): o rótulo, a presença em `estudio` e a
- * revogação ao vivo (`acompanharEstudio`).
+ * `/obs/camera` pareado (o vídeo dele chega na Tarefa 5 da E4; o `/camera` usa a `CameraNoAr` desde o VER-052): o
+ * rótulo, a presença em `estudio` e a revogação ao vivo (`acompanharEstudio`).
  */
 export function CameraPareada({ tipo, titulo, pareado }: { tipo: 'camera' | 'obs_camera'; titulo: string; pareado: Pareado }) {
   const { dispositivo, servicos, marcarRevogado } = pareado

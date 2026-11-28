@@ -3,6 +3,7 @@ import { codigoDoFragmento, resolverDispositivo } from '../domains/acesso/dispos
 import type { EstadoDoDispositivo, TipoDeDispositivo } from '../domains/acesso/dispositivos'
 import type { PresencaNoEstudio } from '../domains/aovivo/mensagens'
 import type { CanalDoEstudio, EstadoDoCanal } from '../domains/aovivo/portas'
+import { PRESENCA_MINIMA_MS } from '../domains/captura/sinais'
 import { ErroDeConfiguracao } from '../shared/infra/configuracao'
 import { REABRIR_CANAIS_MS } from './canais'
 import type { Dependencias } from './dependencias'
@@ -105,6 +106,11 @@ export interface OpcoesDoEstudio {
   servicos: ServicosDoDispositivo
   /** Corpo da presença em `estudio` (D14), lido a cada marcação. */
   presenca(): PresencaNoEstudio
+  /**
+   * Janela mínima entre duas marcações pedidas por `atualizarPresenca` (D13 do PLA-005; F1: 5 chamadas de presença por
+   * cliente a cada 30 s). Padrão `PRESENCA_MINIMA_MS` (10 s); `0` marca na hora, sem janela.
+   */
+  presencaMinimaMs?: number
   marcarRevogado(): void
   /** `setTimeout` que devolve o cancelamento. */
   agendar(f: () => void, ms: number): () => void
@@ -120,6 +126,9 @@ export interface OpcoesDoEstudio {
 /**
  * O canal `estudio` de um dispositivo pareado (D5, D14, D15, N3), igual para as três rotas:
  * - marca a presença ao abrir (o adaptador a remarca a cada volta a `conectado`);
+ * - `atualizarPresenca()` (desde a E4, D13 do PLA-005) coalesce: depois de cada marcação abre uma janela de
+ *   `presencaMinimaMs`; o que mudar dentro dela sai **uma vez**, no fim, com o corpo lido na hora; um corpo igual ao último
+ *   marcado nunca é remarcado (fora da janela, a mudança sai na hora e abre outra janela);
  * - `revogacao` do próprio `usuarioId` → fecha os canais, `sair()` e `marcarRevogado()`; de outro
  *   usuário → `aoRevogarOutro`;
  * - canal `fechado` ou `negado` (o mesmo vale para o `:controle` e o `:estado` do palco, por `canalPerdido`) → fecha
@@ -134,8 +143,37 @@ export function acompanharEstudio(o: OpcoesDoEstudio): { atualizarPresenca(): vo
   let canal: CanalDoEstudio | null = null
   let soltar: (() => void)[] = []
   let cancelarEspera: (() => void) | null = null
+  const janelaMs = o.presencaMinimaMs ?? PRESENCA_MINIMA_MS
+  /** O último corpo marcado (JSON), para nunca remarcar o mesmo. */
+  let marcada: string | null = null
+  let cancelarJanela: (() => void) | null = null
+  let presencaPendente = false
+
+  function fecharJanela(): void {
+    cancelarJanela?.()
+    cancelarJanela = null
+    presencaPendente = false
+  }
+
+  /** Marca a presença (`sempre`: canal novo, mesmo com o corpo igual) e abre a janela da D13. */
+  function marcar(c: CanalDoEstudio, sempre: boolean): void {
+    const p = o.presenca()
+    const texto = JSON.stringify(p)
+    if (!sempre && texto === marcada) return
+    marcada = texto
+    void c.marcarPresenca(p).catch(() => {})
+    fecharJanela()
+    if (janelaMs <= 0) return
+    cancelarJanela = o.agendar(() => {
+      cancelarJanela = null
+      if (!presencaPendente || parado || canal === null) return
+      presencaPendente = false
+      marcar(canal, false)
+    }, janelaMs)
+  }
 
   function fecharCanais(): void {
+    fecharJanela()
     for (const s of soltar) s()
     soltar = []
     const c = canal
@@ -170,7 +208,7 @@ export function acompanharEstudio(o: OpcoesDoEstudio): { atualizarPresenca(): vo
         else if (e === 'fechado' || e === 'negado') canalPerdido()
       }),
     ]
-    void c.marcarPresenca(o.presenca()).catch(() => {})
+    marcar(c, true)
   }
 
   function revogar(): void {
@@ -205,7 +243,9 @@ export function acompanharEstudio(o: OpcoesDoEstudio): { atualizarPresenca(): vo
 
   return {
     atualizarPresenca() {
-      if (!parado && canal !== null) void canal.marcarPresenca(o.presenca()).catch(() => {})
+      if (parado || canal === null) return
+      if (cancelarJanela !== null) presencaPendente = true
+      else marcar(canal, false)
     },
     canalPerdido,
     parar() {

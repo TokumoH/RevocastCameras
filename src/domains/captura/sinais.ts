@@ -31,7 +31,11 @@ export const TAMANHO_MAXIMO_DO_SDP = 12_000
 export type SinalDaCamera = { tipo: 'oferta'; sessao: string; sdp: string } | { tipo: 'encerrar'; sessao: string }
 export type SinalDaObs = { tipo: 'pronto'; sessao: string } | { tipo: 'resposta'; sessao: string; sdp: string } | { tipo: 'encerrar'; sessao: string }
 
-/** Situação do vídeo de um lado (D6, D13): o que a tela, o selo e a presença mostram. */
+/**
+ * Situação do vídeo de um lado (D6, D13): o que a tela, o selo e a presença mostram. `sem_video_direto` (VER-052, rodada 1,
+ * I2): o navegador não tem `RTCPeerConnection`; quem a publica é a rota (o emissor e o receptor nunca chegam a ela), para a
+ * aba Ao vivo mostrar a causa em vez de `aguardando_toque`.
+ */
 export type EstadoDoVideo =
   | 'aguardando_toque'
   | 'aguardando_episodio'
@@ -43,6 +47,7 @@ export type EstadoDoVideo =
   | 'sem_camera'
   | 'inseguro'
   | 'sinal_grande'
+  | 'sem_video_direto'
 
 /** O que vai na presença de `camera` e `obs_camera` em `estudio` (D13); nenhum dado de pessoa. */
 export interface SituacaoDoVideo {
@@ -171,6 +176,7 @@ const ESTADOS_DO_VIDEO: readonly EstadoDoVideo[] = Object.freeze([
   'sem_camera',
   'inseguro',
   'sinal_grande',
+  'sem_video_direto',
 ] as const)
 const TELA_LIGADA: readonly string[] = Object.freeze(['travada', 'sem_trava'] as const)
 const CHAVES_DA_SITUACAO = ['estado', 'telaLigada', 'bateria']

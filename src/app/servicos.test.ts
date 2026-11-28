@@ -262,10 +262,16 @@ describe('obterServicosDeDispositivo: vídeo (PLA-005, Tarefa 3)', () => {
     const obs = obterServicosDeDispositivo('obs_camera')
     expect(obterServicosDeDispositivo('camera')).toBe(camera)
     expect(createClient).toHaveBeenCalledTimes(2)
-    expect(Object.keys(camera.aparelho).sort()).toEqual(['bateria', 'camera', 'tela'])
+    expect(Object.keys(camera.aparelho).sort()).toEqual(['bateria', 'camera', 'tela', 'videoDireto'])
     expect(typeof camera.aparelho.camera().ligar).toBe('function')
     expect(typeof camera.aparelho.tela().travar).toBe('function')
     expect(await camera.aparelho.bateria()).toBeNull() // o ambiente de teste não tem getBattery
+    // VER-052 (Riscos do VER-051): sem `RTCPeerConnection` a câmera avisa na tela; lido na hora de cada chamada
+    expect(camera.aparelho.videoDireto()).toBe(false)
+    vi.stubGlobal('RTCPeerConnection', class {})
+    expect(camera.aparelho.videoDireto()).toBe(true)
+    vi.unstubAllGlobals()
+    expect(camera.aparelho.videoDireto()).toBe(false)
     expect(camera.conexoes).not.toBe(obs.conexoes)
     const ID = '5a1c9e2b-7d3f-4b6a-8c1d-2e3f4a5b6c7d'
     expect(typeof camera.canais(ID).videoDaCamera).toBe('function')

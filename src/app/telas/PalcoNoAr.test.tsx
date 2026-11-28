@@ -944,13 +944,13 @@ describe('/obs/palco: revisão final da E3 (VER-046)', () => {
 
 describe('/obs/palco sem piscar (N2)', () => {
   /**
-   * Lê um arquivo do repositório pelo `node:fs` (o Vitest roda na raiz). O projeto não tem `@types/node`,
-   * então o módulo é importado com o tipo mínimo usado; o CSS por `?raw` volta vazio (o Vitest não processa CSS).
+   * Lê um arquivo do repositório pelo `node:fs` (o Vitest roda na raiz). Desde o VER-052 (rodada 2, R2-N3), pelo
+   * auxiliar comum `../lerArquivoDoRepositorio.ts`, que o `CameraNoAr.test.tsx` também usa; importado aqui dentro para
+   * as linhas deste arquivo não mudarem de lugar (registros antigos citam linhas dele).
    */
   async function lerArquivo(caminho: string): Promise<string> {
-    const fs = (await import(/* @vite-ignore */ ['node', 'fs'].join(':'))) as { readFileSync(c: string, codificacao: 'utf8'): string }
-    const { process } = globalThis as unknown as { process: { cwd(): string } }
-    return fs.readFileSync(`${process.cwd()}/${caminho}`, 'utf8')
+    const { lerArquivoDoRepositorio } = await import('../lerArquivoDoRepositorio')
+    return lerArquivoDoRepositorio(caminho)
   }
 
   /** Roda o script clássico do `<head>` num documento novo do jsdom, com `location.pathname` = `caminho`; devolve se é palco (classe e esquema claro, juntos). */
