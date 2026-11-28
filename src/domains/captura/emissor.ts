@@ -50,6 +50,8 @@ interface Sessao {
  * - **Ofertas (D3):** a câmera sempre oferece; uma sessão nova (uuid) por oferta; a primeira resposta da sessão vale;
  *   respostas repetidas, de sessão antiga ou de remetente revogado são descartadas. Oferece sozinha quando o canal
  *   (re)conecta sem sessão pendente e atende um `pronto` só sem sessão pendente e fora de uma espera crescente.
+ *   Exceção (VER-056, I2): um `pronto` de remetente diferente do par aceito prova que o par mudou (só o `obs_camera`
+ *   atual consegue mandá-lo): fecha a sessão com o par antigo e oferece de novo, sujeito às mesmas esperas.
  * - **Esperas (D6):** `caiu` espera 5 s; `falhou`, 15 s sem resposta, resposta aceita sem `conectado` em 20 s, `sem_par`
  *   e `limite` → nova tentativa pela espera crescente (2, 4, 8, 16, 30, 30… s), zerada no `conectado`; duas falhas
  *   seguidas depois de resposta aceita (`falhou` ou prazo da conexão) → `sem_conexao_direta`; `limite` não conta.
@@ -265,7 +267,14 @@ export function criarEmissorDeVideo(d: DependenciasDoEmissor): {
     if (s.tipo === 'resposta') {
       aceitarResposta(s.sessao, s.sdp, remetente)
     } else if (s.tipo === 'pronto') {
-      if (!pendente() && podeOferecer()) pedirOferta()
+      const atual = sessao
+      if (atual !== null && atual.par !== null && atual.par !== remetente) {
+        // VER-056, I2: só o `obs_camera` atual manda `pronto` (o banco escolhe o destino e põe o remetente); outro remetente
+        // prova que o par mudou, mesmo sem o aviso `revogacao`. Fecha com o par antigo e oferece de novo (como `revogarPar`).
+        fecharSessao()
+        pedirOferta()
+        atualizar()
+      } else if (!pendente() && podeOferecer()) pedirOferta()
     } else {
       const atual = sessao
       if (atual === null || atual.id !== s.sessao || (atual.par !== null && atual.par !== remetente)) return

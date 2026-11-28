@@ -395,6 +395,62 @@ describe('emissor-revoga-par', () => {
   })
 })
 
+describe('pronto-de-outro-par-troca-o-par (VER-056, I2)', () => {
+  // Só o `obs_camera` atual consegue mandar `pronto` (o banco escolhe o destinatário e põe o remetente): um `pronto` de
+  // remetente diferente do par aceito prova que o par mudou, mesmo sem o aviso `revogacao` em `estudio`.
+  test('pronto de outro remetente com a conexão conectado → fecha a sessão antiga e oferece de novo uma vez', async () => {
+    const m = montar()
+    await conectado(m)
+    await m.sinal({ tipo: 'pronto', sessao: sessao(200) }, OUTRO)
+    expect(m.ofertas()).toHaveLength(2) // a troca oferece já no primeiro `pronto`, sem esperar outro
+    for (let i = 1; i < 5; i++) await m.sinal({ tipo: 'pronto', sessao: sessao(200 + i) }, OUTRO)
+    expect(m.conexoes.criadas[0].fechada()).toBe(true)
+    expect(m.ofertas()).toHaveLength(2) // os outros 4 `pronto` chegam com a oferta nova pendente: nada
+    expect(m.conexoes.criadas).toHaveLength(2)
+    // a sessão nova aceita a resposta do par novo; o `pronto` dele depois disso não troca nada
+    await responder(m, OUTRO)
+    await emitir(m, 'conectado')
+    expect(m.situacao()).toBe('conectado')
+    await m.sinal({ tipo: 'pronto', sessao: sessao(300) }, OUTRO)
+    expect(m.ofertas()).toHaveLength(2)
+    expect(m.conexoes.criadas[1].fechada()).toBe(false)
+  })
+
+  test('pronto de outro remetente antes da resposta (par ainda nulo) ou durante a espera crescente → nada (D3, D6)', async () => {
+    const m = montar()
+    await noAr(m)
+    await m.sinal({ tipo: 'pronto', sessao: sessao(90) }, OUTRO)
+    expect(m.ofertas()).toHaveLength(1)
+    expect(m.conexoes.criadas[0].fechada()).toBe(false)
+    await emitir(m, 'falhou') // espera crescente de 2 s
+    await m.sinal({ tipo: 'pronto', sessao: sessao(91) }, OUTRO)
+    await m.relogio.avancar(1999)
+    expect(m.ofertas()).toHaveLength(1)
+  })
+
+  test('pronto de outro remetente revogado → ignorado (os sinais dele são descartados)', async () => {
+    const m = montar()
+    await conectado(m)
+    m.revogados.add(OUTRO)
+    await m.sinal({ tipo: 'pronto', sessao: sessao(90) }, OUTRO)
+    expect(m.conexoes.criadas[0].fechada()).toBe(false)
+    expect(m.ofertas()).toHaveLength(1)
+  })
+
+  test('a oferta nova respeita o limite (D6): limite → espera crescente, sem laço de ofertas', async () => {
+    const m = montar()
+    await conectado(m)
+    m.canal.responderCom(() => 'limite')
+    await m.sinal({ tipo: 'pronto', sessao: sessao(90) }, OUTRO)
+    expect(m.ofertas()).toHaveLength(2)
+    for (let i = 0; i < 5; i++) await m.sinal({ tipo: 'pronto', sessao: sessao(91 + i) }, OUTRO)
+    await m.relogio.avancar(1999)
+    expect(m.ofertas()).toHaveLength(2) // dentro da espera de 2 s, os `pronto` não oferecem
+    await m.relogio.avancar(1)
+    expect(m.ofertas()).toHaveLength(3)
+  })
+})
+
 describe('emissor-queda-breve', () => {
   test('caiu e conectado em 4 999 ms → nenhuma oferta nova; caiu por 5 000 ms → oferta nova', async () => {
     const m = montar()

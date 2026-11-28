@@ -12,12 +12,13 @@ import type { CanalDeVideo, RespostaDoSinal } from '../domains/captura/portas'
  * - `canal.enviar` sem canal real → `falhou`, sem chamar nada; `canal.fechar()` desliga e fecha o real.
  * Os ouvintes são chamados como o adaptador os chama (já fora do callback do `realtime-js`); o `fechado` do `desligar` é
  * síncrono, e o emissor já adia o que faz (`agendar` com 0 ms).
+ * Sem consulta de "ligado" (VER-056, N5): nenhuma rota precisava dela; os testes conferem o estado observável (o
+ * `enviar` sem canal real devolve `falhou` sem chamar a função).
  */
 export function criarCanalComutavel<Envia, Recebe>(): {
   canal: CanalDeVideo<Envia, Recebe>
   ligar(real: CanalDeVideo<Envia, Recebe>): void
   desligar(): CanalDeVideo<Envia, Recebe> | null
-  ligado(): boolean
 } {
   const ouvintesDoSinal = new Set<(s: Recebe, remetente: string) => void>()
   const ouvintesDoEstado = new Set<(e: EstadoDoCanal) => void>()
@@ -69,6 +70,5 @@ export function criarCanalComutavel<Envia, Recebe>(): {
       ]
     },
     desligar,
-    ligado: () => real !== null,
   }
 }

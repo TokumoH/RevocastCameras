@@ -46,7 +46,6 @@ describe('criarCanalComutavel (PLA-005, D5)', () => {
     c.canal.aoMudarEstado((e) => estados.push(e))
     expect(await c.canal.enviar('oferta')).toBe('falhou')
     expect(estados).toEqual([])
-    expect(c.ligado()).toBe(false)
     expect(c.desligar()).toBeNull()
   })
 
@@ -98,6 +97,8 @@ describe('criarCanalComutavel (PLA-005, D5)', () => {
     expect(a.ouvintes()).toBe(0)
     await c.canal.fechar()
     expect(b.registro.fechado).toBe(1)
-    expect(c.ligado()).toBe(false)
+    // desligado: o envio volta a `falhou` sem chamar o real (estado observável no lugar da antiga consulta `ligado`)
+    expect(await c.canal.enviar('oferta')).toBe('falhou')
+    expect(b.registro.enviados).toEqual([])
   })
 })

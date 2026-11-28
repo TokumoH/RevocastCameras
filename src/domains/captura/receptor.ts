@@ -46,8 +46,8 @@ interface Sessao {
  *   (a oferta só vem da sessão atual da câmera, D2); repetida, de remetente revogado ou sem episódio → ignorada.
  * - **Vídeo (D3, D8):** o fluxo só vai à tela com a conexão em `conectado`; ao sair de `conectado` (`caiu`, `conectando`,
  *   `falhou`, fechamento), `aoVideo(null)`; ao voltar a `conectado`, o mesmo fluxo de novo.
- * - **Fim:** `encerrar` da sessão atual (do mesmo remetente), `revogarPar` do remetente da oferta, `falhou`, sem episódio
- *   ou `parar` → fecha e limpa o vídeo (`aoVideo(null)`).
+ * - **Fim:** `encerrar` da sessão atual (do mesmo remetente), `revogarPar` do remetente da oferta, `perderPar` (tópico
+ *   negado com episódio, VER-056), `falhou`, sem episódio ou `parar` → fecha e limpa o vídeo (`aoVideo(null)`).
  * - **SDP próprio fora da regra (revisão 3, N13):** nada enviado, `sinal_grande`, sem `pronto` até nova oferta.
  * - **Situação:** duas falhas seguidas depois de responder (`falhou`, ou oferta nova sem a anterior ter conectado, que é o
  *   prazo da conexão vencido do lado da câmera) → `sem_conexao_direta` (o selo do `/obs/camera`, D6).
@@ -55,6 +55,11 @@ interface Sessao {
 export function criarReceptorDeVideo(d: DependenciasDoReceptor): {
   definirEpisodio(ativo: boolean): void
   revogarPar(usuario: string): void
+  /**
+   * O banco negou o tópico de vídeo com episódio ativo (VER-056, I1): o par deixou de valer (a câmera do par foi revogada).
+   * Fecha a sessão na hora, qualquer que seja o remetente, sem `encerrar` (a função recusaria), e limpa o vídeo.
+   */
+  perderPar(): void
   parar(): void
 } {
   const agenda = criarAgenda<Motivo>(d.agendar)
@@ -257,6 +262,13 @@ export function criarReceptorDeVideo(d: DependenciasDoReceptor): {
 
     revogarPar(usuario) {
       if (parado || sessao === null || sessao.remetente !== usuario) return
+      fecharSessao()
+      atualizar()
+      avaliarPronto()
+    },
+
+    perderPar() {
+      if (parado) return
       fecharSessao()
       atualizar()
       avaliarPronto()

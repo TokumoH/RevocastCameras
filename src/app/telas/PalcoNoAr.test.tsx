@@ -751,6 +751,27 @@ describe('/obs/palco: revisão final da E3 (VER-046)', () => {
     expect(m.r.container.textContent).toBe('')
   })
 
+  test('um Starting visto com o palco pareado vale para a tela de revogado: uma guarda por rota (VER-056, N2)', async () => {
+    instalarObs() // o getStatus ainda diz "parado" entre o `Starting` e o `Started`
+    const m = montar()
+    await esperar()
+    act(() => {
+      window.dispatchEvent(new Event('obsStreamingStarting'))
+    })
+    await esperar()
+    act(() => m.d.canal.entregar('estudio', 'revogacao', { usuario: EU, remetente: MEMBRO }))
+    await esperar()
+    expect(m.d.chamadas.sair).toBe(1)
+    expect(m.r.container.textContent).toBe('') // antes, o cartão aparecia até o `Started` (a guarda nova não vira o início)
+    await esperar(1000)
+    expect(m.r.container.textContent).toBe('')
+    act(() => {
+      window.dispatchEvent(new Event('obsStreamingStopped'))
+    })
+    await esperar()
+    expect(screen.getByText(TEXTO_DO_DISPOSITIVO.revogado)).toBeTruthy()
+  })
+
   test('a mensagem de revogado aparece com a saída parada e some no início da saída (I1)', async () => {
     const obs = instalarObs()
     const m = montar()

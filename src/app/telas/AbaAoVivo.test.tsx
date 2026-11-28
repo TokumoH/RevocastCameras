@@ -18,7 +18,10 @@ import type { ServicosDeAoVivo } from '../servicos'
 import { aoVivoVazio, criarCanalFalso, criarFalsos, criarFalsosDePreparacao, preparacaoVazia, usuarioGoogle } from '../servicosFalsos'
 import { REABRIR_CANAIS_MS } from '../canais'
 import { useEstudio } from '../useEstudio'
+import { lerArquivoDoRepositorio } from '../lerArquivoDoRepositorio'
 import { AbaAoVivo, INTERVALO_DA_CONSULTA_MS, TEXTO_DA_ABA_AO_VIVO, TEXTO_DO_CHECKLIST, TEXTO_DO_EPISODIO } from './AbaAoVivo'
+import { TEXTO_DA_CAMERA } from './CameraNoAr'
+import { FRASE_SEM_CONEXAO_DIRETA, TEXTO_SEM_TRAVA } from './textosDoVideo'
 
 /*
  * Aba Ao vivo, parte 1 (PLA-004, Tarefa 8; D3, D5, D11): dispositivos, pareamento com QR e revogação.
@@ -1512,5 +1515,22 @@ describe('aba Ao vivo — vídeo da câmera (E4, Tarefa 6; D13, D2)', () => {
     montar({ dispositivos: [CAMERA_PAREADA, { ...OBS_CAM_PAREADA, usuarioAnonimoId: null, pareadoEm: null }] })
     await esperar()
     expect(within(linhaDe('Câmera do OBS')).queryByRole('button', { name: 'Revogar' })).toBeNull()
+  })
+})
+
+describe('aba Ao vivo — textos do vídeo sem a rota da câmera (VER-056, N4)', () => {
+  test('a aba não importa o módulo do /camera; as frases divididas moram em textosDoVideo.ts, que não importa nada', async () => {
+    const aba = await lerArquivoDoRepositorio('src/app/telas/AbaAoVivo.tsx')
+    const textos = await lerArquivoDoRepositorio('src/app/telas/textosDoVideo.ts')
+    const camera = await lerArquivoDoRepositorio('src/app/telas/CameraNoAr.tsx')
+    expect(aba).not.toMatch(/from '\.\/CameraNoAr'/)
+    expect(aba).toMatch(/from '\.\/textosDoVideo'/)
+    expect(textos).not.toMatch(/^import /m)
+    expect(camera).toMatch(/from '\.\/textosDoVideo'/)
+    // as mesmas frases na tela da câmera e no checklist da aba
+    expect(TEXTO_DO_CHECKLIST.telaSemTrava).toContain(TEXTO_SEM_TRAVA.iphone)
+    expect(TEXTO_DO_CHECKLIST.telaSemTrava).toContain(TEXTO_SEM_TRAVA.android)
+    expect(TEXTO_DA_CAMERA.semTrava).toBe(TEXTO_SEM_TRAVA)
+    expect(TEXTO_DA_CAMERA.sem_conexao_direta).toBe(FRASE_SEM_CONEXAO_DIRETA)
   })
 })

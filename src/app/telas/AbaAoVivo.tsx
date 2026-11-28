@@ -20,7 +20,7 @@ import { avisoDoCanal, PainelDeComandos } from '../../shared/ui/PainelDeComandos
 import type { Dependencias } from '../dependencias'
 import { useAoVivo } from '../useAoVivo'
 import type { AoVivo } from '../useAoVivo'
-import { TEXTO_DA_CAMERA } from './CameraNoAr'
+import { FRASE_SEM_CONEXAO_DIRETA, TEXTO_SEM_TRAVA } from './textosDoVideo'
 
 /** Enquanto um código vale, a lista de dispositivos é consultada de 3 em 3 s para ver o pareamento (D5). */
 export const INTERVALO_DA_CONSULTA_MS = 3000
@@ -162,8 +162,8 @@ export const TEXTO_DO_CHECKLIST = Object.freeze({
   tela: 'Tela do celular ligada',
   telaAusente: 'Tela do celular: a câmera não está conectada',
   telaDesconhecida: 'Tela do celular: situação desconhecida',
-  /** Sem a trava de tela: as instruções do DES-001 §10.4, item 3 (as mesmas do `/camera`, TEXTO_DA_CAMERA.semTrava). */
-  telaSemTrava: `Tela do celular pode apagar. ${TEXTO_DA_CAMERA.semTrava.iphone} ${TEXTO_DA_CAMERA.semTrava.android}`,
+  /** Sem a trava de tela: as instruções do DES-001 §10.4, item 3 (as mesmas do `/camera`, `TEXTO_SEM_TRAVA`, VER-056). */
+  telaSemTrava: `Tela do celular pode apagar. ${TEXTO_SEM_TRAVA.iphone} ${TEXTO_SEM_TRAVA.android}`,
   pronto: 'pronto',
   pendente: 'pendente',
 })
@@ -312,7 +312,7 @@ export function itensDoVideo(vinculo: ObsCameraDaAba, camera: LadoNaPresenca, ob
   const T = TEXTO_DO_CHECKLIST
   const pendente = (texto: string): ItemDoChecklist => ({ texto, situacao: 'pendente' })
   const causa = (lado: LadoDoVideo, estado: EstadoDoVideo): ItemDoChecklist =>
-    pendente(estado === 'sem_conexao_direta' ? T.videoPendente(TEXTO_DA_CAMERA.sem_conexao_direta) : T.videoPendente(fraseDoVideo(lado, estado)))
+    pendente(estado === 'sem_conexao_direta' ? T.videoPendente(FRASE_SEM_CONEXAO_DIRETA) : T.videoPendente(fraseDoVideo(lado, estado)))
   const video = ((): ItemDoChecklist => {
     if (vinculo.tipo === 'sem_camera') return pendente(T.videoSemCamera)
     if (vinculo.tipo === 'outra_camera') return pendente(TEXTO_DA_ABA_AO_VIVO.outraCamera)

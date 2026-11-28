@@ -4,13 +4,13 @@ import { Revogados } from '../../domains/aovivo/mensagens'
 import type { CanalDeVideo, FluxoDeVideo } from '../../domains/captura/portas'
 import { criarReceptorDeVideo } from '../../domains/captura/receptor'
 import type { EstadoDoVideo, SinalDaCamera, SinalDaObs, SituacaoDoVideo } from '../../domains/captura/sinais'
-import type { ObsNoNavegador } from '../../domains/obs/portas'
-import { SELO_VISIVEL_MS, SITUACAO_A_CADA_MS, criarGuardaDaSaida } from '../../domains/obs/saida'
+import { SELO_VISIVEL_MS } from '../../domains/obs/saida'
 import { criarCanalComutavel } from '../canalDeVideoComutavel'
-import { REABRIR_CANAIS_MS } from '../canais'
+import { REABRIR_CANAIS_MS, esperaDaReabertura } from '../canais'
 import type { ServicosDoDispositivo } from '../servicos'
 import { acompanharEstudio } from '../useDispositivo'
 import type { DispositivoPareado } from '../useDispositivo'
+import type { GuardaDaRota } from './TelaDeDispositivo'
 
 /** As situações que o `/obs/camera` pode ter: as do receptor e a da Fonte sem WebRTC (publicada pela rota, VER-052). */
 type EstadoDaObsCamera = 'aguardando_episodio' | 'aguardando_par' | 'conectando' | 'conectado' | 'sem_conexao_direta' | 'sinal_grande' | 'sem_video_direto'
@@ -61,12 +61,19 @@ function VideoRecebido({ fluxo }: { fluxo: FluxoDeVideo }) {
  * - **Só o vídeo (D8):** um `<video autoplay muted playsinline>` em tela cheia **só** enquanto a conexão está em
  *   `conectado`; sem vídeo, nada (a Fonte fica transparente), em qualquer situação. Nenhuma frase fica na tela.
  * - **Selo (D8):** a tecla `s` mostra, por `SELO_VISIVEL_MS` (5 s), o rótulo e a situação ("Câmera do OBS · aguardando a
- *   câmera"...), só com a saída parada e o status conhecido, pela mesma guarda do palco (`criarGuardaDaSaida`); qualquer
- *   evento de saída fecha na hora, e a releitura a cada `SITUACAO_A_CADA_MS` fecha se um evento faltar.
+ *   câmera"...), só com a saída parada e o status conhecido, pela guarda da rota (`GuardaDaRota`, a mesma da
+ *   `SoComSaidaParada` desde o VER-056, N2; a regra de `criarGuardaDaSaida`, a do palco); qualquer evento de saída fecha na
+ *   hora, e a releitura a cada `SITUACAO_A_CADA_MS` (contada pela guarda) fecha se um evento faltar.
  * - **Episódio (D5):** `episodioAtivo()` ao conectar o `estudio` e no `episodio_ativo_mudou`; com episódio, abre o tópico
  *   da própria sessão (`video:<uid>`, `videoDaObs()`) por baixo do receptor (`criarCanalComutavel`); sem episódio, o
- *   receptor fecha e limpa o vídeo, e o canal fecha. Um `fechado`/`negado` do canal de vídeo consulta de novo: sem
- *   episódio, fica fechado; com episódio, é o `canalPerdido` do `estudio`.
+ *   receptor fecha e limpa o vídeo, e o canal fecha. Um `fechado` do canal de vídeo consulta de novo: sem episódio, fica
+ *   fechado; com episódio, é o `canalPerdido` do `estudio`.
+ * - **Vídeo negado (VER-056, I1):** um `negado` do canal de vídeo é o banco dizendo que o par deixou de valer (a câmera do
+ *   par revogada; o próprio `obs_camera` revogado cai também pelo `estudio`): o receptor fecha a sessão **na hora**
+ *   (`perderPar`, vídeo fora da Fonte) e o canal fecha. Sem episódio, fica fechado; com episódio, o `estudio` não é
+ *   fechado nem o dispositivo reavaliado por isso: o tópico reabre pela espera crescente (`esperaDaReabertura`: 5, 10,
+ *   20, 40, 60 s), ou na hora num `dispositivo_mudou`, `episodio_ativo_mudou` ou `revogacao` de outro (o repareamento);
+ *   a contagem zera quando o vídeo volta (`conectado`) ou o episódio acaba.
  * - **Presença (D13):** `video` com a situação, coalescida pelo `acompanharEstudio` (no máximo a cada 10 s).
  * - **Revogação:** a própria → para tudo antes da tela de revogado (que só aparece com a saída parada); a do par (a
  *   câmera) → o receptor fecha a conexão com ela, e os sinais dela são descartados por 15 min (`Revogados`).
@@ -75,13 +82,14 @@ function VideoRecebido({ fluxo }: { fluxo: FluxoDeVideo }) {
 export function ObsCameraNoAr({
   dispositivo,
   servicos,
-  obs,
   marcarRevogado,
+  guarda,
 }: {
   dispositivo: DispositivoPareado
   servicos: ServicosDoDispositivo
-  obs: ObsNoNavegador
   marcarRevogado(): void
+  /** A guarda da saída da rota, a mesma da `SoComSaidaParada` (VER-056, N2): os eventos de saída e as releituras vêm dela. */
+  guarda: GuardaDaRota
 }): ReactNode {
   const [vista, setVista] = useState<Vista>({ estado: 'aguardando_episodio', fluxo: null, selo: false })
 
@@ -109,6 +117,10 @@ export function ObsCameraNoAr({
     let estudio: ReturnType<typeof acompanharEstudio> | null = null
     /** O `estudio` conectou e não caiu desde então: o canal de vídeo só abre com ele (a reabertura consulta de novo). */
     let estudioAberto = false
+    /** Negações seguidas do tópico de vídeo com episódio (a espera da reabertura cresce com elas; VER-056, I1). */
+    let negacoes = 0
+    /** O tópico foi negado com episódio e espera a reabertura (um evento reabre na hora). */
+    let videoNegado = false
 
     setVista({ estado: situacao.estado, fluxo: null, selo: false })
 
@@ -127,6 +139,7 @@ export function ObsCameraNoAr({
       agendar,
       aoMudarSituacao: (e) => {
         if (!videoDireto) return // o receptor nunca recebe oferta sem WebRTC; a causa fica na situação
+        if (e === 'conectado') negacoes = 0 // o par valeu: a próxima negação recomeça a espera de 5 s
         situacao.estado = e
         publicar()
       },
@@ -148,7 +161,12 @@ export function ObsCameraNoAr({
       comutavel.ligar(c)
       soltarVideo = c.aoMudarEstado((e) => {
         if (!vivo || videoAberto !== c) return
-        if (e === 'fechado' || e === 'negado') void consultarEpisodio(true)
+        if (e === 'negado') {
+          // o par deixou de valer: o vídeo sai da Fonte antes de qualquer consulta (VER-056, I1)
+          receptor.perderPar()
+          fecharVideo()
+          void consultarEpisodio('negado')
+        } else if (e === 'fechado') void consultarEpisodio('fechado')
       })
     }
 
@@ -163,11 +181,15 @@ export function ObsCameraNoAr({
         .catch(() => {})
     }
 
-    /** `perdido`: o canal de vídeo caiu (`fechado`/`negado`); com episódio, é perda de canal como a do `estudio`. */
-    async function consultarEpisodio(perdido = false): Promise<void> {
+    /**
+     * `perdido`: o canal de vídeo caiu. `fechado` com episódio é perda de canal como a do `estudio`; `negado` com episódio
+     * espera a reabertura crescente, sem tocar no `estudio` (VER-056, I1).
+     */
+    async function consultarEpisodio(perdido: 'fechado' | 'negado' | null = null): Promise<void> {
       const minha = ++consulta
       cancelarNovaConsulta?.()
       cancelarNovaConsulta = null
+      if (perdido === null) videoNegado = false
       let ep: { id: string } | null
       try {
         ep = await servicos.palco.episodioAtivo()
@@ -179,9 +201,17 @@ export function ObsCameraNoAr({
       if (ep === null) {
         receptor.definirEpisodio(false) // fecha a conexão e limpa o vídeo
         fecharVideo()
+        negacoes = 0
+        videoNegado = false
         return
       }
-      if (perdido) {
+      if (perdido === 'negado') {
+        videoNegado = true
+        cancelarNovaConsulta = agendar(() => void consultarEpisodio(), esperaDaReabertura(negacoes))
+        negacoes += 1
+        return
+      }
+      if (perdido === 'fechado') {
         fecharVideo()
         estudio?.canalPerdido()
         return
@@ -194,7 +224,6 @@ export function ObsCameraNoAr({
 
     // --- selo (D8): tecla `s`, 5 s, só com a saída parada e o status conhecido ---
     let geracaoDaSaida = 0
-    const guarda = criarGuardaDaSaida(obs)
     let cancelarSelo: (() => void) | null = null
     let seloAberto = false
 
@@ -259,9 +288,13 @@ export function ObsCameraNoAr({
         void consultarEpisodio()
       },
       aoEpisodioMudar: () => void consultarEpisodio(),
+      aoDispositivoMudar: () => {
+        if (videoNegado) void consultarEpisodio() // a câmera pode ter sido pareada de novo: reabre já
+      },
       aoRevogarOutro: (usuario) => {
         revogados.revogar(usuario)
         receptor.revogarPar(usuario)
+        if (videoNegado) void consultarEpisodio() // o repareamento avisa a sessão antiga da câmera: reabre já
       },
       aoFecharCanais: () => {
         estudioAberto = false
@@ -272,16 +305,13 @@ export function ObsCameraNoAr({
       },
     })
 
-    const soltarSaida = obs.aoMudarSaida((tipo, saida) => {
-      guarda.evento(tipo, saida)
+    const soltarSaida = guarda.aoMudarSaida(() => {
       geracaoDaSaida++
       fecharSelo()
     })
-    const releitura = setInterval(() => {
-      if (!vivo) return
-      guarda.contarReleitura()
-      void conferirSaidaComSelo()
-    }, SITUACAO_A_CADA_MS)
+    const soltarReleitura = guarda.aoReler(() => {
+      if (vivo) void conferirSaidaComSelo() // depois de a guarda contar a releitura
+    })
     window.addEventListener('keydown', aoTeclar)
 
     return () => {
@@ -289,10 +319,10 @@ export function ObsCameraNoAr({
       vivo = false
       window.removeEventListener('keydown', aoTeclar)
       soltarSaida()
-      clearInterval(releitura)
+      soltarReleitura()
       for (const c of [...cancelamentos]) c()
     }
-  }, [dispositivo, servicos, obs, marcarRevogado])
+  }, [dispositivo, servicos, marcarRevogado, guarda])
 
   return (
     <div className="obs-camera-no-ar">

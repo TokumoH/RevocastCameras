@@ -117,6 +117,8 @@ export interface OpcoesDoEstudio {
   /** O canal `estudio` chegou a `conectado` (a primeira vez e a cada volta). */
   aoConectar?(): void
   aoEpisodioMudar?(): void
+  /** `dispositivo_mudou` em `estudio` (a aba revogou ou trocou um dispositivo; o `/obs/camera` reabre o vídeo negado, VER-056). */
+  aoDispositivoMudar?(): void
   /** `revogacao` de outro usuário (o palco descarta o remetente por 15 min, D5). */
   aoRevogarOutro?(usuario: string): void
   /** Os canais caíram, o dispositivo foi revogado ou a rota saiu: o palco fecha o `:controle` e o `:estado` e para. */
@@ -130,7 +132,7 @@ export interface OpcoesDoEstudio {
  *   `presencaMinimaMs`; o que mudar dentro dela sai **uma vez**, no fim, com o corpo lido na hora; um corpo igual ao último
  *   marcado nunca é remarcado (fora da janela, a mudança sai na hora e abre outra janela);
  * - `revogacao` do próprio `usuarioId` → fecha os canais, `sair()` e `marcarRevogado()`; de outro
- *   usuário → `aoRevogarOutro`;
+ *   usuário → `aoRevogarOutro`; `episodio_ativo_mudou` → `aoEpisodioMudar`; `dispositivo_mudou` → `aoDispositivoMudar`;
  * - canal `fechado` ou `negado` (o mesmo vale para o `:controle` e o `:estado` do palco, por `canalPerdido`) → fecha
  *   os canais e refaz `resolverDispositivo` sem código: sem dispositivo → tela de revogado (o `sair()`
  *   já foi feito pela avaliação, se havia sessão); com dispositivo → reabre em 5 s; `falha` (rede) →
@@ -201,6 +203,7 @@ export function acompanharEstudio(o: OpcoesDoEstudio): { atualizarPresenca(): vo
           if (m.usuario === o.dispositivo.usuarioId) revogar()
           else o.aoRevogarOutro?.(m.usuario)
         } else if (m.evento === 'episodio_ativo_mudou') o.aoEpisodioMudar?.()
+        else if (m.evento === 'dispositivo_mudou') o.aoDispositivoMudar?.()
       }),
       c.aoMudarEstado((e: EstadoDoCanal) => {
         if (parado || canal !== c) return

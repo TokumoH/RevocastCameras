@@ -9,13 +9,13 @@ import type { CanalDoControle, CanalDoEstado, CanalDoEstudio, EstadoDoCanal, Fab
 import { ErroDePreparacao } from '../domains/preparacao/portas'
 import type { ServicosDePreparacao } from '../domains/preparacao/portas'
 import type { Dependencias } from './dependencias'
-import { REABRIR_CANAIS_MS } from './canais'
+import { ESPERA_MAXIMA_DA_REABERTURA_MS, esperaDaReabertura } from './canais'
 import { useCanalReaberto, useEstudio, useUmaReavaliacaoPorPerda } from './useEstudio'
 
 /** Numa sequência de leituras negadas (ou com sessão vencida) seguidas, no máximo 3 `reavaliar()`; depois só a frase de falha e as novas tentativas. */
 export const REAVALIACOES_DA_LEITURA = 3
 /** A nova consulta depois de uma falha espera 5 s, 10 s, 20 s… até este teto (1 min). */
-export const ESPERA_MAXIMA_DA_CONSULTA_MS = 60_000
+export const ESPERA_MAXIMA_DA_CONSULTA_MS = ESPERA_MAXIMA_DA_REABERTURA_MS
 
 /** Quantos pedidos desta tela ficam lembrados para dizer o alvo do "Último" ("🎵 aplauso ✓"). */
 const PEDIDOS_LEMBRADOS = 50
@@ -182,7 +182,7 @@ export function useAoVivo(d: {
         reavaliar.current()
       }
       setCarga((c) => ({ ...c, carregado: true, falhou: true }))
-      const espera = Math.min(REABRIR_CANAIS_MS * 2 ** falhasSeguidas.current, ESPERA_MAXIMA_DA_CONSULTA_MS)
+      const espera = esperaDaReabertura(falhasSeguidas.current)
       falhasSeguidas.current += 1
       novaTentativa.current = setTimeout(() => {
         novaTentativa.current = null

@@ -372,6 +372,27 @@ describe('/obs/camera: só o vídeo na Fonte do OBS (PLA-005, D5, D8, D10)', () 
     expect(screen.getByText(TEXTO_DO_DISPOSITIVO.sem_link)).toBeTruthy()
   })
 
+  test('telas-de-erro-so-com-saida-parada: um Starting visto com a rota pareada vale para a tela de revogado (VER-056, N2)', async () => {
+    instalarObs() // o getStatus ainda diz "parado" entre o `Starting` e o `Started`
+    const m = montar()
+    await conectar(m)
+    act(() => {
+      window.dispatchEvent(new Event('obsStreamingStarting'))
+    })
+    await esperar()
+    avisarEstudio(m, 'revogacao', { usuario: EU })
+    await esperar()
+    expect(m.d.chamadas.sair).toBe(1)
+    expect(m.r.container.textContent).toBe('') // antes, o cartão aparecia até o `Started` (a guarda nova não vira o início)
+    await esperar(1000)
+    expect(m.r.container.textContent).toBe('')
+    act(() => {
+      window.dispatchEvent(new Event('obsStreamingStopped'))
+    })
+    await esperar()
+    expect(screen.getByText(TEXTO_DO_DISPOSITIVO.revogado)).toBeTruthy()
+  })
+
   test('revogacao-da-camera-corta-o-video', async () => {
     instalarObs()
     const m = montar()
@@ -456,6 +477,100 @@ describe('/obs/camera: só o vídeo na Fonte do OBS (PLA-005, D5, D8, D10)', () 
     expect(m.d.canal.abertos()).toEqual(['estudio'])
   })
 
+  // VER-056, I1: a câmera do par revogada (o banco nega `video:<uid>` com episódio ativo e o `obs_camera` válido)
+  const avaliacoes = (m: Montado) => m.d.chamadas.ordem.filter((x) => x === 'dispositivoAtual').length
+  const criados = (m: Montado, topico: string) => m.d.canal.realtime.criados.filter((c) => c.topico === topico).length
+
+  test('video-negado-com-episodio (sonda I1): em 6 ciclos de 5 s, sem reavaliação, sem reabrir o estudio, sem laço de presença; o vídeo sai da Fonte', async () => {
+    instalarObs()
+    const m = montar()
+    await conectar(m)
+    expect(m.video()).not.toBeNull()
+    const antes = { avaliacoes: avaliacoes(m), presencas: m.d.canal.presencas('estudio').length }
+    for (let i = 0; i < 6; i++) {
+      if (m.d.canal.abertos().includes(VIDEO)) act(() => m.d.canal.definirEstado(VIDEO, 'negado'))
+      await esperar(5_000)
+    }
+    expect(m.video()).toBeNull()
+    expect(m.d.video.conexoesCriadas[0].fechada()).toBe(true)
+    expect(avaliacoes(m)).toBe(antes.avaliacoes)
+    expect(criados(m, 'estudio')).toBe(1)
+    expect(m.d.canal.abertos()).toContain('estudio')
+    // presença: só a mudança para `aguardando_par` (a janela de 10 s da D13 continua valendo)
+    expect(m.d.canal.presencas('estudio').length - antes.presencas).toBeLessThanOrEqual(1)
+    // o tópico de vídeo reabre pela espera crescente (5 s, 10 s, 20 s…), não a cada 5 s: em ~30 s, a abertura do começo e
+    // as reaberturas de 5 s e de 15 s (antes da correção, 7)
+    expect(criados(m, VIDEO)).toBe(3)
+    await esperar(PRESENCA_MINIMA_MS)
+    expect(m.estadoNaPresenca()).toBe('aguardando_par')
+    expect(m.r.container.textContent).toBe('')
+  })
+
+  test('video-negado-com-episodio: reabre por 5, 10, 20, 40, 60, 60 s; um dispositivo_mudou reabre na hora; com o par de novo, o vídeo volta', async () => {
+    const m = montar()
+    await conectar(m)
+    const antes = avaliacoes(m)
+    let abertos = criados(m, VIDEO)
+    for (const ms of [5_000, 10_000, 20_000, 40_000, 60_000, 60_000]) {
+      act(() => m.d.canal.definirEstado(VIDEO, 'negado'))
+      await esperar()
+      expect(m.d.canal.abertos()).toEqual(['estudio'])
+      await esperar(ms - 200)
+      expect(criados(m, VIDEO), `antes de ${ms} ms`).toBe(abertos)
+      await esperar(400)
+      expect(criados(m, VIDEO), `em ${ms} ms`).toBe(abertos + 1)
+      abertos += 1
+    }
+    expect(avaliacoes(m)).toBe(antes)
+    // negado de novo, e a câmera pareada de novo: o aviso da aba reabre na hora, sem esperar os 60 s
+    act(() => m.d.canal.definirEstado(VIDEO, 'negado'))
+    await esperar()
+    avisarEstudio(m, 'dispositivo_mudou', { dispositivoId: DISPOSITIVO })
+    await esperar()
+    expect(criados(m, VIDEO)).toBe(abertos + 1)
+    expect(m.d.canal.abertos()).toEqual(['estudio', VIDEO])
+    // o tópico autorizado: o `pronto` sai, a câmera nova oferece, e o vídeo volta à Fonte
+    expect(m.tipos().at(-1)).toBe('pronto')
+    oferecer(m, novaSessao(), 'c0000000-0000-4000-8000-0000000000c2')
+    await esperar()
+    expect(m.video()).not.toBeNull()
+    expect(avaliacoes(m)).toBe(antes)
+  })
+
+  test('video-negado-com-episodio: a espera recomeça de 5 s depois de o vídeo voltar; revogacao de outro também reabre na hora', async () => {
+    const m = montar()
+    await conectar(m)
+    for (let i = 0; i < 3; i++) {
+      act(() => m.d.canal.definirEstado(VIDEO, 'negado'))
+      await esperar(5_000 * 2 ** i + 200)
+    }
+    // o vídeo volta (a câmera oferece no tópico reaberto): a contagem zera
+    oferecer(m)
+    await esperar()
+    expect(m.video()).not.toBeNull()
+    const abertos = criados(m, VIDEO)
+    act(() => m.d.canal.definirEstado(VIDEO, 'negado'))
+    await esperar(5_200)
+    expect(criados(m, VIDEO)).toBe(abertos + 1)
+    // negado, e a aba avisa a revogação da sessão antiga da câmera (repareamento): reabre na hora
+    act(() => m.d.canal.definirEstado(VIDEO, 'negado'))
+    await esperar()
+    avisarEstudio(m, 'revogacao', { usuario: CAMERA })
+    await esperar()
+    expect(criados(m, VIDEO)).toBe(abertos + 2)
+  })
+
+  test('video fechado (não negado) com episódio continua sendo perda do estudio (reavalia e reabre em 5 s)', async () => {
+    const m = montar()
+    await conectar(m)
+    const antes = avaliacoes(m)
+    act(() => m.d.canal.definirEstado(VIDEO, 'fechado'))
+    await esperar()
+    expect(avaliacoes(m)).toBe(antes + 1)
+    await esperar(5_000)
+    expect(m.d.canal.abertos()).toEqual(['estudio', VIDEO])
+  })
+
   test('presenca-obs-camera', async () => {
     const m = montar()
     await esperar()
@@ -498,7 +613,7 @@ describe('/obs/camera: só o vídeo na Fonte do OBS (PLA-005, D5, D8, D10)', () 
     const vigiados = new Set<string>(['keydown', ...EVENTOS_DE_SAIDA])
     const pares = (c: unknown[][]) => c.filter(([tipo]) => vigiados.has(String(tipo))).map(([tipo, f]) => [tipo, f])
     const postos = pares(adicionados.mock.calls)
-    // a tecla é da `ObsCameraNoAr`; os de saída, dela e da `SoComSaidaParada` de antes do pareamento (11 cada)
+    // a tecla é da `ObsCameraNoAr`; os de saída, desde o VER-056 (N2), só da guarda da rota (`useGuardaDaRota`, 11)
     expect(postos.filter(([tipo]) => tipo === 'keydown')).toHaveLength(1)
     expect(postos.filter(([tipo]) => tipo !== 'keydown').length).toBeGreaterThanOrEqual(EVENTOS_DE_SAIDA.length)
     const tirados = pares(removidos.mock.calls)

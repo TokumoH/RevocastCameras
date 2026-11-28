@@ -114,34 +114,84 @@ export function TelaDeDispositivo({
  * o status desconhecido, a Fonte fica vazia (transparente). Um evento de início do obs-browser esconde na hora, já no
  * `Starting`, e a tela só volta pela guarda (`criarGuardaDaSaida`: o `*Stopped` da saída ou duas releituras periódicas
  * com a saída parada); a conferência é refeita a cada `SITUACAO_A_CADA_MS` (se um evento faltar). Movida do
- * `PalcoNoAr.tsx` no VER-053, sem mudar uma regra: a casca não depende da tela do palco.
+ * `PalcoNoAr.tsx` no VER-053, sem mudar uma regra: a casca não depende da tela do palco. Desde o VER-056 (N2), a guarda é
+ * a da rota (`GuardaDaRota`), a mesma da tela pareada: os eventos e as releituras vêm dela.
  */
-export function SoComSaidaParada({ obs, children }: { obs: ObsNoNavegador; children: ReactNode }): ReactNode {
+export function SoComSaidaParada({ obs, guarda, children }: { obs: ObsNoNavegador; guarda: GuardaDaRota; children: ReactNode }): ReactNode {
   const [livre, setLivre] = useState(false)
   useEffect(() => {
     let vivo = true
     let geracao = 0
-    const guarda = criarGuardaDaSaida(obs)
     async function conferir(): Promise<void> {
       const minha = ++geracao
       const ok = !obs.disponivel() || (await guarda.livre())
       if (vivo && minha === geracao) setLivre(ok)
     }
     void conferir()
-    const soltar = obs.aoMudarSaida((tipo, saida) => {
-      guarda.evento(tipo, saida)
+    const soltarSaida = guarda.aoMudarSaida((tipo) => {
       if (tipo === 'inicio') setLivre(false)
       void conferir()
     })
-    const t = setInterval(() => {
-      guarda.contarReleitura()
-      void conferir()
-    }, SITUACAO_A_CADA_MS)
+    const soltarReleitura = guarda.aoReler(() => void conferir())
     return () => {
       vivo = false
-      soltar()
-      clearInterval(t)
+      soltarSaida()
+      soltarReleitura()
     }
-  }, [obs])
+  }, [obs, guarda])
   return livre ? children : null
+}
+
+/** A guarda da saída de uma rota da Fonte do OBS, dividida pela casca e pela tela pareada (VER-056, N2). */
+export interface GuardaDaRota {
+  /** A regra de `criarGuardaDaSaida` (saída parada e status conhecido; recusa depois de um início sem o fim). */
+  livre(): Promise<boolean>
+  /** Avisado de cada evento de saída do obs-browser, **depois** de a guarda registrá-lo. */
+  aoMudarSaida(f: (tipo: 'inicio' | 'fim', saida: string) => void): () => void
+  /** Avisado a cada releitura periódica (`SITUACAO_A_CADA_MS`), **depois** de a guarda contá-la. */
+  aoReler(f: () => void): () => void
+}
+
+/**
+ * Uma guarda por rota (VER-056, N2): criada uma vez no `ObsPalco`/`ObsCamera` (como a porta `obs`) e passada à
+ * `SoComSaidaParada` e à tela pareada. Só ela ouve os eventos de saída e conta as releituras, então o início visto com a
+ * rota pareada vale também para a tela de erro que aparece depois (a revogação entre o `*Starting` e o `*Started` não
+ * mostra mais o cartão por cerca de 1 s). `ligar()` põe os ouvintes e o relógio e devolve o desligamento (o efeito da rota).
+ */
+export function criarGuardaDaRota(obs: ObsNoNavegador): GuardaDaRota & { ligar(): () => void } {
+  const guarda = criarGuardaDaSaida(obs)
+  const saidas = new Set<(tipo: 'inicio' | 'fim', saida: string) => void>()
+  const releituras = new Set<() => void>()
+  function ouvir<F>(lista: Set<F>, f: F): () => void {
+    lista.add(f)
+    return () => {
+      lista.delete(f)
+    }
+  }
+  return {
+    livre: () => guarda.livre(),
+    aoMudarSaida: (f) => ouvir(saidas, f),
+    aoReler: (f) => ouvir(releituras, f),
+    ligar() {
+      const soltar = obs.aoMudarSaida((tipo, saida) => {
+        guarda.evento(tipo, saida)
+        for (const f of [...saidas]) f(tipo, saida)
+      })
+      const t = setInterval(() => {
+        guarda.contarReleitura()
+        for (const f of [...releituras]) f()
+      }, SITUACAO_A_CADA_MS)
+      return () => {
+        soltar()
+        clearInterval(t)
+      }
+    },
+  }
+}
+
+/** A guarda da rota (`criarGuardaDaRota`), uma por montagem da rota, ligada enquanto ela estiver montada. */
+export function useGuardaDaRota(obs: ObsNoNavegador): GuardaDaRota {
+  const [guarda] = useState(() => criarGuardaDaRota(obs))
+  useEffect(() => guarda.ligar(), [guarda])
+  return guarda
 }

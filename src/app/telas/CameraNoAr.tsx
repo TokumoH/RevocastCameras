@@ -10,6 +10,7 @@ import type { Dependencias } from '../dependencias'
 import type { ServicosDoDispositivo } from '../servicos'
 import { acompanharEstudio } from '../useDispositivo'
 import type { DispositivoPareado } from '../useDispositivo'
+import { FRASE_SEM_CONEXAO_DIRETA, TEXTO_SEM_TRAVA } from './textosDoVideo'
 
 /** Depois de um toque, o status (situação, tela ligada, bateria) fica na tela por 3 s (D7, DES-001 §9). */
 export const STATUS_VISIVEL_MS = 3000
@@ -18,7 +19,8 @@ export const PREVIA_MS = 15_000
 
 /**
  * Frases fixas do `/camera` (D6, D7; DES-001 §10.4, item 3). Nenhuma vem do navegador, do servidor ou do WebRTC, e nenhuma
- * leva dado recebido; a bateria é o único número, lido do aparelho.
+ * leva dado recebido; a bateria é o único número, lido do aparelho. As duas que a aba Ao vivo também mostra (sem conexão
+ * direta e sem a trava de tela) moram em `textosDoVideo.ts` desde o VER-056 (N4): a aba não importa mais esta rota.
  */
 export const TEXTO_DA_CAMERA = Object.freeze({
   aguardando_toque: 'Toque para ligar a câmera.',
@@ -26,19 +28,14 @@ export const TEXTO_DA_CAMERA = Object.freeze({
   aguardando_par: 'Procurando o computador do OBS…',
   conectando: 'Conectando ao OBS…',
   conectado: 'Vídeo chegando ao OBS.',
-  sem_conexao_direta:
-    'Sem conexão direta com o computador. Ponha o celular e o computador na mesma rede Wi-Fi (sem isolamento de clientes) ou use o roteador ou o hotspot do computador.',
+  sem_conexao_direta: FRASE_SEM_CONEXAO_DIRETA,
   sem_permissao: 'Permita o uso da câmera para este site e toque de novo.',
   sem_camera: 'Nenhuma câmera traseira encontrada neste aparelho.',
   inseguro: 'A câmera só funciona pelo endereço https do app.',
   sinal_grande: 'O vídeo deste aparelho gera um sinal grande demais para o canal. Anote o modelo do aparelho e o navegador.',
   /** Navegador sem `RTCPeerConnection` (VER-052; Riscos do VER-051; rodada 1, I2): a câmera não liga; a rota publica a situação. */
   sem_video_direto: 'Este navegador não faz vídeo direto (WebRTC). Abra o link num navegador atualizado.',
-  semTrava: Object.freeze({
-    titulo: 'Este navegador não consegue manter a tela ligada.',
-    iphone: 'iPhone: desligue o Modo de Pouca Energia (ele força o bloqueio em 30 s) e ponha o bloqueio automático em "Nunca".',
-    android: 'Android: desligue a economia de bateria e ative "Permanecer ativo" em Opções do desenvolvedor, com o celular no carregador.',
-  }),
+  semTrava: TEXTO_SEM_TRAVA,
   bateria: (porcento: number): string => `Bateria: ${porcento}%`,
   previa: 'Prévia',
   esconder: 'Esconder',
@@ -83,7 +80,10 @@ function Previa({ fluxo }: { fluxo: FluxoDeVideo }) {
  *   episódio, abre o tópico da própria sessão (`video:<uid>`) por baixo do emissor (`criarCanalComutavel`) e o emissor
  *   liga e oferece; sem episódio, o emissor manda o `encerrar`, fecha a conexão e desliga a câmera, e só depois o canal
  *   fecha. Um `fechado`/`negado` do canal de vídeo consulta o episódio de novo: sem episódio, fica fechado; com episódio,
- *   é o `canalPerdido` do `estudio` (reavalia e reabre em 5 s).
+ *   é o `canalPerdido` do `estudio` (reavalia e reabre em 5 s). Aqui o `negado` com episódio fica assim de propósito
+ *   (VER-056, I1): o tópico da câmera só depende dela mesma (a migração da E4 confere a própria câmera, não revogada, e não
+ *   o `obs_camera`), então a negação quer dizer que este aparelho foi revogado ou trocado, e a reavaliação leva à tela de
+ *   revogado, sem laço. O laço do I1 era só do `/obs/camera`, cujo tópico depende da câmera do par.
  * - **Tela (D7, D10):** nenhuma imagem fora da prévia pedida, que some em 15 s; o toque mostra o status por 3 s; as
  *   situações que pedem ação ficam escritas; nada vem do servidor (frases fixas, texto do React).
  * - **Presença (D13):** `video` com a situação, coalescida pelo `acompanharEstudio` (no máximo a cada 10 s).

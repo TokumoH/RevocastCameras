@@ -6,11 +6,12 @@ import type { CanalDoControle, CanalDoEstado, EstadoDoCanal, RepositorioDoPalco 
 import { criarExecutorObs } from '../../domains/obs/executor'
 import type { ExecutorObs } from '../../domains/obs/executor'
 import type { MarcadorObs, ObsNoNavegador, ObsWebsocket } from '../../domains/obs/portas'
-import { SELO_VISIVEL_MS, SITUACAO_A_CADA_MS, criarGuardaDaSaida } from '../../domains/obs/saida'
+import { SELO_VISIVEL_MS, SITUACAO_A_CADA_MS } from '../../domains/obs/saida'
 import type { ServicosDoDispositivo } from '../servicos'
 import { REABRIR_CANAIS_MS } from '../canais'
 import { acompanharEstudio } from '../useDispositivo'
 import type { DispositivoPareado } from '../useDispositivo'
+import type { GuardaDaRota } from './TelaDeDispositivo'
 
 /** `SELO_VISIVEL_MS` (5 s, D16) e `SITUACAO_A_CADA_MS` (15 s) moram em `domains/obs/saida.ts` desde o VER-053 (a guarda é a mesma no `/obs/camera`). */
 export { SELO_VISIVEL_MS, SITUACAO_A_CADA_MS }
@@ -102,6 +103,7 @@ export function PalcoNoAr({
   criarWs,
   armazenamentoLocal,
   marcarRevogado,
+  guarda,
 }: {
   dispositivo: DispositivoPareado
   servicos: ServicosDoDispositivo
@@ -109,6 +111,8 @@ export function PalcoNoAr({
   criarWs: () => ObsWebsocket
   armazenamentoLocal: Armazenamento
   marcarRevogado(): void
+  /** A guarda da saída da rota, a mesma da `SoComSaidaParada` (VER-056, N2): os eventos de saída e as releituras vêm dela. */
+  guarda: GuardaDaRota
 }): ReactNode {
   const [vista, setVista] = useState<Vista>(VISTA_INICIAL)
   const [erroDaConfig, setErroDaConfig] = useState<string | null>(null)
@@ -440,7 +444,6 @@ export function PalcoNoAr({
 
     // --- selo e configuração (D10, D16) ---
     let geracaoDaSaida = 0
-    const guarda = criarGuardaDaSaida(obs)
     let cancelarSelo: (() => void) | null = null
     let cancelarConfig: (() => void) | null = null
     let seloAberto = false
@@ -515,8 +518,7 @@ export function PalcoNoAr({
         pararSessao()
       },
     })
-    const soltarSaida = obs.aoMudarSaida((tipo, saida) => {
-      guarda.evento(tipo, saida)
+    const soltarSaida = guarda.aoMudarSaida(() => {
       geracaoDaSaida++
       fecharSeloEConfig()
       void atualizarSituacao()
@@ -524,11 +526,8 @@ export function PalcoNoAr({
     // cena trocada à mão no OBS (obsSceneChanged): relê a situação, que traz a cena atual (VER-046, A1)
     const soltarCena = obs.aoMudarCena(() => void atualizarSituacao())
     window.addEventListener('keydown', aoTeclar)
-    repetir(() => {
-      guarda.contarReleitura()
-      void atualizarSituacao()
-      void conferirSaidaComAberto()
-    }, SITUACAO_A_CADA_MS)
+    repetir(() => void atualizarSituacao(), SITUACAO_A_CADA_MS)
+    const soltarReleitura = guarda.aoReler(() => void conferirSaidaComAberto()) // depois de a guarda contar a releitura
     conectarWs()
     void atualizarSituacao()
 
@@ -551,6 +550,7 @@ export function PalcoNoAr({
       controlador.current = null
       window.removeEventListener('keydown', aoTeclar)
       soltarSaida()
+      soltarReleitura()
       soltarCena()
       estudio.parar()
       pararSessao()
@@ -558,7 +558,7 @@ export function PalcoNoAr({
       ws?.fechar()
       for (const c of [...cancelamentos]) c()
     }
-  }, [dispositivo, servicos, obs, criarWs, armazenamentoLocal, marcarRevogado])
+  }, [dispositivo, servicos, obs, criarWs, armazenamentoLocal, marcarRevogado, guarda])
 
   // o painel fechado leva junto o aviso de erro (e a senha digitada, que só existia no campo)
   useEffect(() => {

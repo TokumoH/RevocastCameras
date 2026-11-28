@@ -209,6 +209,24 @@ describe('receptor-revoga-par', () => {
   })
 })
 
+describe('receptor-perde-o-par (VER-056, I1)', () => {
+  test('perderPar → fecha a conexão e aoVideo(null) na hora, sem mandar encerrar; aguardando_par; a próxima oferta vale', async () => {
+    const m = montar()
+    const fluxo = await comVideo(m, sessao(1))
+    const enviados = m.canal.enviados.length
+    m.receptor.perderPar()
+    expect(m.conexoes.criadas[0].fechada()).toBe(true) // na hora, sem esperar o `agendar`
+    expect(m.videos).toEqual([fluxo, null])
+    await m.relogio.avancar(0)
+    expect(m.situacao()).toBe('aguardando_par')
+    expect(m.canal.enviados.slice(enviados).some((s) => s.tipo === 'encerrar')).toBe(false) // o banco negou: nada a dizer
+    m.receptor.perderPar() // sem sessão: nada
+    expect(m.videos).toEqual([fluxo, null])
+    await m.oferta(sessao(2))
+    expect(m.conexoes.criadas).toHaveLength(2)
+  })
+})
+
 describe('receptor-sem-episodio', () => {
   test('fecha, aoVideo(null), sem pronto; oferta sem episódio é ignorada', async () => {
     const m = montar()
