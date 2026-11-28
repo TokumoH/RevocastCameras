@@ -233,3 +233,67 @@ describe('falsos do vídeo (E4)', () => {
     expect(typeof d.servicos.canais(EU).videoDaObs).toBe('function')
   })
 })
+
+const EP = '1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f'
+const GESTO_ID = '6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e'
+
+describe('falsos dos gestos (E5)', () => {
+  test('gestos-falsos: canal de gestos, repositório e reconhecedor com o que as telas precisam', async () => {
+    // canal de gestos pelo adaptador real: só recebe em gestos:<uid>, nada pelo Broadcast
+    const f = criarCanalFalso()
+    const palco = f.canais(EU).gestosDoPalco()
+    const disp = f.canais(EU).gestos()
+    const gestos = vi.fn()
+    const avisos = vi.fn()
+    const estados = vi.fn()
+    palco.aoGesto(gestos)
+    disp.aoAviso(avisos)
+    disp.aoMudarEstado(estados)
+    await tique()
+    await tique()
+    expect(f.abertos()).toEqual([`gestos:${EU}`])
+    expect(estados.mock.calls.map((c) => c[0])).toEqual(['conectando', 'conectado'])
+    f.entregar(`gestos:${EU}`, 'gesto', { tipo: 'gesto', gesto_id: GESTO_ID, gesto: 'ILoveYou', dispositivo: DISP, remetente: OUTRO, id: SESSAO })
+    f.entregar(`gestos:${EU}`, 'gestos_mudaram', { tipo: 'gestos_mudaram', remetente: OUTRO, id: SESSAO })
+    await tique()
+    expect(gestos.mock.calls).toEqual([[{ id: GESTO_ID, gesto: 'ILoveYou', dispositivoId: DISP }, OUTRO]])
+    expect(avisos).toHaveBeenCalledTimes(1)
+    expect(f.enviados(`gestos:${EU}`)).toEqual([])
+    expect(f.presencas(`gestos:${EU}`)).toEqual([])
+
+    // repositório dos gestos do dispositivo: situação programável, envios anotados, resposta programável
+    const d = criarFalsosDeDispositivo()
+    expect(d.servicos.gestos).toBe(d.gestos.repo)
+    expect(await d.servicos.gestos.situacao()).toEqual({ ligados: true, reconhecerAqui: true })
+    d.gestos.situacao.ligados = false
+    expect(await d.servicos.gestos.situacao()).toEqual({ ligados: false, reconhecerAqui: true })
+    expect(await d.servicos.gestos.enviar({ id: GESTO_ID, gesto: 'Victory' })).toBe('enviado')
+    d.gestos.responderCom(async () => 'intervalo')
+    expect(await d.servicos.gestos.enviar({ id: GESTO_ID, gesto: 'Victory' })).toBe('intervalo')
+    expect(d.gestos.enviados).toEqual([
+      { id: GESTO_ID, gesto: 'Victory' },
+      { id: GESTO_ID, gesto: 'Victory' },
+    ])
+    expect(typeof d.servicos.canais(EU).gestos).toBe('function')
+    expect(typeof d.servicos.canais(EU).gestosDoPalco).toBe('function')
+
+    // reconhecedor falso (o worker do MediaPipe não roda no jsdom): nasce só no `criar`, inicia e reconhece pelo relógio do teste
+    const r = d.reconhecedores
+    expect(r.criados).toEqual([])
+    const reconhecedor = r.fabrica.criar()
+    expect(await reconhecedor.iniciar()).toEqual({ ok: true })
+    r.config.gesto = 'ILoveYou'
+    const leitura = reconhecedor.reconhecer({} as Parameters<typeof reconhecedor.reconhecer>[0], 0)
+    await vi.waitFor(async () => expect(await leitura).toEqual({ gesto: 'ILoveYou', confianca: 0.9, ms: 20 }))
+    reconhecedor.fechar()
+    expect(r.registro).toEqual(['criar#0', 'iniciar#0', 'fechar#0'])
+    r.config.iniciar = 'sem_suporte'
+    expect(await r.fabrica.criar().iniciar()).toEqual({ ok: false, motivo: 'sem_suporte' })
+
+    // ao vivo vazio: o interruptor devolve o valor pedido; onde reconhecer resolve sem efeito
+    const vazio = aoVivoVazio()
+    expect(await vazio.repo.definirGestosLigados(EP, true)).toBe(true)
+    expect(await vazio.repo.definirGestosLigados(EP, false)).toBe(false)
+    await expect(vazio.repo.definirReconhecimento(DISP, 'computador')).resolves.toBeUndefined()
+  })
+})

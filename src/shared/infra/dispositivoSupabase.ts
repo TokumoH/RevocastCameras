@@ -3,6 +3,10 @@ import { COLUNAS_DE_MEU_DISPOSITIVO } from '../../domains/acesso/dispositivos'
 import type { TipoDeDispositivo } from '../../domains/acesso/dispositivos'
 import { ErroDeDispositivo } from '../../domains/acesso/portasDeDispositivo'
 import type { MotivoDoDispositivo, ServicoDeDispositivo } from '../../domains/acesso/portasDeDispositivo'
+import { ehGesto } from '../../domains/captura/gestos'
+import type { RespostaDoGesto } from '../../domains/captura/gestos'
+import type { RepositorioDosGestos } from '../../domains/captura/portas'
+import { ehUuid } from '../../domains/captura/sinais'
 import { classificarErro } from './errosSupabase'
 
 /** Texto fixo do aviso de `sair()` (o mesmo da E1): nunca leva token, sessão nem o objeto de erro. */
@@ -119,6 +123,55 @@ export function criarServicoDeDispositivoSupabase(cliente: SupabaseClient): Serv
       } catch {
         console.warn(AVISO_SAIR)
       }
+    },
+  }
+}
+
+/** O que `enviar_gesto` devolve sem erro (nada publicado, exceto `enviado`), igual na porta (PLA-006, D2). */
+const RESPOSTAS_DO_GESTO: readonly RespostaDoGesto[] = ['enviado', 'intervalo', 'desligados', 'sem_palco']
+
+/**
+ * Erro de `enviar_gesto` → resposta (PLA-006, D2; revisão 1, N3): `54000` (600 por hora por remetente) → `limite`;
+ * `42501` (não é câmera nem `obs_camera`, ou não é o aparelho que reconhece, ou a sessão caiu) e `55000` (sem episódio
+ * ativo, ou a câmera do par revogada) → `negado` (o laço para e a rota reavalia); qualquer outro (`22023`, `22P02`, JWT,
+ * rede, o tempo-limite de 15 s do `fetch`, VER-021) → `falhou`. Só o código decide; a mensagem do servidor não sai daqui.
+ */
+function respostaDoErroDoGesto(codigo: string | undefined): RespostaDoGesto {
+  if (codigo === '54000') return 'limite'
+  return codigo === '42501' || codigo === '55000' ? 'negado' : 'falhou'
+}
+
+/**
+ * Adaptador da porta `RepositorioDosGestos` (PLA-006, D2, D5, D8) sobre o cliente do tipo do aparelho que reconhece
+ * (`camera` ou `obs_camera`). Quem decide é o banco (sessão, episódio ativo, interruptor, aparelho que reconhece,
+ * intervalo e limite, a cada chamada): o adaptador só traduz.
+ * - `enviar`: a `rpc('enviar_gesto')` recebe **exatamente** `{ p_id, p_gesto }` (D8: nenhum quadro, ponto da mão,
+ *   confiança ou outro campo sai do aparelho; o objeto é montado aqui, nunca espalhado). Id fora de uuid minúsculo ou
+ *   gesto fora dos 7 → `falhou` sem chamar o banco. Nunca pelo Broadcast (o tópico de gestos é só de recebimento).
+ * - `situacao`: `situacao_dos_gestos()`; forma errada → a promessa falha (`ErroDeDispositivo('outro')`), e a rota a trata
+ *   como `{ ligados: false, reconhecerAqui: false }` (Tarefa 8); `42501` com 403 → `negado` (com 401, `outro`: a sessão
+ *   expirada vem antes na classificação comum); falha do `fetch` → `rede`.
+ */
+export function criarRepositorioDosGestosSupabase(cliente: SupabaseClient): RepositorioDosGestos {
+  return {
+    async situacao() {
+      const linha = primeiraLinha(await chamarRpc(() => cliente.rpc('situacao_dos_gestos')))
+      const ligados = linha?.ligados
+      const reconhecerAqui = linha?.reconhecer_aqui
+      if (typeof ligados !== 'boolean' || typeof reconhecerAqui !== 'boolean') throw new ErroDeDispositivo('outro')
+      return { ligados, reconhecerAqui }
+    },
+
+    async enviar(g) {
+      if (!ehUuid(g.id) || !ehGesto(g.gesto)) return 'falhou'
+      let resposta: { data: unknown; error: { code?: string } | null }
+      try {
+        resposta = await cliente.rpc('enviar_gesto', { p_id: g.id, p_gesto: g.gesto })
+      } catch {
+        return 'falhou'
+      }
+      if (resposta.error) return respostaDoErroDoGesto(resposta.error.code)
+      return RESPOSTAS_DO_GESTO.includes(resposta.data as RespostaDoGesto) ? (resposta.data as RespostaDoGesto) : 'falhou'
     },
   }
 }

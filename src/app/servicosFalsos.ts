@@ -20,12 +20,11 @@ import { ErroDeDispositivo } from '../domains/acesso/portasDeDispositivo'
 import type { ServicoDeDispositivo } from '../domains/acesso/portasDeDispositivo'
 import type { LinhaDoRegistro } from '../domains/aovivo/comandos'
 import { ErroDoAoVivo } from '../domains/aovivo/portas'
-import type { EstadoDoCanal, FabricaDeCanais, RepositorioDoAoVivo, RepositorioDoPalco, RespostaDoEnvio } from '../domains/aovivo/portas'
+import type { EstadoDoCanal, RepositorioDoAoVivo, RepositorioDoPalco, RespostaDoEnvio } from '../domains/aovivo/portas'
 import type {
   CameraDoAparelho,
   ConexaoDeVideo,
   EstadoDaConexao,
-  FabricaDeCanaisDeVideo,
   FabricaDeConexoes,
   FaixaDeVideo,
   FalhaDaCamera,
@@ -33,6 +32,7 @@ import type {
   ManterTelaLigada,
   RespostaDoSinal,
 } from '../domains/captura/portas'
+import { criarReconhecedoresFalsos, criarRepoDosGestosFalso } from '../domains/captura/falsos'
 import type { Cena } from '../domains/preparacao/cenas'
 import type { Aviso, Episodio } from '../domains/preparacao/episodios'
 import { GESTOS } from '../domains/preparacao/gestos'
@@ -43,7 +43,7 @@ import type { NovaMidia, OpcoesDoEnvio, ServicosDePreparacao } from '../domains/
 import { criarFabricaDeCanais } from '../shared/infra/canalSupabase'
 import { criarRealtimeFalso } from '../shared/infra/realtimeFalso'
 import type { Dependencias } from './dependencias'
-import type { AparelhoDoDispositivo, ServicosDeAoVivo, ServicosDoDispositivo } from './servicos'
+import type { AparelhoDoDispositivo, CanaisDoDispositivo, ServicosDeAoVivo, ServicosDoDispositivo } from './servicos'
 
 /**
  * Serviços da Preparação sem nada: listas vazias; escritas, envio, remoção e prévia resolvem sem efeito
@@ -605,7 +605,7 @@ const RESPOSTA_DA_FUNCAO: Readonly<Record<RespostaDoSinal, { data: unknown; erro
  */
 export function criarCanalFalso(opcoes: { conectarSozinho?: boolean } = {}) {
   const realtime = criarRealtimeFalso({ conectarSozinho: opcoes.conectarSozinho ?? true })
-  const fabricas = new Map<string, FabricaDeCanais & FabricaDeCanaisDeVideo>()
+  const fabricas = new Map<string, CanaisDoDispositivo>()
   // E4: o canal de vídeo envia pela `rpc('enviar_sinal_de_video')` (D2); o cliente falso junta o Realtime falso a uma `rpc` falsa.
   const sinais: Record<string, unknown>[] = []
   let respostaDoSinal: RespostaDoSinal = 'ok'
@@ -621,7 +621,7 @@ export function criarCanalFalso(opcoes: { conectarSozinho?: boolean } = {}) {
   return {
     realtime,
     /** A mesma fábrica para o mesmo usuário, como `obterServicosDeAoVivo` e `obterServicosDeDispositivo`. */
-    canais(usuarioId: string): FabricaDeCanais & FabricaDeCanaisDeVideo {
+    canais(usuarioId: string): CanaisDoDispositivo {
       let fabrica = fabricas.get(usuarioId)
       if (fabrica === undefined) {
         fabrica = criarFabricaDeCanais(cliente as unknown as SupabaseClient, usuarioId, (f) => queueMicrotask(f))
@@ -877,6 +877,9 @@ export function aoVivoVazio(): ServicosDeAoVivo {
       throw new ErroDoAoVivo('outro')
     },
     revogar: async () => ({ usuario: null }),
+    // E5 (PLA-006, Tarefa 4): o interruptor devolve o valor pedido (o que a função grava); onde reconhecer, sem efeito
+    definirGestosLigados: async (_episodioId, ligado) => ligado,
+    definirReconhecimento: nada,
   }
   return { repo, canais: criarCanalFalso().canais }
 }
@@ -912,6 +915,13 @@ export function criarFalsosDeDispositivo(
   const falhas = new Map<MetodoDoDispositivo, ErroDeDispositivo>()
   const canal = criarCanalFalso()
   const video = criarVideoFalso()
+  // E5 (PLA-006, Tarefa 4): os mesmos falsos do domínio que provam o laço (`captura/falsos.ts`); o reconhecedor, pelo
+  // relógio do teste (`setTimeout`, que os relógios falsos do Vitest controlam), porque o worker do MediaPipe não roda no jsdom
+  const gestos = criarRepoDosGestosFalso()
+  const reconhecedores = criarReconhecedoresFalsos((f, ms) => {
+    const t = setTimeout(f, ms)
+    return () => clearTimeout(t)
+  })
   const chamadas = {
     ordem: [] as string[],
     parear: [] as { codigo: string; tipo: TipoDeDispositivo }[],
@@ -983,9 +993,11 @@ export function criarFalsosDeDispositivo(
   }
 
   return {
-    servicos: { servico, palco, canais: canal.canais, conexoes: video.conexoes, aparelho: video.aparelho } satisfies ServicosDoDispositivo,
+    servicos: { servico, palco, canais: canal.canais, conexoes: video.conexoes, aparelho: video.aparelho, gestos: gestos.repo } satisfies ServicosDoDispositivo,
     canal,
     video,
+    gestos,
+    reconhecedores,
     chamadas,
     definirSessao(s: { usuarioId: string; anonima: boolean } | null): void {
       sessao = s

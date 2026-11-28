@@ -21,7 +21,8 @@ import type {
 /*
  * Falsos das portas da Captura, só para os testes do emissor e do receptor (`emissor.test.ts`, `receptor.test.ts`) e,
  * desde a E5, do laço do reconhecimento (`reconhecimento.test.ts`).
- * Nenhum código do app importa este arquivo. Ficam num arquivo comum (e não repetidos em cada teste) para os dois lados
+ * Nenhum código de produção importa este arquivo (desde a E5, só `src/app/servicosFalsos.ts`, também só de teste, reusa os
+ * falsos dos gestos). Ficam num arquivo comum (e não repetidos em cada teste) para os dois lados
  * serem provados contra os mesmos falsos. Sem `vi` (o arquivo não é teste): cada falso guarda o que recebeu em listas.
  */
 

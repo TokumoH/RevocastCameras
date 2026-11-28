@@ -8,8 +8,11 @@ import type { Som } from '../preparacao/midia'
 import type { AcaoNoObs, LinhaDoRegistro } from './comandos'
 import type { Comando, EstadoNoAr, MensagemDoEstudio, MotivoDoResultado, PresencaNoEstudio, ResultadoDoComando, SituacaoDoObs } from './mensagens'
 
-/** Motivos que as telas do ao vivo sabem explicar; os adaptadores traduzem os erros do Supabase para eles (D7: `55000` → `estado_invalido`, `23505` → `duplicado`). */
-export type MotivoDoAoVivo = 'negado' | 'invalido' | 'estado_invalido' | 'duplicado' | 'nada_alterado' | 'sessao_expirada' | 'rede' | 'outro'
+/**
+ * Motivos que as telas do ao vivo sabem explicar; os adaptadores traduzem os erros do Supabase para eles (D7: `55000` →
+ * `estado_invalido`, `23505` → `duplicado`; desde a E5, PLA-006 D4: `54000` → `limite`, o limite global do "ligar" dos gestos).
+ */
+export type MotivoDoAoVivo = 'negado' | 'invalido' | 'estado_invalido' | 'duplicado' | 'nada_alterado' | 'sessao_expirada' | 'rede' | 'limite' | 'outro'
 
 /** Erro das portas do ao vivo. A mensagem leva só o motivo: nunca código de pareamento, token, URL assinada ou texto do servidor. */
 export class ErroDoAoVivo extends Error {
@@ -98,6 +101,11 @@ export interface CanalDeGestosDoPalco {
   fechar(): Promise<void>
 }
 
+/** O tópico de gestos da sessão do palco (PLA-006, D2): cada chamada devolve uma alça nova de `gestos:<uid da sessão>`. */
+export interface FabricaDeCanaisDeGestosDoPalco {
+  gestosDoPalco(): CanalDeGestosDoPalco
+}
+
 /** Cada chamada devolve uma alça nova; o mesmo tópico no mesmo cliente divide um canal só (I3). */
 export interface FabricaDeCanais {
   estudio(): CanalDoEstudio
@@ -120,6 +128,14 @@ export interface RepositorioDoAoVivo {
   criarCodigo(p: { tipo: TipoDeDispositivo; rotulo: string; dispositivoId: string | null; cameraId: string | null }): Promise<{ dispositivoId: string; codigo: string; expiraEm: string }>
   /** `revogar_dispositivo`: devolve a sessão anônima revogada, para o aviso em `estudio` (D5). */
   revogar(id: string): Promise<{ usuario: string | null }>
+  /**
+   * `definir_gestos_ligados` (PLA-006, D4): qualquer membro, só no episódio ativo; devolve o valor gravado (o mesmo, sem
+   * gravar nem avisar, quando já era esse). `42501` → `negado`; `55000` → `estado_invalido`; `22023` → `invalido`;
+   * `54000` (limite global do "ligar") → `limite`.
+   */
+  definirGestosLigados(episodioId: string, ligado: boolean): Promise<boolean>
+  /** `definir_reconhecimento` (PLA-006, D5): só equipe e admin (`42501` → `negado`); não câmera → `invalido`. */
+  definirReconhecimento(cameraId: string, local: 'celular' | 'computador'): Promise<void>
 }
 
 /**

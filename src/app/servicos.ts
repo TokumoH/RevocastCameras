@@ -2,8 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { TipoDeDispositivo } from '../domains/acesso/dispositivos'
 import type { ServicosDeMembro } from '../domains/acesso/portas'
 import type { ServicoDeDispositivo } from '../domains/acesso/portasDeDispositivo'
-import type { FabricaDeCanais, RepositorioDoAoVivo, RepositorioDoPalco } from '../domains/aovivo/portas'
-import type { CameraDoAparelho, FabricaDeCanaisDeVideo, FabricaDeConexoes, ManterTelaLigada } from '../domains/captura/portas'
+import type { FabricaDeCanais, FabricaDeCanaisDeGestosDoPalco, RepositorioDoAoVivo, RepositorioDoPalco } from '../domains/aovivo/portas'
+import type { CameraDoAparelho, FabricaDeCanaisDeGestos, FabricaDeCanaisDeVideo, FabricaDeConexoes, ManterTelaLigada, RepositorioDosGestos } from '../domains/captura/portas'
 import type { ServicosDePreparacao } from '../domains/preparacao/portas'
 import { criarAutenticacaoSupabase, criarRepositorioDeAcessoSupabase } from '../shared/infra/acessoSupabase'
 import { criarRepositorioDoAoVivo, criarRepositorioDoPalco } from '../shared/infra/aoVivoSupabase'
@@ -13,7 +13,7 @@ import { criarFabricaDeCanais } from '../shared/infra/canalSupabase'
 import { criarFabricaDeConexoes, servidoresIce } from '../shared/infra/conexaoWebrtc'
 import { lerConfiguracao } from '../shared/infra/configuracao'
 import type { Configuracao } from '../shared/infra/configuracao'
-import { criarServicoDeDispositivoSupabase } from '../shared/infra/dispositivoSupabase'
+import { criarRepositorioDosGestosSupabase, criarServicoDeDispositivoSupabase } from '../shared/infra/dispositivoSupabase'
 import { criarRepositoriosDePreparacao } from '../shared/infra/preparacaoSupabase'
 import { criarClienteSupabase } from '../shared/infra/supabase'
 
@@ -107,16 +107,22 @@ export interface AparelhoDoDispositivo {
   videoDireto(): boolean
 }
 
+/** A fábrica de canais de uma rota de dispositivo: os do ao vivo, o de vídeo (E4) e os de gestos (E5), num registro só. */
+export type CanaisDoDispositivo = FabricaDeCanais & FabricaDeCanaisDeVideo & FabricaDeCanaisDeGestos & FabricaDeCanaisDeGestosDoPalco
+
 /**
  * Serviços de uma rota de dispositivo (E3, D4): sessão anônima e pareamento, palco e canais, sobre o cliente do tipo; desde
- * a E4, o canal de vídeo (na mesma fábrica), as conexões WebRTC (STUN e o TURN opcional, D9) e o aparelho.
+ * a E4, o canal de vídeo (na mesma fábrica), as conexões WebRTC (STUN e o TURN opcional, D9) e o aparelho; desde a E5
+ * (PLA-006, Tarefa 4), os canais de gestos (na mesma fábrica, só recepção) e o repositório dos gestos (`situacao_dos_gestos`
+ * e `enviar_gesto`).
  */
 export interface ServicosDoDispositivo {
   servico: ServicoDeDispositivo
   palco: RepositorioDoPalco
-  canais: (usuarioId: string) => FabricaDeCanais & FabricaDeCanaisDeVideo
+  canais: (usuarioId: string) => CanaisDoDispositivo
   conexoes: FabricaDeConexoes
   aparelho: AparelhoDoDispositivo
+  gestos: RepositorioDosGestos
 }
 
 /**
@@ -125,8 +131,8 @@ export interface ServicosDoDispositivo {
  * `on('presence')` cairia no canal já inscrito pelo primeiro. Usuário novo no mesmo cliente → fábrica
  * nova (Riscos do VER-038: os canais do usuário anterior já devem estar fechados).
  */
-function canaisPorUsuario(cliente: SupabaseClient): (usuarioId: string) => FabricaDeCanais & FabricaDeCanaisDeVideo {
-  const fabricas = new Map<string, FabricaDeCanais & FabricaDeCanaisDeVideo>()
+function canaisPorUsuario(cliente: SupabaseClient): (usuarioId: string) => CanaisDoDispositivo {
+  const fabricas = new Map<string, CanaisDoDispositivo>()
   return (usuarioId) => {
     let fabrica = fabricas.get(usuarioId)
     if (fabrica === undefined) {
@@ -180,6 +186,7 @@ export function obterServicosDeDispositivo(tipo: TipoDeDispositivo): ServicosDoD
       canais: canaisPorUsuario(cliente),
       conexoes: criarFabricaDeConexoes({ ice: servidoresIce(config) }),
       aparelho: APARELHO_DO_NAVEGADOR,
+      gestos: criarRepositorioDosGestosSupabase(cliente),
     }
     dispositivos.set(tipo, servicosDoTipo)
   }

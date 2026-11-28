@@ -194,12 +194,62 @@ describe('criarRepositorioDoAoVivo', () => {
     const e = await f.repo.criarCodigo({ tipo: 'camera', rotulo: 'x', dispositivoId: null, cameraId: null }).catch((x: unknown) => x)
     expect((e as Error).message).toBe('Erro do ao vivo: invalido')
   })
+
+  test('definir-gestos-ligados (PLA-006, D4; Tarefa 4)', async () => {
+    const f = criarFalso()
+    f.responder('definir_gestos_ligados', { data: true }, { data: false })
+    expect(await f.repo.definirGestosLigados(EP, true)).toBe(true)
+    // a função devolve o valor gravado (o mesmo, quando já era esse: nada gravado nem avisado, revisão 2, I10)
+    expect(await f.repo.definirGestosLigados(EP, false)).toBe(false)
+    expect(f.tirar()).toEqual([
+      ['rpc', 'definir_gestos_ligados', { p_episodio: EP, p_ligado: true }],
+      ['rpc', 'definir_gestos_ligados', { p_episodio: EP, p_ligado: false }],
+    ])
+    // os códigos da função traduzidos; resposta fora da forma → outro (nunca um "ligado" inventado)
+    const casos: [Resposta, string][] = [
+      [{ error: { code: '42501', message: 'sem permissão' }, status: 403 }, 'negado'],
+      [{ error: { code: '55000', message: 'não é o episódio ativo' }, status: 400 }, 'estado_invalido'],
+      [{ error: { code: '22023', message: 'parâmetro inválido' }, status: 400 }, 'invalido'],
+      [{ error: { code: '54000', message: 'limite do interruptor' }, status: 400 }, 'limite'],
+      [{ error: { code: '', message: 'TypeError: Failed to fetch' }, status: 0 }, 'rede'],
+      [{ error: { code: '42501', message: 'x' }, status: 401 }, 'sessao_expirada'],
+      [{ data: null }, 'outro'],
+      [{ data: 'true' }, 'outro'],
+      [{ data: [true] }, 'outro'],
+    ]
+    for (const [resposta, motivo] of casos) {
+      f.responder('definir_gestos_ligados', resposta)
+      expect(await motivoDe(f.repo.definirGestosLigados(EP, true))).toBe(motivo)
+    }
+  })
+
+  test('definir-reconhecimento (PLA-006, D5; Tarefa 4)', async () => {
+    const f = criarFalso()
+    await f.repo.definirReconhecimento(DISP, 'computador')
+    await f.repo.definirReconhecimento(DISP, 'celular')
+    expect(f.tirar()).toEqual([
+      ['rpc', 'definir_reconhecimento', { p_dispositivo: DISP, p_local: 'computador' }],
+      ['rpc', 'definir_reconhecimento', { p_dispositivo: DISP, p_local: 'celular' }],
+    ])
+    const casos: [Resposta, string][] = [
+      [{ error: { code: '42501', message: 'sem permissão' }, status: 403 }, 'negado'],
+      [{ error: { code: '22023', message: 'parâmetro inválido' }, status: 400 }, 'invalido'],
+      [{ error: { code: '', message: 'x' }, status: 0 }, 'rede'],
+    ]
+    for (const [resposta, motivo] of casos) {
+      f.responder('definir_reconhecimento', resposta)
+      expect(await motivoDe(f.repo.definirReconhecimento(DISP, 'computador'))).toBe(motivo)
+    }
+    // limite (54000) é motivo novo do ao vivo: traduzido para qualquer função
+    expect(traduzirErroDoAoVivo({ code: '54000', message: 'limite' }, 400)).toBe('limite')
+    expect(traduzirErroDoAoVivo({ code: '54000' }, 401)).toBe('sessao_expirada')
+  })
 })
 
 describe('criarRepositorioDoPalco', () => {
   test('palco-carrega', async () => {
     const f = criarFalso()
-    f.responder('episodios', { data: [{ id: EP, titulo: 'Episódio 1', data: '2026-11-27', estado: 'rascunho' }] })
+    f.responder('episodios', { data: [{ id: EP, titulo: 'Episódio 1', data: '2026-11-27', estado: 'rascunho', gestos_ligados: false }] })
     f.responder('cenas', { data: [{ id: 'c1', nome_exibicao: 'Abertura', nome_obs: 'Cena Abertura', ordem: 0 }] })
     f.responder('sons', {
       data: [
@@ -229,7 +279,7 @@ describe('criarRepositorioDoPalco', () => {
       const fim = feitas.findIndex((c, j) => j > i && c[0] === 'from')
       return feitas.slice(i, fim < 0 ? undefined : fim)
     }
-    expect(porTabela('episodios')).toEqual([['from', 'episodios'], ['select', 'id, titulo, data, estado'], ['eq', 'id', EP]])
+    expect(porTabela('episodios')).toEqual([['from', 'episodios'], ['select', 'id, titulo, data, estado, gestos_ligados'], ['eq', 'id', EP]])
     expect(porTabela('cenas')).toEqual([['from', 'cenas'], ['select', 'id, nome_exibicao, nome_obs, ordem'], ['order', 'ordem']])
     expect(porTabela('sons')).toEqual([['from', 'sons'], ['select', 'id, midia_id, rotulo, emoji, volume, ordem, midias(caminho)'], ['order', 'ordem']])
     expect(porTabela('avisos')).toEqual([
@@ -242,9 +292,9 @@ describe('criarRepositorioDoPalco', () => {
     // episódio que não aparece (RLS ou apagado) ou com estado desconhecido → invalido; erro de uma lista → o motivo dela
     f.responder('episodios', { data: [] })
     expect(await motivoDe(f.palco.carregar(EP))).toBe('invalido')
-    f.responder('episodios', { data: [{ id: EP, titulo: 't', data: '2026-11-27', estado: 'arquivado' }] })
+    f.responder('episodios', { data: [{ id: EP, titulo: 't', data: '2026-11-27', estado: 'arquivado', gestos_ligados: false }] })
     expect(await motivoDe(f.palco.carregar(EP))).toBe('invalido')
-    f.responder('episodios', { data: [{ id: EP, titulo: 't', data: '2026-11-27', estado: 'ao_vivo' }] })
+    f.responder('episodios', { data: [{ id: EP, titulo: 't', data: '2026-11-27', estado: 'ao_vivo', gestos_ligados: false }] })
     f.responder('sons', { error: { code: '', message: 'x' }, status: 0 })
     expect(await motivoDe(f.palco.carregar(EP))).toBe('rede')
 
@@ -291,9 +341,67 @@ describe('criarRepositorioDoPalco', () => {
     ])
   })
 
-  test('palco-gestos-neutros (Tarefa 2): interruptor desligado até a Tarefa 4', async () => {
+  test('carregar-com-mapa-e-interruptor (PLA-006, D6; Tarefa 4)', async () => {
     const f = criarFalso()
+    const CENA = '2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e'
+    f.responder('episodios', { data: [{ id: EP, titulo: 'Episódio 1', data: '2026-11-27', estado: 'ao_vivo', gestos_ligados: true }] })
+    f.responder('mapa_gestos', {
+      data: [
+        { gesto: 'ILoveYou', acao: 'clipe', cena_id: null, som_id: null },
+        { gesto: 'Victory', acao: 'cena', cena_id: CENA, som_id: null },
+        { gesto: 'Thumb_Up', acao: 'som', cena_id: null, som_id: MIDIA },
+        { gesto: 'Open_Palm', acao: 'nenhuma', cena_id: null, som_id: null },
+        { gesto: 'None', acao: 'clipe', cena_id: null, som_id: null }, // gesto desconhecido: descartado
+        { gesto: 'Closed_Fist', acao: 'teletransporte', cena_id: null, som_id: null }, // ação desconhecida: descartada
+        null, // linha fora da forma: descartada
+      ],
+    })
+    const carga = await f.palco.carregar(EP)
+    expect(carga.episodio).toEqual({ id: EP, titulo: 'Episódio 1', data: '2026-11-27', estado: 'ao_vivo', gestosLigados: true })
+    expect(carga.mapa).toEqual([
+      { gesto: 'ILoveYou', acao: 'clipe', cenaId: null, somId: null },
+      { gesto: 'Victory', acao: 'cena', cenaId: CENA, somId: null },
+      { gesto: 'Thumb_Up', acao: 'som', cenaId: null, somId: MIDIA },
+      { gesto: 'Open_Palm', acao: 'nenhuma', cenaId: null, somId: null },
+    ])
+    const feitas = f.tirar()
+    const i = feitas.findIndex((c) => c[0] === 'from' && c[1] === 'mapa_gestos')
+    expect(feitas.slice(i, i + 3)).toEqual([['from', 'mapa_gestos'], ['select', 'gesto, acao, cena_id, som_id'], ['order', 'gesto']])
+    // a mesma leitura do mapa da Preparação (um leitor só, `lerMapaDeGestos`)
+    expect(feitas.filter((c) => c[0] === 'from').map((c) => c[1]).sort()).toEqual(['avisos', 'cenas', 'episodios', 'mapa_gestos', 'sons'])
+
+    // interruptor fora da forma (coluna nova no banco antes do app) → invalido, nunca "ligado"; erro do mapa → o motivo dele
+    f.responder('episodios', { data: [{ id: EP, titulo: 't', data: '2026-11-27', estado: 'ao_vivo', gestos_ligados: 'sim' }] })
+    expect(await motivoDe(f.palco.carregar(EP))).toBe('invalido')
+    f.responder('episodios', { data: [{ id: EP, titulo: 't', data: '2026-11-27', estado: 'ao_vivo' }] })
+    expect(await motivoDe(f.palco.carregar(EP))).toBe('invalido')
+    f.responder('episodios', { data: [{ id: EP, titulo: 't', data: '2026-11-27', estado: 'ao_vivo', gestos_ligados: false }] })
+    f.responder('mapa_gestos', { error: { code: '42501', message: 'x' }, status: 403 })
+    expect(await motivoDe(f.palco.carregar(EP))).toBe('negado')
+  })
+
+  test('gestos-ligados (PLA-006, D4; Tarefa 4): só a coluna, do episódio dado', async () => {
+    const f = criarFalso()
+    f.responder('episodios', { data: [{ gestos_ligados: true }] }, { data: [{ gestos_ligados: false }] })
+    expect(await f.palco.gestosLigados(EP)).toBe(true)
     expect(await f.palco.gestosLigados(EP)).toBe(false)
-    expect(f.tirar()).toEqual([])
+    expect(f.tirar()).toEqual([
+      ['from', 'episodios'],
+      ['select', 'gestos_ligados'],
+      ['eq', 'id', EP],
+      ['from', 'episodios'],
+      ['select', 'gestos_ligados'],
+      ['eq', 'id', EP],
+    ])
+    // sem linha (episódio apagado ou a RLS não deixa) ou fora da forma → invalido; nunca "falha = desligado" (VER-059):
+    // quem decide o que fazer com a falha é o palco, que tenta de novo
+    f.responder('episodios', { data: [] }, { data: [{ gestos_ligados: null }] }, { data: [{ gestos_ligados: 'true' }] })
+    expect(await motivoDe(f.palco.gestosLigados(EP))).toBe('invalido')
+    expect(await motivoDe(f.palco.gestosLigados(EP))).toBe('invalido')
+    expect(await motivoDe(f.palco.gestosLigados(EP))).toBe('invalido')
+    // rede e o tempo-limite de 15 s do fetch (VER-021: o postgrest-js devolve status 0 sem código) → rede; 401 → sessão
+    f.responder('episodios', { error: { code: '', message: 'TimeoutError' }, status: 0 }, { error: { code: 'PGRST303', message: 'x' }, status: 401 })
+    expect(await motivoDe(f.palco.gestosLigados(EP))).toBe('rede')
+    expect(await motivoDe(f.palco.gestosLigados(EP))).toBe('sessao_expirada')
   })
 })

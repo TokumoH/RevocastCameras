@@ -361,3 +361,58 @@ describe.each([
     await camera.fechar()
   })
 })
+
+/*
+ * E5 (PLA-006, Tarefa 4, `gestos-contrato`; F15): o que `enviar_gesto` e `definir_gestos_ligados` publicam com
+ * `realtime.send` chega ao ouvinte `broadcast` do canal com o `event` (`gesto`, `gestos_mudaram`) e o `payload` com o `id`
+ * acrescentado, pelo mesmo caminho do vídeo (VER-051); o adaptador entrega o gesto validado com o remetente e o dispositivo
+ * postos pelo banco (sem o `id` da mensagem) e o aviso sem valor. Nos tópicos de gestos nada sai pelo socket nem pelo REST.
+ */
+const GESTO_ID = '6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e'
+const DISPOSITIVO_DO_GESTO = '8d9e0f1a-2b3c-4d4e-9f5a-6b7c8d9e0f1a'
+
+describe.each([
+  ['realtime-js real', real],
+  ['realtimeFalso', falso],
+] as const)('contrato do tópico de gestos: %s', (nome, criar) => {
+  test.each(nome === 'realtimeFalso' ? [false] : [false, true])('gestos-contrato: mensagens do banco chegam com o id (quadro binário: %s)', async (binario) => {
+    const i = criar()
+    const buscas = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      throw new Error('sem rede no teste')
+    })
+    const fabrica = criarFabricaDeCanais(i.cliente, EU, (f) => f())
+    const palco = fabrica.gestosDoPalco()
+    const recebidos: unknown[] = []
+    palco.aoGesto((g, remetente) => recebidos.push(['gesto', g, remetente]))
+    palco.aoAviso(() => recebidos.push(['aviso']))
+    await tique()
+    const [c] = i.lista() as CanalMinimo[]
+    const brutos: unknown[] = []
+    c.on('broadcast', { event: '*' }, (m) => brutos.push(m))
+    const pushes: MensagemDoSocket[] = []
+    if (nome === 'realtime-js real') phoenixDe(c).socket.push = (m) => pushes.push(m)
+    // as formas que o realtime.send grava (F15): o payload montado pela função, com o id acrescentado
+    const gesto = { tipo: 'gesto', gesto_id: GESTO_ID, gesto: 'Victory', dispositivo: DISPOSITIVO_DO_GESTO, remetente: OUTRO, id: ID_DA_MENSAGEM }
+    const aviso = { tipo: 'gestos_mudaram', remetente: OUTRO, id: ID_DA_MENSAGEM }
+    i.publicarPeloBanco(c, 'gesto', gesto, binario)
+    i.publicarPeloBanco(c, 'gestos_mudaram', aviso, binario)
+    expect(brutos).toHaveLength(2)
+    expect(brutos[0]).toMatchObject({ type: 'broadcast', event: 'gesto', payload: gesto })
+    expect(brutos[1]).toMatchObject({ type: 'broadcast', event: 'gestos_mudaram', payload: aviso })
+    expect(recebidos).toEqual([['gesto', { id: GESTO_ID, gesto: 'Victory', dispositivoId: DISPOSITIVO_DO_GESTO }, OUTRO], ['aviso']])
+    expect(pushes.filter((m) => m.event === 'broadcast')).toEqual([])
+    expect(buscas).not.toHaveBeenCalled()
+    await palco.fechar()
+
+    // o aparelho que reconhece, no mesmo tópico da própria sessão: só o aviso
+    const disp = fabrica.gestos()
+    const avisos: unknown[] = []
+    disp.aoAviso(() => avisos.push('aviso'))
+    await tique()
+    const [c2] = i.lista() as CanalMinimo[]
+    i.publicarPeloBanco(c2, 'gesto', gesto, binario)
+    i.publicarPeloBanco(c2, 'gestos_mudaram', aviso, binario)
+    expect(avisos).toEqual(['aviso'])
+    await disp.fechar()
+  })
+})

@@ -171,11 +171,15 @@ describe('obterServicosDeDispositivo', () => {
     expect(createClient.mock.calls[0][2]).toMatchObject({ auth: { storageKey: 'revocast-auth-obs_palco', detectSessionInUrl: false } })
     expect(obterServicosDeDispositivo('obs_palco')).toBe(palco)
     expect(createClient).toHaveBeenCalledTimes(1)
-    expect(Object.keys(palco).sort()).toEqual(['aparelho', 'canais', 'conexoes', 'palco', 'servico'])
+    expect(Object.keys(palco).sort()).toEqual(['aparelho', 'canais', 'conexoes', 'gestos', 'palco', 'servico'])
     expect(typeof palco.servico.parear).toBe('function')
     expect(typeof palco.palco.carregar).toBe('function')
     const ID = '5a1c9e2b-7d3f-4b6a-8c1d-2e3f4a5b6c7d'
     expect(palco.canais(ID)).toBe(palco.canais(ID))
+    // E5 (PLA-006, Tarefa 4): o repositório dos gestos e os canais de gestos sobre o mesmo cliente do tipo
+    expect(Object.keys(palco.gestos).sort()).toEqual(['enviar', 'situacao'])
+    expect(typeof palco.canais(ID).gestos).toBe('function')
+    expect(typeof palco.canais(ID).gestosDoPalco).toBe('function')
 
     // outro tipo, outro cliente (com a chave dele); nunca o de membro
     obterServicosDeDispositivo('camera')

@@ -956,3 +956,178 @@ describe('canal de vídeo', () => {
     expect(Object.keys(a).sort()).toEqual(['aoMudarEstado', 'aoSinal', 'enviar', 'fechar'])
   })
 })
+
+/*
+ * Canal de gestos (PLA-006, D2, D4; Tarefa 4): o palco e o aparelho que reconhece só **recebem** no tópico da própria sessão
+ * (`gestos:<usuarioId da fábrica>`); o banco publica com `realtime.send` (`enviar_gesto` e `definir_gestos_ligados`) e
+ * nenhum cliente envia nem marca presença nesses tópicos. Toda mensagem passa pelo remetente e pelo leitor do domínio.
+ */
+const TOPICO_GESTOS = `gestos:${EU}`
+const GESTO_ID = '6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e'
+const DISPOSITIVO_DO_GESTO = '8d9e0f1a-2b3c-4d4e-9f5a-6b7c8d9e0f1a'
+const GESTO_NO_FIO = { tipo: 'gesto', gesto_id: GESTO_ID, gesto: 'ILoveYou', dispositivo: DISPOSITIVO_DO_GESTO, remetente: OUTRO, id: ID_DA_MENSAGEM }
+const AVISO_NO_FIO = { tipo: 'gestos_mudaram', remetente: OUTRO, id: ID_DA_MENSAGEM }
+
+describe('canal de gestos', () => {
+  test('gestos-topico-da-sessao', async () => {
+    const m = montar()
+    m.fabrica.gestosDoPalco()
+    await tique()
+    expect(m.rt.criados.map((c) => c.topico)).toEqual([TOPICO_GESTOS])
+    expect(m.rt.canal(TOPICO_GESTOS).config).toEqual({ private: true, broadcast: { ack: true, self: false }, presence: { key: EU } })
+    const m2 = montar()
+    m2.fabrica.gestos()
+    await tique()
+    expect(m2.rt.criados.map((c) => c.topico)).toEqual([TOPICO_GESTOS])
+    expect(m2.rt.canal(TOPICO_GESTOS).config).toEqual({ private: true, broadcast: { ack: true, self: false }, presence: { key: EU } })
+    // usuário fora do formato uuid (inclusive em maiúsculas): lança, nenhum canal (o tópico nunca sai do texto exato)
+    const rt = criarRealtimeFalso()
+    expect(() => criarFabricaDeCanais(rt.cliente as unknown as SupabaseClient, EU.toUpperCase()).gestosDoPalco()).toThrow()
+    expect(() => criarFabricaDeCanais(rt.cliente as unknown as SupabaseClient, `${EU} `).gestos()).toThrow()
+    await tique()
+    expect(rt.criados).toHaveLength(0)
+  })
+
+  test('gestos-sem-envio-pelo-canal', async () => {
+    const m = montar()
+    const palco = m.fabrica.gestosDoPalco()
+    const disp = m.fabrica.gestos()
+    palco.aoGesto(() => {})
+    palco.aoAviso(() => {})
+    disp.aoAviso(() => {})
+    await tique()
+    const canal = m.rt.canal(TOPICO_GESTOS)
+    m.rt.emitirStatus(canal, 'SUBSCRIBED')
+    m.rt.emitirStatus(canal, 'TIMED_OUT')
+    m.rt.emitirStatus(canal, 'SUBSCRIBED')
+    m.rt.emitirBroadcast(canal, 'gesto', GESTO_NO_FIO)
+    m.rt.emitirBroadcast(canal, 'gestos_mudaram', AVISO_NO_FIO)
+    m.rodar()
+    await palco.fechar()
+    await disp.fechar()
+    // nenhum envio pelo Broadcast, nenhuma presença, nenhum untrack (nunca houve track)
+    expect(m.rt.contar('send')).toBe(0)
+    expect(m.rt.contar('track')).toBe(0)
+    expect(m.rt.contar('untrack')).toBe(0)
+    expect(canal.enviados).toEqual([])
+    expect(canal.presencas).toEqual([])
+    // as alças não oferecem envio nem presença
+    expect(Object.keys(palco).sort()).toEqual(['aoAviso', 'aoGesto', 'aoMudarEstado', 'fechar'])
+    expect(Object.keys(disp).sort()).toEqual(['aoAviso', 'aoMudarEstado', 'fechar'])
+  })
+
+  test('gestos-recebe-valida', async () => {
+    const m = montar()
+    const palco = m.fabrica.gestosDoPalco()
+    const gestos = vi.fn()
+    const avisos = vi.fn()
+    palco.aoGesto(gestos)
+    palco.aoAviso(avisos)
+    await tique()
+    const c = m.rt.canal(TOPICO_GESTOS)
+    // no palco: comando no tópico de gestos, gesto sem remetente, remetente em maiúsculas, None, chave a mais, evento
+    // trocado e aviso com valor: descartados
+    m.rt.emitirBroadcast(c, 'comando', { id: CMD, acao: 'clipe', remetente: OUTRO })
+    m.rt.emitirBroadcast(c, 'gesto', { id: CMD, acao: 'clipe', remetente: OUTRO })
+    const { remetente: _r, ...semRemetente } = GESTO_NO_FIO
+    m.rt.emitirBroadcast(c, 'gesto', semRemetente)
+    m.rt.emitirBroadcast(c, 'gesto', { ...GESTO_NO_FIO, remetente: OUTRO.toUpperCase() })
+    m.rt.emitirBroadcast(c, 'gesto', { ...GESTO_NO_FIO, gesto: 'None' })
+    m.rt.emitirBroadcast(c, 'gesto', { ...GESTO_NO_FIO, extra: 1 })
+    m.rt.emitirBroadcast(c, 'gestos_mudaram', GESTO_NO_FIO)
+    m.rt.emitirBroadcast(c, 'gesto', AVISO_NO_FIO)
+    m.rt.emitirBroadcast(c, 'gestos_mudaram', { ...AVISO_NO_FIO, ligados: true })
+    m.rt.emitirBroadcast(c, 'gestos_mudaram', { tipo: 'gestos_mudaram' }) // sem remetente
+    m.rodar()
+    expect(gestos).not.toHaveBeenCalled()
+    expect(avisos).not.toHaveBeenCalled()
+    // válidos: o gesto chega com o remetente e o dispositivo postos pelo banco, sem o id da mensagem; o aviso, sem valor
+    m.rt.emitirBroadcast(c, 'gesto', GESTO_NO_FIO)
+    m.rt.emitirBroadcast(c, 'gestos_mudaram', AVISO_NO_FIO)
+    expect(gestos).not.toHaveBeenCalled() // nunca dentro do callback do realtime-js
+    expect(avisos).not.toHaveBeenCalled()
+    m.rodar()
+    expect(gestos.mock.calls).toEqual([[{ id: GESTO_ID, gesto: 'ILoveYou', dispositivoId: DISPOSITIVO_DO_GESTO }, OUTRO]])
+    expect(avisos.mock.calls).toEqual([[]])
+
+    // no aparelho que reconhece: só o aviso; um gesto aqui é descartado
+    const m2 = montar()
+    const disp = m2.fabrica.gestos()
+    const avisosDoAparelho = vi.fn()
+    disp.aoAviso(avisosDoAparelho)
+    await tique()
+    const c2 = m2.rt.canal(TOPICO_GESTOS)
+    m2.rt.emitirBroadcast(c2, 'gesto', GESTO_NO_FIO)
+    m2.rt.emitirBroadcast(c2, 'comando', { id: CMD, acao: 'clipe', remetente: OUTRO })
+    m2.rt.emitirBroadcast(c2, 'gestos_mudaram', { tipo: 'gestos_mudaram', id: ID_DA_MENSAGEM }) // sem remetente
+    m2.rt.emitirBroadcast(c2, 'gestos_mudaram', { ...AVISO_NO_FIO, ligados: false })
+    m2.rodar()
+    expect(avisosDoAparelho).not.toHaveBeenCalled()
+    m2.rt.emitirBroadcast(c2, 'gestos_mudaram', AVISO_NO_FIO)
+    m2.rodar()
+    expect(avisosDoAparelho.mock.calls).toEqual([[]])
+  })
+
+  test('gestos-um-canal-por-topico', async () => {
+    const m = montar()
+    const a = m.fabrica.gestosDoPalco()
+    const b = m.fabrica.gestosDoPalco()
+    const d = m.fabrica.gestos()
+    const ga = vi.fn()
+    const gb = vi.fn()
+    const ad = vi.fn()
+    a.aoGesto(ga)
+    b.aoGesto(gb)
+    d.aoAviso(ad)
+    await tique()
+    expect(m.rt.contar('channel', TOPICO_GESTOS)).toBe(1)
+    m.rt.emitirBroadcast(m.rt.canal(TOPICO_GESTOS), 'gesto', GESTO_NO_FIO)
+    m.rt.emitirBroadcast(m.rt.canal(TOPICO_GESTOS), 'gestos_mudaram', AVISO_NO_FIO)
+    m.rodar()
+    expect(ga).toHaveBeenCalledTimes(1)
+    expect(gb).toHaveBeenCalledTimes(1)
+    expect(ad).toHaveBeenCalledTimes(1)
+    // um ouvinte cancelado não recebe mais
+    const cancelar = a.aoAviso(ad)
+    cancelar()
+    m.rt.emitirBroadcast(m.rt.canal(TOPICO_GESTOS), 'gestos_mudaram', AVISO_NO_FIO)
+    m.rodar()
+    expect(ad).toHaveBeenCalledTimes(2)
+  })
+
+  test('gestos-fechar', async () => {
+    const m = montar()
+    const a = m.fabrica.gestosDoPalco()
+    const b = m.fabrica.gestos()
+    const estados = vi.fn()
+    const gestos = vi.fn()
+    b.aoMudarEstado(estados)
+    a.aoGesto(gestos)
+    await tique()
+    m.rt.emitirStatus(m.rt.canal(TOPICO_GESTOS), 'SUBSCRIBED')
+    m.rodar()
+    expect(estados.mock.calls.map((x) => x[0])).toEqual(['conectando', 'conectado'])
+    await a.fechar()
+    // fechada, a alça não recebe mais (e ganhar ouvinte depois não faz nada)
+    m.rt.emitirBroadcast(m.rt.canal(TOPICO_GESTOS), 'gesto', GESTO_NO_FIO)
+    a.aoGesto(gestos)
+    m.rodar()
+    expect(gestos).not.toHaveBeenCalled()
+    expect(m.rt.contar('removeChannel')).toBe(0)
+    await b.fechar()
+    await b.fechar()
+    expect(m.rt.contar('removeChannel', TOPICO_GESTOS)).toBe(1)
+    expect(m.rt.contar('untrack')).toBe(0)
+    // negado (sem episódio ativo ou sessão revogada): sai do mapa; a próxima abertura cria um canal novo
+    const c = m.fabrica.gestos()
+    const ec = vi.fn()
+    c.aoMudarEstado(ec)
+    await tique()
+    m.rt.emitirStatus(m.rt.canal(TOPICO_GESTOS), 'CHANNEL_ERROR', new Error(`Unauthorized: You do not have permissions to read from this Channel topic: ${TOPICO_GESTOS}`))
+    m.rodar()
+    expect(ec.mock.calls.map((x) => x[0])).toEqual(['conectando', 'negado'])
+    m.fabrica.gestosDoPalco()
+    await tique()
+    expect(m.rt.contar('channel', TOPICO_GESTOS)).toBe(3)
+  })
+})

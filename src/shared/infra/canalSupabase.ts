@@ -1,8 +1,18 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { EVENTOS_DO_CONTROLE, EVENTOS_DO_ESTADO, UUID, lerMensagemDoControle, lerMensagemDoEstado, lerMensagemDoEstudio, lerPresenca, lerRemetente, topicoDoControle, topicoDoEstado } from '../../domains/aovivo/mensagens'
 import type { PresencaNoEstudio } from '../../domains/aovivo/mensagens'
-import type { CanalDoControle, CanalDoEstado, CanalDoEstudio, EstadoDoCanal, FabricaDeCanais, RespostaDoEnvio } from '../../domains/aovivo/portas'
-import type { CanalDeVideo, FabricaDeCanaisDeVideo, RespostaDoSinal } from '../../domains/captura/portas'
+import type {
+  CanalDeGestosDoPalco,
+  CanalDoControle,
+  CanalDoEstado,
+  CanalDoEstudio,
+  EstadoDoCanal,
+  FabricaDeCanais,
+  FabricaDeCanaisDeGestosDoPalco,
+  RespostaDoEnvio,
+} from '../../domains/aovivo/portas'
+import { lerAvisoDosGestos, lerGestoParaOPalco, topicoDosGestos } from '../../domains/captura/gestos'
+import type { CanalDeGestos, CanalDeVideo, FabricaDeCanaisDeGestos, FabricaDeCanaisDeVideo, RespostaDoSinal } from '../../domains/captura/portas'
 import { lerSinalDaCamera, lerSinalDaObs, topicoDoVideo } from '../../domains/captura/sinais'
 import type { SinalDaCamera, SinalDaObs } from '../../domains/captura/sinais'
 
@@ -75,12 +85,17 @@ const NAO_AUTORIZADO = /unauthorized/i
  * - **Vídeo (PLA-005, D1, D2; desde a E4):** `videoDaCamera()` e `videoDaObs()` abrem, pelo mesmo registro, só o tópico
  *   da própria sessão (`video:<usuarioId>`), só para **receber** (mesma configuração privada; nenhuma presença marcada);
  *   o envio é a `rpc('enviar_sinal_de_video')`, nunca `canal.send` nesses tópicos (o banco põe o remetente e publica).
+ * - **Gestos (PLA-006, D2, D4; desde a E5):** `gestosDoPalco()` e `gestos()` abrem, pelo mesmo registro, só o tópico da
+ *   própria sessão (`gestos:<usuarioId>`), só para **receber**: o palco lê o gesto (`lerGestoParaOPalco`) e o aviso
+ *   (`lerAvisoDosGestos`); o aparelho que reconhece, só o aviso. As alças **não têm envio nem presença**: nos tópicos de
+ *   gestos ninguém envia pelo Broadcast (o banco publica com `realtime.send` em `enviar_gesto` e `definir_gestos_ligados`;
+ *   o gesto sai do aparelho pela `rpc` de `dispositivoSupabase.ts`).
  */
 export function criarFabricaDeCanais(
   cliente: SupabaseClient,
   usuarioId: string,
   agendar: (f: () => void) => void = (f) => setTimeout(f, 0),
-): FabricaDeCanais & FabricaDeCanaisDeVideo {
+): FabricaDeCanais & FabricaDeCanaisDeVideo & FabricaDeCanaisDeGestos & FabricaDeCanaisDeGestosDoPalco {
   const registros = new Map<string, Registro>()
   const removendo = remocoesDo(cliente)
 
@@ -322,6 +337,19 @@ export function criarFabricaDeCanais(
     }
   }
 
+  /** Alça do tópico de gestos da própria sessão (D2): só recebe; o aviso `gestos_mudaram` validado, sem valor (D4). */
+  function alcaDosGestos() {
+    const alca = criarAlca(abrir(topicoDosGestos(usuarioId)))
+    return {
+      alca,
+      aoAviso(f: () => void): () => void {
+        return alca.aoBroadcast((evento, payload) => {
+          if (lerAvisoDosGestos(evento, payload) !== null) f()
+        })
+      },
+    }
+  }
+
   return {
     estudio(): CanalDoEstudio {
       const alca = criarAlca(abrir('estudio'))
@@ -420,6 +448,29 @@ export function criarFabricaDeCanais(
     /** `obs_camera`: recebe `oferta` e `encerrar` da câmera em `video:<seu uid>`; envia pronto, resposta e encerrar pela função. */
     videoDaObs(): CanalDeVideo<SinalDaObs, SinalDaCamera> {
       return canalDeVideo<SinalDaObs, SinalDaCamera>(lerSinalDaCamera)
+    },
+
+    /** Palco: recebe o gesto (com o remetente e o dispositivo postos pelo banco) e o aviso em `gestos:<seu uid>`; não envia. */
+    gestosDoPalco(): CanalDeGestosDoPalco {
+      const { alca, aoAviso } = alcaDosGestos()
+      return {
+        // deste tópico só sai gesto e aviso (um `comando` aqui é descartado pelo leitor do domínio; o palco confere de novo)
+        aoGesto(f) {
+          return alca.aoBroadcast((evento, payload, remetente) => {
+            const g = lerGestoParaOPalco(evento, payload)
+            if (g !== null) f(g, remetente)
+          })
+        },
+        aoAviso,
+        aoMudarEstado: alca.aoEstado,
+        fechar: alca.fechar,
+      }
+    },
+
+    /** Câmera e `obs_camera`: recebem só o aviso `gestos_mudaram` em `gestos:<seu uid>` (um gesto aqui é descartado); não enviam. */
+    gestos(): CanalDeGestos {
+      const { alca, aoAviso } = alcaDosGestos()
+      return { aoAviso, aoMudarEstado: alca.aoEstado, fechar: alca.fechar }
     },
   }
 }

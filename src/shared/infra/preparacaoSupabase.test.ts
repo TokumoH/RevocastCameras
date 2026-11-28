@@ -130,6 +130,13 @@ describe('criarRepositoriosDePreparacao', () => {
     expect(f.tirar()).toEqual([['from', 'mapa_gestos'], ['select', 'gesto, acao, cena_id, som_id'], ['order', 'gesto']])
   })
 
+  test('mapa-descarta-linha-que-nao-e-objeto (VER-061, rodada 1, N2)', async () => {
+    // `lerMapaDeGestos` (o leitor único da Preparação e do palco): linha nula ou que não é objeto é descartada, sem lançar
+    const f = criarFalso()
+    f.responder({ data: [null, 'ILoveYou', 7, { gesto: 'Victory', acao: 'clipe', cena_id: null, som_id: null }, null] })
+    expect(await f.repos.gestos.listar()).toEqual([{ gesto: 'Victory', acao: 'clipe', cenaId: null, somId: null }])
+  })
+
   test('episodio-so-titulo-e-data', async () => {
     const f = criarFalso()
     f.responder({ data: [{ id: 'e1' }] })

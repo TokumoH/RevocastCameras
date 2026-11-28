@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { COLUNAS_DE_MEU_DISPOSITIVO } from '../../domains/acesso/dispositivos'
 import { ErroDeDispositivo } from '../../domains/acesso/portasDeDispositivo'
-import { criarServicoDeDispositivoSupabase } from './dispositivoSupabase'
+import { criarRepositorioDosGestosSupabase, criarServicoDeDispositivoSupabase } from './dispositivoSupabase'
 
 const UID = '5a1c9e2b-7d3f-4b6a-8c1d-2e3f4a5b6c7d'
 const DISP = '0b6f3c1e-2a4d-4f8b-9c7e-1d2e3f4a5b6c'
@@ -45,6 +45,7 @@ function criarFalso() {
   } as unknown as SupabaseClient
   return {
     servico: criarServicoDeDispositivoSupabase(cliente),
+    cliente,
     chamadas,
     responderRpc(r: RespostaRpc | (() => never)) {
       rpc = r
@@ -225,5 +226,90 @@ describe('criarServicoDeDispositivoSupabase', () => {
     expect(f.chamadas.filter((c) => c[0] === 'signOut')).toEqual([['signOut', { scope: 'local' }], ['signOut', { scope: 'local' }], ['signOut', { scope: 'local' }]])
     // só o texto fixo vai para o console
     for (const args of aviso.mock.calls) expect(args).toEqual(['sair: o servidor não confirmou a saída; a sessão local foi apagada'])
+  })
+})
+
+/*
+ * Repositório dos gestos do aparelho que reconhece (PLA-006, D2, D5, D8; Tarefa 4): `situacao_dos_gestos()` e
+ * `enviar_gesto(p_id, p_gesto)`. Só o uuid e o nome do gesto saem do aparelho; as respostas e os erros viram a lista fixa
+ * de `RespostaDoGesto` (revisão 1, N3: `42501` e `55000` → `negado`).
+ */
+const GESTO_ID = '6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e'
+
+describe('criarRepositorioDosGestosSupabase', () => {
+  test('rpc-so-com-gesto-e-id', async () => {
+    const f = criarFalso()
+    const repo = criarRepositorioDosGestosSupabase(f.cliente)
+    f.responderRpc({ data: 'enviado' })
+    // um objeto com campos a mais (como um laço que passasse a leitura inteira) não leva nada além do id e do gesto
+    const comExtras = { id: GESTO_ID, gesto: 'ILoveYou' as const, confianca: 0.93, quadro: 'nunca', pontos: [[0, 0]] }
+    expect(await repo.enviar(comExtras)).toBe('enviado')
+    expect(f.chamadas).toEqual([['rpc', 'enviar_gesto', { p_id: GESTO_ID, p_gesto: 'ILoveYou' }]])
+    const [, , args] = f.chamadas[0] as [string, string, Record<string, unknown>]
+    expect(Object.keys(args).sort()).toEqual(['p_gesto', 'p_id'])
+    // id fora de uuid minúsculo ou gesto fora dos 7: falhou sem sair do aparelho
+    for (const g of [
+      { id: GESTO_ID.toUpperCase(), gesto: 'ILoveYou' },
+      { id: 'x', gesto: 'Victory' },
+      { id: GESTO_ID, gesto: 'None' },
+      { id: GESTO_ID, gesto: 'victory' },
+    ]) {
+      expect(await repo.enviar(g as { id: string; gesto: 'Victory' })).toBe('falhou')
+    }
+    expect(f.chamadas).toHaveLength(1)
+  })
+
+  test.each([
+    ['enviado', { data: 'enviado' }, 'enviado'],
+    ['intervalo', { data: 'intervalo' }, 'intervalo'],
+    ['desligados', { data: 'desligados' }, 'desligados'],
+    ['sem_palco', { data: 'sem_palco' }, 'sem_palco'],
+    ['54000 (600 por hora)', { error: { code: '54000', message: 'limite de gestos' }, status: 400 }, 'limite'],
+    ['42501 (não reconhece aqui ou sessão caiu)', { error: { code: '42501', message: 'não reconhece aqui' }, status: 403 }, 'negado'],
+    ['42501 com 401', { error: { code: '42501', message: 'x' }, status: 401 }, 'negado'],
+    ['55000 (sem episódio ativo ou câmera revogada)', { error: { code: '55000', message: 'câmera revogada' }, status: 400 }, 'negado'],
+    ['22023', { error: { code: '22023', message: 'gesto inválido' }, status: 400 }, 'falhou'],
+    ['22P02', { error: { code: '22P02', message: 'x' }, status: 400 }, 'falhou'],
+    ['JWT expirado', { error: { code: 'PGRST303', message: 'x' }, status: 401 }, 'falhou'],
+    ['rede ou tempo-limite de 15 s', { error: { code: '', message: 'TypeError: Failed to fetch' }, status: 0 }, 'falhou'],
+    ['texto fora da lista', { data: 'outra coisa' }, 'falhou'],
+    ['sem dado', { data: null, status: 204 }, 'falhou'],
+    ['lista', { data: ['enviado'] }, 'falhou'],
+  ] as const)('respostas-do-gesto: %s', async (_nome, resposta, esperado) => {
+    const f = criarFalso()
+    f.responderRpc(resposta)
+    expect(await criarRepositorioDosGestosSupabase(f.cliente).enviar({ id: GESTO_ID, gesto: 'Thumb_Up' })).toBe(esperado)
+  })
+
+  test('respostas-do-gesto: rpc que lança → falhou', async () => {
+    const f = criarFalso()
+    f.responderRpc(() => {
+      throw new Error('rede')
+    })
+    expect(await criarRepositorioDosGestosSupabase(f.cliente).enviar({ id: GESTO_ID, gesto: 'Thumb_Up' })).toBe('falhou')
+  })
+
+  test('situacao-dos-gestos', async () => {
+    const f = criarFalso()
+    const repo = criarRepositorioDosGestosSupabase(f.cliente)
+    f.responderRpc({ data: [{ ligados: true, reconhecer_aqui: false }] })
+    expect(await repo.situacao()).toEqual({ ligados: true, reconhecerAqui: false })
+    f.responderRpc({ data: [{ ligados: false, reconhecer_aqui: true }] })
+    expect(await repo.situacao()).toEqual({ ligados: false, reconhecerAqui: true })
+    expect(f.chamadas).toEqual([['rpc', 'situacao_dos_gestos'], ['rpc', 'situacao_dos_gestos']])
+    // forma errada → a promessa falha (motivo outro); a rota a trata como { ligados: false, reconhecerAqui: false }
+    for (const data of [[], null, [{ ligados: 'sim', reconhecer_aqui: true }], [{ ligados: true }], [{ ligados: null, reconhecer_aqui: null }], { ligados: true, reconhecer_aqui: true }, [null]]) {
+      f.responderRpc({ data })
+      expect(await motivoDe(repo.situacao())).toBe('outro')
+    }
+    // erros: 42501 → negado; rede → rede; o resto → outro; a mensagem do servidor nunca vai para o erro
+    f.responderRpc({ error: { code: '42501', message: 'sem permissão' }, status: 403 })
+    expect(await motivoDe(repo.situacao())).toBe('negado')
+    f.responderRpc({ error: { code: '', message: 'x' }, status: 0 })
+    expect(await motivoDe(repo.situacao())).toBe('rede')
+    f.responderRpc({ error: { code: 'XX000', message: 'segredo do servidor' }, status: 500 })
+    const e = await repo.situacao().catch((x: unknown) => x)
+    expect(e).toBeInstanceOf(ErroDeDispositivo)
+    expect((e as Error).message).not.toContain('segredo')
   })
 })

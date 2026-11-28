@@ -282,17 +282,28 @@ function repositorioDeEpisodios(cliente: SupabaseClient): RepositorioDeEpisodios
   }
 }
 
+/** Colunas do `mapa_gestos` lidas pela Preparação e, desde a E5 (PLA-006, D6), pelo palco: um leitor só. */
+export const COLUNAS_DO_MAPA = 'gesto, acao, cena_id, som_id'
+
+/**
+ * Linhas do `mapa_gestos` → `LinhaDoMapa`, para a aba Gestos e para a carga do palco (E5, Tarefa 4). Gesto ou ação
+ * desconhecidos (enum novo no banco antes do app) e linha que não é objeto são descartados.
+ */
+export function lerMapaDeGestos(data: unknown): LinhaDoMapa[] {
+  const mapa: LinhaDoMapa[] = []
+  for (const l of linhas<LinhaGesto | null>(data)) {
+    if (typeof l !== 'object' || l === null) continue
+    if (!NOMES_DE_GESTO.includes(l.gesto) || !NOMES_DE_ACAO.includes(l.acao)) continue
+    mapa.push({ gesto: l.gesto as Gesto, acao: l.acao as AcaoDoGesto, cenaId: l.cena_id ?? null, somId: l.som_id ?? null })
+  }
+  return mapa
+}
+
 function repositorioDeGestos(cliente: SupabaseClient): RepositorioDeGestos {
   return {
     async listar() {
-      const { data } = await executar(cliente.from('mapa_gestos').select('gesto, acao, cena_id, som_id').order('gesto'))
-      const mapa: LinhaDoMapa[] = []
-      for (const l of linhas<LinhaGesto>(data)) {
-        // Gesto ou ação desconhecidos (enum novo no banco antes do app): descartados.
-        if (!NOMES_DE_GESTO.includes(l.gesto) || !NOMES_DE_ACAO.includes(l.acao)) continue
-        mapa.push({ gesto: l.gesto as Gesto, acao: l.acao as AcaoDoGesto, cenaId: l.cena_id ?? null, somId: l.som_id ?? null })
-      }
-      return mapa
+      const { data } = await executar(cliente.from('mapa_gestos').select(COLUNAS_DO_MAPA).order('gesto'))
+      return lerMapaDeGestos(data)
     },
 
     async alterar(l) {

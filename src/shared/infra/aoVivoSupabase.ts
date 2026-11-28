@@ -9,6 +9,7 @@ import type { Aviso, EstadoDoEpisodio, Episodio } from '../../domains/preparacao
 import type { Som } from '../../domains/preparacao/midia'
 import { BUCKET_DE_MIDIAS } from './armazenamentoSupabase'
 import { classificarErro } from './errosSupabase'
+import { COLUNAS_DO_MAPA, lerMapaDeGestos } from './preparacaoSupabase'
 
 /** Validade das URLs assinadas do palco (sons e imagens dos avisos): 1 h, renovadas a cada 45 min pela tela (D16). */
 export const VALIDADE_NO_PALCO_S = 3600
@@ -16,7 +17,8 @@ export const VALIDADE_NO_PALCO_S = 3600
 /**
  * Erro das funções e tabelas do ao vivo → motivo (D7). A ordem vale: (1) sessão expirada (401 ou JWT
  * recusado) antes de tudo, como na classificação comum; (2) `55000` (o estado não permite) →
- * `estado_invalido`; (3) `22023` (parâmetro inválido) → `invalido`; (4) o resto pela classificação comum
+ * `estado_invalido`; (3) `22023` (parâmetro inválido) → `invalido`; (4) `54000` (limite global do "ligar" dos
+ * gestos, `definir_gestos_ligados`, PLA-006 D4) → `limite`; (5) o resto pela classificação comum
  * (`classificarErro`, sem mudar `errosSupabase.ts`), com `em_uso` (que o ao vivo não tem) → `outro`.
  * A mensagem do servidor nunca decide nem sai daqui.
  */
@@ -26,6 +28,7 @@ export function traduzirErroDoAoVivo(erro: { code?: string; message?: string; na
   const codigo = erro?.code ?? ''
   if (codigo === '55000') return 'estado_invalido'
   if (codigo === '22023') return 'invalido'
+  if (codigo === '54000') return 'limite'
   return comum === 'em_uso' ? 'outro' : comum
 }
 
@@ -137,21 +140,41 @@ export function criarRepositorioDoAoVivo(cliente: SupabaseClient): RepositorioDo
       if (typeof data !== 'string' || !UUID.test(data)) throw new ErroDoAoVivo('invalido')
       return { usuario: data }
     },
+
+    async definirGestosLigados(episodioId, ligado) {
+      // returns boolean: o valor gravado; outra forma → outro (nunca um "ligado" inventado pelo adaptador)
+      const data = await executar(() => cliente.rpc('definir_gestos_ligados', { p_episodio: episodioId, p_ligado: ligado }))
+      if (typeof data !== 'boolean') throw new ErroDoAoVivo('outro')
+      return data
+    },
+
+    async definirReconhecimento(cameraId, local) {
+      await executar(() => cliente.rpc('definir_reconhecimento', { p_dispositivo: cameraId, p_local: local }))
+    },
   }
+}
+
+/** `episodios.gestos_ligados` lido: só `boolean` (coluna `not null`); outra forma → `invalido`, nunca "desligado" nem "ligado". */
+function interruptor(valor: unknown): boolean {
+  if (typeof valor !== 'boolean') throw new ErroDoAoVivo('invalido')
+  return valor
 }
 
 /**
  * Adaptador da porta `RepositorioDoPalco` (cliente `obs_palco`): episódio ativo, as listas do episódio
  * (D9), URLs assinadas do bucket `midias` (D16) e o insert em `registro_acoes`, só com as colunas da D9
- * e **sem** `select` depois (o `obs_palco` só insere; a leitura é dos membros).
+ * e **sem** `select` depois (o `obs_palco` só insere; a leitura é dos membros). Desde a E5 (PLA-006, D4, D6), a
+ * carga traz o interruptor (`episodios.gestos_ligados`) e o mapa de gestos (`mapa_gestos`, pelo mesmo leitor da
+ * Preparação), e `gestosLigados` relê só a coluna do episódio dado. A leitura falha (nunca vira "desligado"): rede e o
+ * tempo-limite de 15 s do `fetch` (VER-021, `tempoLimite.ts`) → `rede`, e o palco tenta de novo (VER-059).
  */
 export function criarRepositorioDoPalco(cliente: SupabaseClient): RepositorioDoPalco {
   return {
     episodioAtivo: () => episodioAtivo(cliente),
 
     async carregar(episodioId) {
-      const [dadosDoEpisodio, dadosDasCenas, dadosDosSons, dadosDosAvisos] = await Promise.all([
-        executar(() => cliente.from('episodios').select('id, titulo, data, estado').eq('id', episodioId)),
+      const [dadosDoEpisodio, dadosDasCenas, dadosDosSons, dadosDosAvisos, dadosDoMapa] = await Promise.all([
+        executar(() => cliente.from('episodios').select('id, titulo, data, estado, gestos_ligados').eq('id', episodioId)),
         executar(() => cliente.from('cenas').select('id, nome_exibicao, nome_obs, ordem').order('ordem')),
         executar(() => cliente.from('sons').select('id, midia_id, rotulo, emoji, volume, ordem, midias(caminho)').order('ordem')),
         executar(() =>
@@ -161,11 +184,18 @@ export function criarRepositorioDoPalco(cliente: SupabaseClient): RepositorioDoP
             .eq('episodio_id', episodioId)
             .order('ordem'),
         ),
+        executar(() => cliente.from('mapa_gestos').select(COLUNAS_DO_MAPA).order('gesto')),
       ])
       // Episódio que não aparece (apagado, ou a RLS não deixa) ou com estado desconhecido → invalido.
       const [e] = linhas(dadosDoEpisodio)
       if (e === undefined || !ESTADOS.includes(e.estado as EstadoDoEpisodio)) throw new ErroDoAoVivo('invalido')
-      const episodio: Episodio = { id: e.id as string, titulo: e.titulo as string, data: e.data as string, estado: e.estado as EstadoDoEpisodio }
+      const episodio: Episodio & { gestosLigados: boolean } = {
+        id: e.id as string,
+        titulo: e.titulo as string,
+        data: e.data as string,
+        estado: e.estado as EstadoDoEpisodio,
+        gestosLigados: interruptor(e.gestos_ligados),
+      }
 
       const cenas = linhas(dadosDasCenas).map(
         (l): Cena => ({ id: l.id as string, nomeExibicao: l.nome_exibicao as string, nomeObs: l.nome_obs as string, ordem: l.ordem as number }),
@@ -202,12 +232,15 @@ export function criarRepositorioDoPalco(cliente: SupabaseClient): RepositorioDoP
         }
       })
 
-      // E5 (PLA-006, Tarefa 2): valores neutros até a Tarefa 4 ler `gestos_ligados` e `mapa_gestos` (gestos desligados, mapa vazio)
-      return { episodio: { ...episodio, gestosLigados: false }, cenas, sons, avisos, mapa: [] }
+      return { episodio, cenas, sons, avisos, mapa: lerMapaDeGestos(dadosDoMapa) }
     },
 
-    // E5 (PLA-006, Tarefa 2): neutro (desligados) até a Tarefa 4 ler `episodios.gestos_ligados`
-    gestosLigados: async () => false,
+    async gestosLigados(episodioId) {
+      // só a coluna, do episódio dado; sem linha (apagado ou a RLS não deixa) → invalido
+      const [l] = linhas(await executar(() => cliente.from('episodios').select('gestos_ligados').eq('id', episodioId)))
+      if (l === undefined) throw new ErroDoAoVivo('invalido')
+      return interruptor(l.gestos_ligados)
+    },
 
     async urlDoArquivo(caminho) {
       let resposta: { data: { signedUrl: string } | null; error: unknown }
