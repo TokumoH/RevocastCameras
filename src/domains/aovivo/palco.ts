@@ -1,11 +1,13 @@
-import { linhaDoRegistro, resolverComando, type AcaoNoObs, type MotivoDaRecusa } from './comandos'
+import { INTERVALO_DO_SERVIDOR_MS, ehGesto, type GestoRecebido } from '../captura/gestos'
+import type { Gesto } from '../preparacao/gestos'
+import { comandoDoGesto, linhaDoRegistro, resolverComando, type AcaoNoObs, type MotivoDaRecusa } from './comandos'
 import { UUID, lerComando, lerEstadoNoAr, type Comando, type EstadoNoAr, type MotivoDoResultado, type ResultadoDoComando, type Revogados } from './mensagens'
-import type { CanalDoControle, CanalDoEstado, ExecutorDeAcoes, RepositorioDoPalco } from './portas'
+import type { CanalDeGestosDoPalco, CanalDoControle, CanalDoEstado, ExecutorDeAcoes, RepositorioDoPalco } from './portas'
 
 /** O palco republica o estado no ar a cada 30 s, além de depois de cada mudança e quando alguém entra (DES-001 §8, D9). */
 export const ESTADO_A_CADA_MS = 30_000
 
-/** Quantos `id` de comando o palco lembra para descartar repetidos (D9). */
+/** Quantos `id` de comando o palco lembra para descartar repetidos (D9); desde a E5, também de gesto, numa memória à parte. */
 export const COMANDOS_LEMBRADOS = 200
 
 /**
@@ -28,6 +30,11 @@ export interface DependenciasDoPalco {
   canal: CanalDoControle
   /** `:estado`: onde o palco publica o estado no ar (o único tópico do episódio em que ele envia, VER-047). */
   canalDoEstado: CanalDoEstado
+  /**
+   * `gestos:<uid da sessão do palco>` (PLA-006, D2): os gestos que o banco publicou (`enviar_gesto`) e o aviso
+   * `gestos_mudaram` (D4). O palco só recebe ali; é o único caminho de um gesto (nunca o `:controle`).
+   */
+  canalDeGestos: CanalDeGestosDoPalco
   repo: RepositorioDoPalco
   executor: ExecutorDeAcoes
   /** Remetentes revogados avisados em `estudio` (quem os alimenta é a rota do palco, Tarefa 6). */
@@ -36,9 +43,10 @@ export interface DependenciasDoPalco {
   episodio: { id: string; modo: 'ao_vivo' | 'teste' }
   dados: Dados
   /**
-   * Relê as listas do episódio (cenas, sons, avisos) e devolve a carga nova, ou `null` se falhou (fica a
-   * anterior). A rota a fornece, porque também renova as URLs dos arquivos novos (VER-046, I2). Sem ela, o
-   * palco não relê.
+   * Relê as listas do episódio (cenas, sons, avisos e, desde a E5, o mapa de gestos) e devolve a carga nova, ou
+   * `null` se falhou (fica a anterior). A rota a fornece, porque também renova as URLs dos arquivos novos
+   * (VER-046, I2). Sem ela, o palco não relê. O interruptor da carga relida não é usado: ele só muda pela
+   * releitura própria (`RepositorioDoPalco.gestosLigados`, D4).
    */
   recarregarDados?(): Promise<Dados | null>
   /** `auth.uid()` da sessão do palco: o eco do próprio envio é ignorado. */
@@ -52,12 +60,48 @@ export interface DependenciasDoPalco {
 /** Ações que demoram de propósito (o clipe espera 5 s): o estado mostra `pendente` antes de esperar. */
 const ACOES_DEMORADAS: readonly AcaoNoObs['tipo'][] = Object.freeze(['salvar_clipe'] as const)
 
+/** Quem pediu (PLA-006, D6): o toque (o membro, remetente declarado) ou o gesto (o dispositivo posto pelo servidor, e qual gesto). */
+type Autoria = { origem: 'toque'; membroId: string } | { origem: 'gesto'; dispositivoId: string; gesto: Gesto }
+
+/** Lembra os últimos `limite` ids; devolve `false` para um id já visto. */
+function memoria(limite: number): (id: string) => boolean {
+  const vistos = new Set<string>()
+  const ordem: string[] = []
+  return (id) => {
+    if (vistos.has(id)) return false
+    vistos.add(id)
+    ordem.push(id)
+    if (ordem.length > limite) vistos.delete(ordem.shift() as string)
+    return true
+  }
+}
+
+const CHAVES_DO_GESTO_RECEBIDO: readonly string[] = Object.freeze(['id', 'gesto', 'dispositivoId'])
+
+/**
+ * Confere de novo o gesto que o adaptador entregou (defesa em profundidade, como `lerComando` no toque): objeto simples,
+ * exatamente `id`, `gesto` e `dispositivoId` (nenhum `acao`, nenhum `__proto__`), uuids minúsculos e um dos 7 gestos.
+ * Devolve objeto novo, campo a campo; fora da forma → `null`.
+ */
+function gestoConferido(g: unknown): GestoRecebido | null {
+  if (typeof g !== 'object' || g === null || Array.isArray(g)) return null
+  const prototipo: unknown = Object.getPrototypeOf(g)
+  if (prototipo !== Object.prototype && prototipo !== null) return null
+  const chaves = Reflect.ownKeys(g)
+  if (chaves.length !== CHAVES_DO_GESTO_RECEBIDO.length) return null
+  if (!chaves.every((c) => typeof c === 'string' && CHAVES_DO_GESTO_RECEBIDO.includes(c))) return null
+  const { id, gesto, dispositivoId } = g as Record<string, unknown>
+  if (typeof id !== 'string' || !UUID.test(id) || !ehGesto(gesto)) return null
+  if (typeof dispositivoId !== 'string' || !UUID.test(dispositivoId)) return null
+  return { id, gesto, dispositivoId }
+}
+
 function copiar(e: EstadoNoAr): EstadoNoAr {
   return { ...e, ultimo: e.ultimo === null ? null : { ...e.ultimo }, obs: { ...e.obs } }
 }
 
 /**
- * Serviço do palco (D9; DES-001 §10.1: o palco é o único executor). Para cada comando recebido:
+ * Serviço do palco (D9; DES-001 §10.1: o palco é o único executor). Para cada comando recebido (toque):
  * 1. confere de novo a forma (`lerComando`) e o remetente (uuid); inválido → descartado sem efeito;
  * 2. ignora o próprio eco, o remetente revogado (`Revogados`, 15 min), o remetente que **não está na
  *    presença do `:controle`** (só membros marcam presença ali, pela RLS; um `obs_palco` não entra nela,
@@ -70,6 +114,20 @@ function copiar(e: EstadoNoAr): EstadoNoAr {
  * 5. atualiza o estado (cena do OBS, aviso no ar e o prazo dele, último resultado) e o publica;
  * 6. com `ok`, grava `registro_acoes` (`linhaDoRegistro`); a falha ao gravar não desfaz nem bloqueia nada.
  * Comandos diferentes não esperam um pelo outro (um clipe pendente não segura uma troca de cena).
+ * Desde a E5 (PLA-006, D2, D3, D4, D6), também cada gesto recebido em `gestos:<uid do palco>` (o único caminho dele):
+ * a. confere de novo a forma (`gestoConferido`) e o remetente (uuid posto pelo servidor); inválido → descartado;
+ * b. ignora o remetente revogado, o gesto com o interruptor desligado no estado que o palco leu, o `id` repetido
+ *    (memória própria, últimos 200) e o gesto a menos de `INTERVALO_DO_SERVIDOR_MS` (2,5 s; D3) do último aceito,
+ *    pelo relógio de chegada; nada disso publica estado;
+ * c. a linha do mapa vira comando (`comandoDoGesto`); `nenhuma` (ou gesto sem linha) → `recusado` com `gesto_sem_acao`,
+ *    nada executado nem registrado; daí em diante, os passos 3 a 6 do toque, com `origem: 'gesto'` e o gesto no
+ *    `ultimo`, e o registro com o `dispositivoId` do payload (nunca o remetente; D6). A releitura das listas relê
+ *    também o mapa, e o comando é refeito com o mapa novo.
+ * O aviso `gestos_mudaram` não leva valor: o palco relê `gestosLigados` no banco (no máximo uma leitura a cada
+ * `RELEITURA_MINIMA_MS`, mais uma no fim da janela se vier aviso dentro dela) e republica o estado se o valor mudou.
+ * Também relê logo depois de assinar o tópico de gestos e a cada volta dele a `conectado`, e tenta de novo no fim da
+ * janela quando a leitura falha (rodada 1, I2). Um gesto aceito que espera a releitura das listas não é executado se o
+ * interruptor tiver sido relido como desligado nesse meio-tempo (rodada 1, I1).
  * O estado vai ao `:estado` (VER-047), nunca ao `:controle`; é publicado ao começar, a cada 30 s, quando
  * alguém entra no `:controle` e quando a rota pede (`republicar`, ao voltar a `conectado`: a publicação do começo pode ter saído com o canal
  * ainda conectando, e a reconexão do próprio palco não gera entrada na presença; Tarefa 6).
@@ -89,8 +147,8 @@ export function criarPalco(d: DependenciasDoPalco): {
 } {
   const agora = d.agora ?? (() => Date.now())
   const ouvintes = new Set<(e: EstadoNoAr) => void>()
-  const vistos = new Set<string>()
-  const ordemDosVistos: string[] = []
+  const lembrarComando = memoria(COMANDOS_LEMBRADOS)
+  const lembrarGesto = memoria(COMANDOS_LEMBRADOS)
   let parado = false
   let cancelarPrazoDoAviso: (() => void) | null = null
   let dados: Dados = d.dados
@@ -100,6 +158,12 @@ export function criarPalco(d: DependenciasDoPalco): {
   let releitura: Promise<void> | null = null
   /** Quando começou a última releitura (relógio `agora`); `null` = nenhuma ainda. */
   let ultimaReleitura: number | null = null
+  /** Chegada do último gesto aceito (relógio `agora`; D3); `null` = nenhum ainda. */
+  let ultimoGestoAceito: number | null = null
+  /** Quando começou a última leitura do interruptor; a sequência descarta a resposta de uma leitura já superada. */
+  let ultimaLeituraDoInterruptor: number | null = null
+  let leiturasDoInterruptor = 0
+  let cancelarLeituraAgendada: (() => void) | null = null
   const estado: EstadoNoAr = {
     episodioId: d.episodio.id,
     modo: d.episodio.modo,
@@ -108,6 +172,7 @@ export function criarPalco(d: DependenciasDoPalco): {
     avisoAte: null,
     ultimo: null,
     obs: d.executor.situacao(),
+    gestosLigados: d.dados.episodio.gestosLigados === true,
   }
 
   /**
@@ -128,14 +193,6 @@ export function criarPalco(d: DependenciasDoPalco): {
     const saida = paraOCanal(copiar(estado))
     if (saida !== null) d.canalDoEstado.publicarEstado(saida).catch(() => {})
     if (avisar) for (const f of ouvintes) f(copiar(estado))
-  }
-
-  function lembrar(id: string): boolean {
-    if (vistos.has(id)) return false
-    vistos.add(id)
-    ordemDosVistos.push(id)
-    if (ordemDosVistos.length > COMANDOS_LEMBRADOS) vistos.delete(ordemDosVistos.shift() as string)
-    return true
   }
 
   function soltarPrazoDoAviso(): void {
@@ -170,8 +227,14 @@ export function criarPalco(d: DependenciasDoPalco): {
     }
   }
 
-  function anotar(c: Comando, resultado: ResultadoDoComando, motivo: MotivoDoResultado | null): void {
-    estado.ultimo = { comandoId: c.id, acao: c.acao, resultado, motivo }
+  function anotar(c: Comando, resultado: ResultadoDoComando, motivo: MotivoDoResultado | null, autoria: Autoria): void {
+    estado.ultimo = { comandoId: c.id, acao: c.acao, resultado, motivo, origem: autoria.origem, gesto: autoria.origem === 'gesto' ? autoria.gesto : null }
+    publicar()
+  }
+
+  /** Gesto que o mapa não liga a nada (`nenhuma`): recusa com `gesto_sem_acao`, sem executar nem registrar (D6). */
+  function anotarSemAcao(id: string, gesto: Gesto): void {
+    estado.ultimo = { comandoId: id, acao: 'nenhuma', resultado: 'recusado', motivo: 'gesto_sem_acao', origem: 'gesto', gesto }
     publicar()
   }
 
@@ -209,26 +272,30 @@ export function criarPalco(d: DependenciasDoPalco): {
     return releitura
   }
 
-  async function tratar(recebido: unknown, remetente: string): Promise<void> {
-    if (parado) return
-    const c = lerComando(recebido)
-    if (c === null || typeof remetente !== 'string' || !UUID.test(remetente)) return
-    if (remetente === d.meuUsuario || d.revogados.contem(remetente)) return
-    if (!presentes.has(remetente)) return
-    if (!lembrar(c.id)) return
-
-    let resolvido = resolver(c)
-    if (!resolvido.ok && RECUSAS_QUE_RELEEM.includes(resolvido.motivo)) {
+  /**
+   * Passos 3 a 6 (toque e gesto): `pedir` dá o comando (o gesto o refaz com o mapa relido); `null` = gesto sem ação.
+   */
+  async function executarPedido(pedir: () => Comando | null, id: string, autoria: Autoria): Promise<void> {
+    let c = pedir()
+    let resolvido = c === null ? null : resolver(c)
+    if (resolvido !== null && !resolvido.ok && RECUSAS_QUE_RELEEM.includes(resolvido.motivo)) {
       await reler()
       if (parado) return
-      resolvido = resolver(c)
+      // o interruptor pode ter sido relido como desligado durante a releitura: o gesto não vira comando (rodada 1, I1)
+      if (autoria.origem === 'gesto' && !estado.gestosLigados) return
+      c = pedir()
+      resolvido = c === null ? null : resolver(c)
+    }
+    if (c === null || resolvido === null) {
+      if (autoria.origem === 'gesto') anotarSemAcao(id, autoria.gesto)
+      return
     }
     if (!resolvido.ok) {
-      anotar(c, 'recusado', resolvido.motivo)
+      anotar(c, 'recusado', resolvido.motivo, autoria)
       return
     }
     const acao = resolvido.acao
-    if (ACOES_DEMORADAS.includes(acao.tipo)) anotar(c, 'pendente', null)
+    if (ACOES_DEMORADAS.includes(acao.tipo)) anotar(c, 'pendente', null, autoria)
 
     let r: { resultado: ResultadoDoComando; motivo: MotivoDoResultado | null }
     try {
@@ -238,11 +305,99 @@ export function criarPalco(d: DependenciasDoPalco): {
     }
     if (parado) return
     if (r.resultado === 'ok') aplicar(acao)
-    anotar(c, r.resultado, r.motivo)
+    anotar(c, r.resultado, r.motivo, autoria)
     if (r.resultado === 'ok') {
-      const linha = linhaDoRegistro(c, acao, { episodioId: d.episodio.id, modo: d.episodio.modo, remetente })
+      const autor = autoria.origem === 'toque' ? { origem: 'toque' as const, membroId: autoria.membroId } : { origem: 'gesto' as const, dispositivoId: autoria.dispositivoId }
+      const linha = linhaDoRegistro(c, acao, { episodioId: d.episodio.id, modo: d.episodio.modo, autor })
       d.repo.registrar(linha).catch(() => {})
     }
+  }
+
+  async function tratar(recebido: unknown, remetente: string): Promise<void> {
+    if (parado) return
+    const c = lerComando(recebido)
+    if (c === null || typeof remetente !== 'string' || !UUID.test(remetente)) return
+    if (remetente === d.meuUsuario || d.revogados.contem(remetente)) return
+    if (!presentes.has(remetente)) return
+    if (!lembrarComando(c.id)) return
+    await executarPedido(() => c, c.id, { origem: 'toque', membroId: remetente })
+  }
+
+  /** Um gesto do tópico de gestos (passos a a c). */
+  async function tratarGesto(recebido: unknown, remetente: string): Promise<void> {
+    if (parado) return
+    const g = gestoConferido(recebido)
+    if (g === null || typeof remetente !== 'string' || !UUID.test(remetente)) return
+    if (d.revogados.contem(remetente)) return
+    if (!estado.gestosLigados) return
+    if (!lembrarGesto(g.id)) return
+    const t = agora()
+    if (ultimoGestoAceito !== null && t - ultimoGestoAceito < INTERVALO_DO_SERVIDOR_MS) return
+    ultimoGestoAceito = t
+    const pedir = () => {
+      const linha = dados.mapa.find((l) => l.gesto === g.gesto)
+      return linha === undefined ? null : comandoDoGesto(linha, g.id)
+    }
+    await executarPedido(pedir, g.id, { origem: 'gesto', dispositivoId: g.dispositivoId, gesto: g.gesto })
+  }
+
+  /**
+   * Lê `gestos_ligados` agora; só a resposta da leitura mais recente vale e só um valor diferente publica o estado.
+   * Falha (erro ou resposta que não é booleana) → fica o valor de antes e uma nova tentativa no fim da janela
+   * (rodada 1, I2: o interruptor do palco sempre volta ao do banco).
+   */
+  function lerInterruptor(): void {
+    ultimaLeituraDoInterruptor = agora()
+    const esta = ++leiturasDoInterruptor
+    const falhou = () => {
+      if (!parado && esta === leiturasDoInterruptor) agendarLeituraDoInterruptor()
+    }
+    let leitura: Promise<boolean>
+    try {
+      leitura = d.repo.gestosLigados(d.episodio.id)
+    } catch {
+      falhou()
+      return
+    }
+    leitura.then((ligados) => {
+      if (parado || esta !== leiturasDoInterruptor) return
+      if (typeof ligados !== 'boolean') {
+        falhou()
+        return
+      }
+      if (ligados === estado.gestosLigados) return
+      estado.gestosLigados = ligados
+      publicar()
+    }, falhou)
+  }
+
+  /** Uma leitura no fim da janela que começou na última leitura (nunca mais de uma agendada). */
+  function agendarLeituraDoInterruptor(): void {
+    if (parado || cancelarLeituraAgendada !== null) return
+    const desde = ultimaLeituraDoInterruptor === null ? RELEITURA_MINIMA_MS : agora() - ultimaLeituraDoInterruptor
+    const cancelar = d.agendarRepeticao(
+      () => {
+        cancelar()
+        cancelarLeituraAgendada = null
+        if (!parado) lerInterruptor()
+      },
+      Math.max(1, RELEITURA_MINIMA_MS - desde),
+    )
+    cancelarLeituraAgendada = cancelar
+  }
+
+  /**
+   * Relê o interruptor (D4): no aviso `gestos_mudaram`, logo depois de assinar o tópico de gestos (fecha a janela entre o
+   * `carregar` e a assinatura) e a cada volta do tópico a `conectado` (aviso perdido na queda; rodada 1, I2). Lê agora
+   * ou, dentro da janela, uma vez no fim dela (pedidos seguidos não somam leituras).
+   */
+  function relerInterruptor(): void {
+    if (parado || cancelarLeituraAgendada !== null) return
+    if (ultimaLeituraDoInterruptor === null || agora() - ultimaLeituraDoInterruptor >= RELEITURA_MINIMA_MS) {
+      lerInterruptor()
+      return
+    }
+    agendarLeituraDoInterruptor()
   }
 
   const soltar = [
@@ -256,9 +411,20 @@ export function criarPalco(d: DependenciasDoPalco): {
     d.canal.aoMudarPresentes((usuarios) => {
       presentes = new Set(usuarios)
     }),
+    d.canalDeGestos.aoGesto((g, remetente) => {
+      void tratarGesto(g, remetente)
+    }),
+    d.canalDeGestos.aoAviso(() => {
+      relerInterruptor()
+    }),
+    d.canalDeGestos.aoMudarEstado((e) => {
+      if (e === 'conectado') relerInterruptor()
+    }),
     d.agendarRepeticao(() => publicar(false), ESTADO_A_CADA_MS),
   ]
   publicar(false)
+  // depois de assinar: um aviso entre o `carregar` e a assinatura teria se perdido (rodada 1, I2)
+  relerInterruptor()
 
   return {
     estado: () => copiar(estado),
@@ -281,6 +447,8 @@ export function criarPalco(d: DependenciasDoPalco): {
       if (parado) return
       parado = true
       soltarPrazoDoAviso()
+      cancelarLeituraAgendada?.()
+      cancelarLeituraAgendada = null
       for (const s of soltar) s()
       ouvintes.clear()
     },

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Revogados } from '../../domains/aovivo/mensagens'
 import { criarPalco } from '../../domains/aovivo/palco'
-import type { CanalDoControle, CanalDoEstado, EstadoDoCanal, RepositorioDoPalco } from '../../domains/aovivo/portas'
+import type { CanalDeGestosDoPalco, CanalDoControle, CanalDoEstado, EstadoDoCanal, RepositorioDoPalco } from '../../domains/aovivo/portas'
 import { criarExecutorObs } from '../../domains/obs/executor'
 import type { ExecutorObs } from '../../domains/obs/executor'
 import type { MarcadorObs, ObsNoNavegador, ObsWebsocket } from '../../domains/obs/portas'
@@ -67,6 +67,18 @@ function portaValida(p: unknown): p is number {
 }
 
 type Carga = Awaited<ReturnType<RepositorioDoPalco['carregar']>>
+
+/**
+ * E5 (PLA-006, Tarefa 2): o palco ainda não abre o tópico `gestos:<uid>` (a Tarefa 7 o abre, com o adaptador da Tarefa 4);
+ * até lá, um canal que nunca entrega gesto nem aviso, e os gestos ficam desligados (carga neutra).
+ */
+const SEM_CANAL_DE_GESTOS: CanalDeGestosDoPalco = Object.freeze({
+  aoGesto: () => () => {},
+  aoAviso: () => () => {},
+  aoMudarEstado: () => () => {},
+  fechar: async () => {},
+})
+
 type EstadoDoWs = 'desligado' | 'senha_errada' | 'conectando' | 'conectado' | 'sem_conexao'
 
 /** O que a tela mostra; tudo além do aviso só aparece pela tecla e com a saída parada (D10, D16). */
@@ -288,6 +300,7 @@ export function PalcoNoAr({
       const palco = criarPalco({
         canal,
         canalDoEstado,
+        canalDeGestos: SEM_CANAL_DE_GESTOS,
         repo: servicos.palco,
         executor,
         revogados,

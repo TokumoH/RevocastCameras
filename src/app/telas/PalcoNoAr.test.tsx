@@ -32,10 +32,11 @@ type Aviso = Carga['avisos'][number]
 
 function carga(id: string, titulo: string, aviso: Partial<Aviso> = {}): Carga {
   return {
-    episodio: { id, titulo, data: '2026-11-27', estado: 'rascunho' },
+    episodio: { id, titulo, data: '2026-11-27', estado: 'rascunho', gestosLigados: false },
     cenas: [{ id: CENA, nomeExibicao: 'Abertura', nomeObs: 'Abertura', ordem: 0 }],
     sons: [{ id: SOM, midiaId: '60000000-0000-4000-8000-000000000001', rotulo: 'Aplauso', emoji: null, volume: 0.8, ordem: 0, caminho: 'som/aplauso.mp3' }],
     avisos: [{ id: AVISO, episodioId: id, titulo: 'Inscreva-se', texto: 'Canal novo', link: null, imagemMidiaId: null, duracaoS: 10, ordem: 0, caminhoDaImagem: null, ...aviso }],
+    mapa: [],
   }
 }
 

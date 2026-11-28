@@ -1130,7 +1130,7 @@ describe('aba Ao vivo — comandos (Tarefa 9)', () => {
     await esperar()
     fireEvent.click(screen.getByRole('tab', { name: 'Ao vivo' }))
     await esperar()
-    const estadoNoAr = { episodioId: EP_A, modo: 'teste', cenaObs: 'Cena Geral', avisoId: null, avisoAte: null, ultimo: null, obs: OBS_OK, remetente: SESSAO_PALCO }
+    const estadoNoAr = { episodioId: EP_A, modo: 'teste', cenaObs: 'Cena Geral', avisoId: null, avisoAte: null, ultimo: null, obs: OBS_OK, gestosLigados: false, remetente: SESSAO_PALCO }
     const regiao = () => within(secao('Comandos')).getByRole('region', { name: 'Estado' })
     act(() => canal.entregar(`episodio:${EP_A}:controle`, 'estado', estadoNoAr))
     await esperar()

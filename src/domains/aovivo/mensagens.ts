@@ -1,6 +1,7 @@
 import type { TipoDeDispositivo } from '../acesso/dispositivos'
-import { lerSituacaoDosGestos, type SituacaoDosGestos } from '../captura/gestos'
+import { ehGesto, lerSituacaoDosGestos, type SituacaoDosGestos } from '../captura/gestos'
 import { lerSituacaoDoVideo, type SituacaoDoVideo } from '../captura/sinais'
+import type { Gesto } from '../preparacao/gestos'
 import { UUID } from '../preparacao/midia'
 
 /*
@@ -84,8 +85,9 @@ export type ResultadoDoComando = 'ok' | 'pendente' | 'recusado' | 'falhou'
 
 /**
  * Lista fechada dos motivos de recusa ou falha que o estado no ar pode levar: os de
- * `resolverComando` (`comandos.ts`) e os do executor do OBS (Tarefa 5). Texto livre (por exemplo,
- * uma mensagem de erro do OBS) nunca vai no estado. Motivo novo entra aqui.
+ * `resolverComando` (`comandos.ts`), os do executor do OBS (Tarefa 5) e, desde a E5 (PLA-006, D6),
+ * `gesto_sem_acao` (o mapa diz `nenhuma` para o gesto). Texto livre (por exemplo, uma mensagem de
+ * erro do OBS) nunca vai no estado. Motivo novo entra aqui.
  */
 export const MOTIVOS_DO_RESULTADO = Object.freeze([
   'cena_inexistente',
@@ -100,10 +102,28 @@ export const MOTIVOS_DO_RESULTADO = Object.freeze([
   'sem_websocket',
   'sem_gravacao',
   'obs_ausente',
+  'gesto_sem_acao',
 ] as const)
 export type MotivoDoResultado = (typeof MOTIVOS_DO_RESULTADO)[number]
 
-/** Estado no ar que o palco publica em `:estado` (D9; em `:controle` até o VER-047): só ids e o nome da cena do OBS. */
+/**
+ * O último resultado do palco (D9). Desde a E5 (PLA-006, D6), com a origem: `toque` (com `gesto: null`) ou `gesto` (com um
+ * dos 7 gestos). `acao: 'nenhuma'` só existe no gesto recusado com `gesto_sem_acao` (o mapa não pede ação); o
+ * `comandoId` do gesto é o `id` do gesto. O leitor (`lerEstadoNoAr`) confere essas combinações.
+ */
+export interface UltimoNoAr {
+  comandoId: string
+  acao: Comando['acao'] | 'nenhuma'
+  resultado: ResultadoDoComando
+  motivo: MotivoDoResultado | null
+  origem: 'toque' | 'gesto'
+  gesto: Gesto | null
+}
+
+/**
+ * Estado no ar que o palco publica em `:estado` (D9; em `:controle` até o VER-047): só ids e o nome da cena do OBS. Desde
+ * a E5 (PLA-006, D4, D6), com o interruptor dos gestos (`gestosLigados`, relido do banco pelo palco).
+ */
 export interface EstadoNoAr {
   episodioId: string
   modo: 'ao_vivo' | 'teste'
@@ -111,8 +131,9 @@ export interface EstadoNoAr {
   avisoId: string | null
   /** Instante (ms desde 1970) em que o aviso no ar sai. */
   avisoAte: number | null
-  ultimo: { comandoId: string; acao: Comando['acao']; resultado: ResultadoDoComando; motivo: MotivoDoResultado | null } | null
+  ultimo: UltimoNoAr | null
   obs: SituacaoDoObs
+  gestosLigados: boolean
 }
 
 const ACOES: readonly Comando['acao'][] = Object.freeze(['cena', 'som', 'aviso', 'proxima_cena', 'proximo_aviso', 'ocultar_aviso', 'clipe', 'marcador'] as const)
@@ -255,26 +276,44 @@ function lerSituacaoDoObs(valor: unknown): SituacaoDoObs | null {
   return { navegador, versaoDoPlugin, nivel, websocket, versaoObs, replayBuffer, gravando }
 }
 
-const CHAVES_DO_ULTIMO = ['comandoId', 'acao', 'resultado', 'motivo']
+const CHAVES_DO_ULTIMO = ['comandoId', 'acao', 'resultado', 'motivo', 'origem', 'gesto']
+const ACOES_DO_ULTIMO: readonly UltimoNoAr['acao'][] = Object.freeze([...ACOES, 'nenhuma'] as const)
 
+/**
+ * O `ultimo` do estado. Desde a E5 (PLA-006, D6): `origem` `toque` exige `gesto: null`; `origem` `gesto` exige um dos 7
+ * gestos (`ehGesto`; `None` não é gesto) e nunca `acao: 'aviso'`; `acao: 'nenhuma'` vale só com `origem: 'gesto'`,
+ * `recusado` e `gesto_sem_acao`, e `gesto_sem_acao` só com `nenhuma`.
+ */
 function lerUltimo(valor: unknown): EstadoNoAr['ultimo'] | undefined {
   if (valor === null) return null
   const o = objetoComChaves(valor, CHAVES_DO_ULTIMO)
   if (o === null || !todasPresentes(o, CHAVES_DO_ULTIMO)) return undefined
-  const { comandoId, acao, resultado, motivo } = o
-  if (!ehUuid(comandoId) || !daLista(acao, ACOES) || !daLista(resultado, RESULTADOS)) return undefined
+  const { comandoId, acao, resultado, motivo, origem, gesto } = o
+  if (!ehUuid(comandoId) || !daLista(acao, ACOES_DO_ULTIMO) || !daLista(resultado, RESULTADOS)) return undefined
   if (motivo !== null && !daLista(motivo, MOTIVOS_DO_RESULTADO)) return undefined
-  return { comandoId, acao, resultado, motivo }
+  if (origem === 'toque') {
+    if (gesto !== null) return undefined
+  } else if (origem !== 'gesto' || !ehGesto(gesto)) return undefined
+  // `aviso` (mostrar um aviso escolhido) só vem do toque: `comandoDoGesto` nunca o produz (rodada 1, N3)
+  if (origem === 'gesto' && acao === 'aviso') return undefined
+  const semAcao = acao === 'nenhuma'
+  if (semAcao !== (motivo === 'gesto_sem_acao')) return undefined
+  if (semAcao && (origem !== 'gesto' || resultado !== 'recusado')) return undefined
+  return { comandoId, acao, resultado, motivo, origem, gesto: origem === 'gesto' ? (gesto as Gesto) : null }
 }
 
-const CHAVES_DO_ESTADO = ['episodioId', 'modo', 'cenaObs', 'avisoId', 'avisoAte', 'ultimo', 'obs']
+const CHAVES_DO_ESTADO = ['episodioId', 'modo', 'cenaObs', 'avisoId', 'avisoAte', 'ultimo', 'obs', 'gestosLigados']
 
-/** Estado no ar: `cenaObs` até 200 caracteres; `avisoAte` finito e ≥ 0; `motivo` da lista fixa; todos os campos presentes. */
+/**
+ * Estado no ar: `cenaObs` até 200 caracteres; `avisoAte` finito e ≥ 0; `motivo` da lista fixa; `gestosLigados` booleano
+ * (desde a E5); todos os campos presentes.
+ */
 export function lerEstadoNoAr(payload: unknown): EstadoNoAr | null {
   const o = objetoComChaves(payload, [...CHAVES_DO_ESTADO, 'remetente'])
   if (o === null || !remetenteValido(o) || !todasPresentes(o, CHAVES_DO_ESTADO)) return null
-  const { episodioId, modo, cenaObs, avisoId, avisoAte } = o
+  const { episodioId, modo, cenaObs, avisoId, avisoAte, gestosLigados } = o
   if (!ehUuid(episodioId)) return null
+  if (typeof gestosLigados !== 'boolean') return null
   if (modo !== 'ao_vivo' && modo !== 'teste') return null
   if (cenaObs !== null && !textoAte(cenaObs, TAMANHO_DA_CENA_OBS)) return null
   if (avisoId !== null && !ehUuid(avisoId)) return null
@@ -283,7 +322,7 @@ export function lerEstadoNoAr(payload: unknown): EstadoNoAr | null {
   if (ultimo === undefined) return null
   const obs = lerSituacaoDoObs(o.obs)
   if (obs === null) return null
-  return { episodioId, modo, cenaObs, avisoId, avisoAte, ultimo, obs }
+  return { episodioId, modo, cenaObs, avisoId, avisoAte, ultimo, obs, gestosLigados }
 }
 
 function referenciaValida(o: Objeto): boolean {

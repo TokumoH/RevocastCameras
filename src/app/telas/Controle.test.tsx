@@ -54,7 +54,7 @@ const OBS = { navegador: true, versaoDoPlugin: '2.24.0', nivel: 4, websocket: 'c
 const controle = (id = EP) => `episodio:${id}:controle`
 /** O tópico do estado no ar (VER-047): só o palco publica aqui; o `/controle` só lê. */
 const estadoT = (id = EP) => `episodio:${id}:estado`
-const estadoNoAr = (o: Record<string, unknown> = {}) => ({ episodioId: EP, modo: 'teste', cenaObs: null, avisoId: null, avisoAte: null, ultimo: null, obs: OBS, remetente: PALCO, ...o })
+const estadoNoAr = (o: Record<string, unknown> = {}) => ({ episodioId: EP, modo: 'teste', cenaObs: null, avisoId: null, avisoAte: null, ultimo: null, obs: OBS, gestosLigados: false, remetente: PALCO, ...o })
 
 /** Esvazia as promessas pendentes e anda `ms` no relógio falso (dentro do `act`). */
 async function esperar(ms = 0) {
@@ -259,18 +259,18 @@ describe('/controle por toque (Tarefa 7)', () => {
     fireEvent.click(botao('👏 aplauso'))
     await esperar()
     const [som] = comandosEnviados(m)
-    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ ultimo: { comandoId: som.id, acao: 'som', resultado: 'ok', motivo: null } })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ ultimo: { comandoId: som.id, acao: 'som', resultado: 'ok', motivo: null, origem: 'toque', gesto: null } })))
     await esperar()
     expect(screen.getByText('🎵 aplauso ✓')).toBeTruthy()
     fireEvent.click(botao('Geral'))
     await esperar()
     const cena = comandosEnviados(m)[1]
-    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ ultimo: { comandoId: cena.id, acao: 'cena', resultado: 'recusado', motivo: 'cena_inexistente_no_obs' } })))
+    act(() => m.canal.entregar(estadoT(), 'estado', estadoNoAr({ ultimo: { comandoId: cena.id, acao: 'cena', resultado: 'recusado', motivo: 'cena_inexistente_no_obs', origem: 'toque', gesto: null } })))
     await esperar()
     expect(screen.getByText('Cena não existe no OBS')).toBeTruthy()
     // comando de outra pessoa: só a ação
     act(() =>
-      m.canal.entregar(estadoT(), 'estado', estadoNoAr({ ultimo: { comandoId: 'f0000000-0000-4000-8000-000000000009', acao: 'clipe', resultado: 'pendente', motivo: null } })),
+      m.canal.entregar(estadoT(), 'estado', estadoNoAr({ ultimo: { comandoId: 'f0000000-0000-4000-8000-000000000009', acao: 'clipe', resultado: 'pendente', motivo: null, origem: 'toque', gesto: null } })),
     )
     await esperar()
     expect(screen.getByText('✂️ Clipe …')).toBeTruthy()
@@ -328,7 +328,7 @@ describe('/controle por toque (Tarefa 7)', () => {
       estadoNoAr({ cenaObs: 'x'.repeat(201) }),
       estadoNoAr({ avisoId: AVISO2, extra: true }),
       estadoNoAr({ avisoId: AVISO2.toUpperCase() }),
-      estadoNoAr({ ultimo: { comandoId: AVISO, acao: 'clipe', resultado: 'recusado', motivo: '<b>texto livre</b>' } }),
+      estadoNoAr({ ultimo: { comandoId: AVISO, acao: 'clipe', resultado: 'recusado', motivo: '<b>texto livre</b>', origem: 'toque', gesto: null } }),
       { ...estadoNoAr({ avisoId: AVISO2 }), remetente: undefined },
       JSON.parse(`{"__proto__":{"x":1},${JSON.stringify(estadoNoAr({ avisoId: AVISO2 })).slice(1)}`),
       estadoNoAr({ obs: { ...OBS, nivel: 9 } }),

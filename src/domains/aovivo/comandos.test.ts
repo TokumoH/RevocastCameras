@@ -2,7 +2,8 @@ import { describe, test, expect } from 'vitest'
 import type { Cena } from '../preparacao/cenas'
 import type { Aviso } from '../preparacao/episodios'
 import type { Som } from '../preparacao/midia'
-import { TAMANHO_DO_MARCADOR, linhaDoRegistro, resolverComando } from './comandos'
+import type { AcaoDoGesto, LinhaDoMapa } from '../preparacao/gestos'
+import { TAMANHO_DO_MARCADOR, comandoDoGesto, linhaDoRegistro, resolverComando } from './comandos'
 import type { AcaoNoObs, MotivoDaRecusa } from './comandos'
 import { MOTIVOS_DO_RESULTADO } from './mensagens'
 import type { Comando, MotivoDoResultado } from './mensagens'
@@ -113,7 +114,8 @@ describe('resolverComando', () => {
 })
 
 describe('registro', () => {
-  const linha = (c: Comando, a: AcaoNoObs, modo: 'ao_vivo' | 'teste' = 'ao_vivo') => linhaDoRegistro(c, a, { episodioId: EPISODIO, modo, remetente: REMETENTE })
+  const linha = (c: Comando, a: AcaoNoObs, modo: 'ao_vivo' | 'teste' = 'ao_vivo') =>
+    linhaDoRegistro(c, a, { episodioId: EPISODIO, modo, autor: { origem: 'toque', membroId: REMETENTE } })
   const base = { episodioId: EPISODIO, origem: 'toque', cenaId: null, somId: null, avisoId: null, membroId: REMETENTE, teste: false }
 
   test('aviso → proximo_aviso com o avisoId mostrado (D9)', () => {
@@ -149,5 +151,49 @@ describe('registro', () => {
       expect(l.acao).not.toBe('nenhuma')
       expect(l.origem).toBe('toque')
     }
+  })
+})
+
+describe('gestos no domínio do ao vivo (PLA-006, D6)', () => {
+  const CENA = uuid(2)
+  const SOM = uuid(10)
+  const GESTO_ID = uuid(88)
+  const DISPOSITIVO = uuid(66)
+  const mapa = (acao: AcaoDoGesto, alvo: { cenaId?: string | null; somId?: string | null } = {}): LinhaDoMapa => ({
+    gesto: 'Victory',
+    acao,
+    cenaId: alvo.cenaId ?? null,
+    somId: alvo.somId ?? null,
+  })
+
+  test.each<[AcaoDoGesto, LinhaDoMapa, Comando | null]>([
+    ['cena', mapa('cena', { cenaId: CENA }), { id: GESTO_ID, acao: 'cena', cenaId: CENA }],
+    ['som', mapa('som', { somId: SOM }), { id: GESTO_ID, acao: 'som', somId: SOM }],
+    ['proximo_aviso', mapa('proximo_aviso'), { id: GESTO_ID, acao: 'proximo_aviso' }],
+    ['ocultar_aviso', mapa('ocultar_aviso'), { id: GESTO_ID, acao: 'ocultar_aviso' }],
+    ['proxima_cena', mapa('proxima_cena'), { id: GESTO_ID, acao: 'proxima_cena' }],
+    ['clipe', mapa('clipe'), { id: GESTO_ID, acao: 'clipe' }],
+    ['marcador', mapa('marcador'), { id: GESTO_ID, acao: 'marcador' }],
+    ['nenhuma', mapa('nenhuma'), null],
+  ])('comando-do-gesto: %s', (_acao, l, esperado) => {
+    expect(comandoDoGesto(l, GESTO_ID)).toEqual(esperado)
+  })
+
+  test('comando-do-gesto: alvo de outra ação é ignorado; cena ou som sem alvo → null (nada a executar)', () => {
+    // a linha do mapa só leva o alvo da própria ação (CHECK `mapa_gestos_equivalencia`); um alvo a mais não entra no comando
+    expect(comandoDoGesto(mapa('clipe', { cenaId: CENA, somId: SOM }), GESTO_ID)).toEqual({ id: GESTO_ID, acao: 'clipe' })
+    expect(comandoDoGesto(mapa('cena', { somId: SOM }), GESTO_ID)).toBeNull()
+    expect(comandoDoGesto(mapa('som', { cenaId: CENA }), GESTO_ID)).toBeNull()
+  })
+
+  test('registro-do-gesto: origem gesto, dispositivoId do servidor, sem membroId; o toque continua igual', () => {
+    const c: Comando = { id: GESTO_ID, acao: 'proxima_cena' }
+    const a: AcaoNoObs = { tipo: 'trocar_cena', nomeObs: 'B', cenaId: CENA }
+    const doGesto = linhaDoRegistro(c, a, { episodioId: EPISODIO, modo: 'teste', autor: { origem: 'gesto', dispositivoId: DISPOSITIVO } })
+    expect(doGesto).toEqual({ episodioId: EPISODIO, origem: 'gesto', acao: 'proxima_cena', cenaId: CENA, somId: null, avisoId: null, dispositivoId: DISPOSITIVO, teste: true })
+    expect(Object.hasOwn(doGesto, 'membroId')).toBe(false)
+    const doToque = linhaDoRegistro(c, a, { episodioId: EPISODIO, modo: 'ao_vivo', autor: { origem: 'toque', membroId: REMETENTE } })
+    expect(doToque).toEqual({ episodioId: EPISODIO, origem: 'toque', acao: 'proxima_cena', cenaId: CENA, somId: null, avisoId: null, membroId: REMETENTE, teste: false })
+    expect(Object.hasOwn(doToque, 'dispositivoId')).toBe(false)
   })
 })

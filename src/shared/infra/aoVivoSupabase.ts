@@ -202,8 +202,12 @@ export function criarRepositorioDoPalco(cliente: SupabaseClient): RepositorioDoP
         }
       })
 
-      return { episodio, cenas, sons, avisos }
+      // E5 (PLA-006, Tarefa 2): valores neutros até a Tarefa 4 ler `gestos_ligados` e `mapa_gestos` (gestos desligados, mapa vazio)
+      return { episodio: { ...episodio, gestosLigados: false }, cenas, sons, avisos, mapa: [] }
     },
+
+    // E5 (PLA-006, Tarefa 2): neutro (desligados) até a Tarefa 4 ler `episodios.gestos_ligados`
+    gestosLigados: async () => false,
 
     async urlDoArquivo(caminho) {
       let resposta: { data: { signedUrl: string } | null; error: unknown }
@@ -231,7 +235,8 @@ export function criarRepositorioDoPalco(cliente: SupabaseClient): RepositorioDoP
           cena_id: l.cenaId,
           som_id: l.somId,
           aviso_id: l.avisoId,
-          membro_id: l.membroId,
+          // um autor só (`registro_acoes_um_autor`): o toque grava o membro; o gesto, o dispositivo (PLA-006, D6)
+          ...(l.origem === 'toque' ? { membro_id: l.membroId } : { dispositivo_id: l.dispositivoId }),
           teste: l.teste,
         }),
       )

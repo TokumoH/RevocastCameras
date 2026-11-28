@@ -976,6 +976,10 @@ export function criarFalsosDeDispositivo(
     async registrar(l) {
       chamadas.registros.push({ ...l })
     },
+    // E5 (PLA-006, Tarefa 2): neutro (desligados) até a Tarefa 7 programar o interruptor nos falsos
+    async gestosLigados() {
+      return false
+    },
   }
 
   return {

@@ -14,7 +14,7 @@ const TOPICO_CONTROLE = `episodio:${EP}:controle`
 const TOPICO_ESTADO = `episodio:${EP}:estado`
 
 const OBS = { navegador: true, versaoDoPlugin: '2.24.0', nivel: 4, websocket: 'desligado', versaoObs: null, replayBuffer: null, gravando: null } as const
-const ESTADO: EstadoNoAr = { episodioId: EP, modo: 'teste', cenaObs: 'Cena Abertura', avisoId: null, avisoAte: null, ultimo: null, obs: { ...OBS } }
+const ESTADO: EstadoNoAr = { episodioId: EP, modo: 'teste', cenaObs: 'Cena Abertura', avisoId: null, avisoAte: null, ultimo: null, obs: { ...OBS }, gestosLigados: false }
 
 /** Fila de agendamento manual: nenhum ouvinte roda até `rodar()` (prova que nada roda dentro do callback). */
 function montar() {

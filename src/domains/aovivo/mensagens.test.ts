@@ -44,8 +44,9 @@ const ESTADO: EstadoNoAr = {
   cenaObs: 'Câmera 1',
   avisoId: OUTRO,
   avisoAte: 1_800_000_000_000,
-  ultimo: { comandoId: OUTRO, acao: 'som', resultado: 'recusado', motivo: 'som_inexistente' },
+  ultimo: { comandoId: OUTRO, acao: 'som', resultado: 'recusado', motivo: 'som_inexistente', origem: 'toque', gesto: null },
   obs: OBS,
+  gestosLigados: false,
 }
 
 describe('constantes das mensagens', () => {
@@ -156,9 +157,10 @@ describe('mensagens-validadas', () => {
         avisoAte: null,
         ultimo: null,
         obs: { navegador: false, versaoDoPlugin: null, nivel: null, websocket: 'desligado', versaoObs: null, replayBuffer: null, gravando: null },
+        gestosLigados: true,
       }
       expect(lerEstadoNoAr(minimo)).toEqual(minimo)
-      const ok = { ...ESTADO, ultimo: { comandoId: ID, acao: 'clipe', resultado: 'ok', motivo: null } }
+      const ok = { ...ESTADO, ultimo: { comandoId: ID, acao: 'clipe', resultado: 'ok', motivo: null, origem: 'toque', gesto: null } }
       expect(lerEstadoNoAr(ok)).toEqual(ok)
       expect(lerEstadoNoAr({ ...ESTADO, cenaObs: 'é'.repeat(200) })).not.toBeNull()
       // conta pontos de código: 200 emojis (400 unidades UTF-16) cabem; 201 não
@@ -195,7 +197,7 @@ describe('mensagens-validadas', () => {
       ['motivo herdado do protótipo', ultimo({ motivo: 'toString' })],
       ['ultimo com comandoId em maiúsculas', ultimo({ comandoId: OUTRO.toUpperCase() })],
       ['ultimo com campo extra', ultimo({ texto: 'x' })],
-      ['ultimo sem motivo', { ...ESTADO, ultimo: { comandoId: OUTRO, acao: 'som', resultado: 'ok' } }],
+      ['ultimo sem motivo', { ...ESTADO, ultimo: { comandoId: OUTRO, acao: 'som', resultado: 'ok', origem: 'toque', gesto: null } }],
       ['obs navegador texto', obs({ navegador: 'sim' })],
       ['obs nível não finito', obs({ nivel: Infinity })],
       ['obs nível NaN', obs({ nivel: NaN })],
@@ -365,6 +367,56 @@ describe('revogados-expiram', () => {
     expect(revogados.contem(REMETENTE)).toBe(true)
     agora = 1_500_000
     expect(revogados.contem(REMETENTE)).toBe(false)
+  })
+})
+
+describe('estado-com-interruptor-e-origem (PLA-006, D6)', () => {
+  const doGesto = (u: Record<string, unknown> = {}) => ({
+    ...ESTADO,
+    gestosLigados: true,
+    ultimo: { comandoId: OUTRO, acao: 'clipe', resultado: 'pendente', motivo: null, origem: 'gesto', gesto: 'ILoveYou', ...u },
+  })
+  const semCampo = (o: Record<string, unknown>, campo: string) => {
+    const copia = { ...o }
+    delete copia[campo]
+    return copia
+  }
+
+  test('aceita toque sem gesto, gesto com um dos 7 e o gesto sem ação (nenhuma + gesto_sem_acao), com objeto novo', () => {
+    expect(lerEstadoNoAr(comRemetente(ESTADO))).toEqual(ESTADO)
+    expect(lerEstadoNoAr({ ...ESTADO, gestosLigados: true })?.gestosLigados).toBe(true)
+    const pendente = doGesto()
+    const lido = lerEstadoNoAr(pendente)
+    expect(lido).toEqual(pendente)
+    expect(lido?.ultimo).not.toBe(pendente.ultimo)
+    for (const gesto of ['Closed_Fist', 'Open_Palm', 'Pointing_Up', 'Thumb_Down', 'Thumb_Up', 'Victory', 'ILoveYou']) {
+      expect(lerEstadoNoAr(doGesto({ gesto }))).not.toBeNull()
+    }
+    const semAcao = doGesto({ acao: 'nenhuma', resultado: 'recusado', motivo: 'gesto_sem_acao', gesto: 'Thumb_Down' })
+    expect(lerEstadoNoAr(semAcao)).toEqual(semAcao)
+    expect(MOTIVOS_DO_RESULTADO).toContain('gesto_sem_acao')
+  })
+
+  test.each<[string, unknown]>([
+    ['sem gestosLigados', semCampo({ ...ESTADO }, 'gestosLigados')],
+    ['gestosLigados texto', { ...ESTADO, gestosLigados: 'true' }],
+    ['gestosLigados nulo', { ...ESTADO, gestosLigados: null }],
+    ['gestosLigados número', { ...ESTADO, gestosLigados: 1 }],
+    ['ultimo sem origem', { ...ESTADO, ultimo: semCampo({ ...ESTADO.ultimo }, 'origem') }],
+    ['ultimo sem gesto', { ...ESTADO, ultimo: semCampo({ ...ESTADO.ultimo }, 'gesto') }],
+    ['origem desconhecida', { ...ESTADO, ultimo: { ...ESTADO.ultimo, origem: 'voz' } }],
+    ['gesto fora dos 7 (None)', doGesto({ gesto: 'None' })],
+    ['gesto fora dos 7 (texto)', doGesto({ gesto: 'Aceno' })],
+    ['gesto herdado do protótipo', doGesto({ gesto: 'toString' })],
+    ['origem gesto com gesto nulo', doGesto({ gesto: null })],
+    ['origem toque com gesto', { ...ESTADO, ultimo: { ...ESTADO.ultimo, gesto: 'Victory' } }],
+    ['nenhuma vinda de toque', { ...ESTADO, ultimo: { ...ESTADO.ultimo, acao: 'nenhuma', resultado: 'recusado', motivo: 'gesto_sem_acao' } }],
+    ['nenhuma com outro motivo', doGesto({ acao: 'nenhuma', resultado: 'recusado', motivo: 'som_inexistente' })],
+    ['nenhuma com resultado ok', doGesto({ acao: 'nenhuma', resultado: 'ok', motivo: 'gesto_sem_acao' })],
+    ['gesto_sem_acao com uma ação', doGesto({ acao: 'clipe', resultado: 'recusado', motivo: 'gesto_sem_acao' })],
+    ['gesto com acao aviso (só o toque escolhe um aviso)', doGesto({ acao: 'aviso', resultado: 'ok' })],
+  ])('%s → null', (_nome, payload) => {
+    expect(lerEstadoNoAr(payload)).toBeNull()
   })
 })
 

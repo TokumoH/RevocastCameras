@@ -64,6 +64,7 @@ export const TEXTO_DO_MOTIVO: Readonly<Record<MotivoDoResultado, string>> = Obje
   sem_websocket: 'obs-websocket não conectado no palco',
   sem_gravacao: 'Gravação parada no OBS',
   obs_ausente: 'OBS não detectado no palco',
+  gesto_sem_acao: 'Gesto sem ação no mapa',
 })
 
 /** Ícone e nome de cada ação no "Último" (o alvo, quando a tela sabe qual foi, vem das listas). */
@@ -100,6 +101,8 @@ function descreverUltimo(ultimo: NonNullable<EstadoNoAr['ultimo']>, pedido: Pedi
   if (ultimo.motivo !== null) return TEXTO_DO_MOTIVO[ultimo.motivo]
   if (ultimo.resultado === 'recusado') return TEXTO_DOS_COMANDOS.recusado
   if (ultimo.resultado === 'falhou') return TEXTO_DOS_COMANDOS.falhaNoPalco
+  // `nenhuma` só vem com `gesto_sem_acao` (o leitor confere), já tratado acima; a frase da confirmação é da Tarefa 7
+  if (ultimo.acao === 'nenhuma') return TEXTO_DO_MOTIVO.gesto_sem_acao
   const descricao = descreverAcao(ultimo.acao, pedido, listas)
   return ultimo.resultado === 'ok' ? `${descricao} ✓` : `${descricao} …`
 }

@@ -1,7 +1,9 @@
 import type { Dispositivo, TipoDeDispositivo } from '../acesso/dispositivos'
 import type { EstadoDoCanal } from '../canal/estados'
+import type { GestoRecebido } from '../captura/gestos'
 import type { Cena } from '../preparacao/cenas'
 import type { Aviso, Episodio } from '../preparacao/episodios'
+import type { LinhaDoMapa } from '../preparacao/gestos'
 import type { Som } from '../preparacao/midia'
 import type { AcaoNoObs, LinhaDoRegistro } from './comandos'
 import type { Comando, EstadoNoAr, MensagemDoEstudio, MotivoDoResultado, PresencaNoEstudio, ResultadoDoComando, SituacaoDoObs } from './mensagens'
@@ -79,6 +81,23 @@ export interface CanalDoEstado {
   fechar(): Promise<void>
 }
 
+/**
+ * Alça do canal privado `gestos:<uid da sessão do palco>` (PLA-006, D2, D4): o palco **só recebe**; ninguém envia pelo
+ * Broadcast (o banco publica com `realtime.send`, em `enviar_gesto` e `definir_gestos_ligados`). Os ouvintes recebem só
+ * mensagens já validadas, nunca dentro do callback do `realtime-js`.
+ */
+export interface CanalDeGestosDoPalco {
+  /**
+   * Só o evento `gesto`, lido por `lerGestoParaOPalco` (de `captura/gestos.ts`), e o `remetente` posto pelo servidor
+   * (`lerRemetente`). Um `comando` (ou qualquer outro evento) aqui é descartado; o palco ainda confere de novo.
+   */
+  aoGesto(f: (g: GestoRecebido, remetente: string) => void): () => void
+  /** O aviso `gestos_mudaram` (`lerAvisoDosGestos`): sem valor; o palco relê `gestosLigados` no banco. */
+  aoAviso(f: () => void): () => void
+  aoMudarEstado(f: (e: EstadoDoCanal) => void): () => void
+  fechar(): Promise<void>
+}
+
 /** Cada chamada devolve uma alça nova; o mesmo tópico no mesmo cliente divide um canal só (I3). */
 export interface FabricaDeCanais {
   estudio(): CanalDoEstudio
@@ -103,10 +122,22 @@ export interface RepositorioDoAoVivo {
   revogar(id: string): Promise<{ usuario: string | null }>
 }
 
-/** Porta do palco (cliente `obs_palco`): episódio ativo, listas, URLs assinadas e o registro (D9). */
+/**
+ * Porta do palco (cliente `obs_palco`): episódio ativo, listas, URLs assinadas e o registro (D9). Desde a E5 (PLA-006, D4,
+ * D6), a carga traz também o mapa de gestos (`mapa_gestos`) e o interruptor (`episodios.gestos_ligados`), e o palco relê o
+ * interruptor sozinho (`gestosLigados`) quando chega o aviso `gestos_mudaram`.
+ */
 export interface RepositorioDoPalco {
   episodioAtivo(): Promise<{ id: string; modo: 'ao_vivo' | 'teste' } | null>
-  carregar(episodioId: string): Promise<{ episodio: Episodio; cenas: Cena[]; sons: (Som & { caminho: string })[]; avisos: (Aviso & { caminhoDaImagem: string | null })[] }>
+  carregar(episodioId: string): Promise<{
+    episodio: Episodio & { gestosLigados: boolean }
+    cenas: Cena[]
+    sons: (Som & { caminho: string })[]
+    avisos: (Aviso & { caminhoDaImagem: string | null })[]
+    mapa: LinhaDoMapa[]
+  }>
+  /** `episodios.gestos_ligados` do episódio, lido agora (D4: o aviso não leva valor). */
+  gestosLigados(episodioId: string): Promise<boolean>
   /** URL assinada do bucket `midias`, válida por `VALIDADE_NO_PALCO_S` (Tarefa 4); nunca em `console`. */
   urlDoArquivo(caminho: string): Promise<string>
   /** Insert em `registro_acoes`; a falha não desfaz nem bloqueia a ação (D9). */

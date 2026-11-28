@@ -214,13 +214,14 @@ describe('criarRepositorioDoPalco', () => {
       ],
     })
     expect(await f.palco.carregar(EP)).toEqual({
-      episodio: { id: EP, titulo: 'Episódio 1', data: '2026-11-27', estado: 'rascunho' },
+      episodio: { id: EP, titulo: 'Episódio 1', data: '2026-11-27', estado: 'rascunho', gestosLigados: false },
       cenas: [{ id: 'c1', nomeExibicao: 'Abertura', nomeObs: 'Cena Abertura', ordem: 0 }],
       sons: [{ id: 's1', midiaId: MIDIA, rotulo: 'aplauso', emoji: '👏', volume: 0.5, ordem: 1, caminho: `som/${MIDIA}.mp3` }],
       avisos: [
         { id: 'a1', episodioId: EP, titulo: 'Inscreva-se', texto: 'texto', link: null, imagemMidiaId: MIDIA, duracaoS: 10, ordem: 0, caminhoDaImagem: `imagem/${MIDIA}.png` },
         { id: 'a2', episodioId: EP, titulo: 'Sem imagem', texto: 't', link: 'https://revocast.test', imagemMidiaId: null, duracaoS: 8, ordem: 1, caminhoDaImagem: null },
       ],
+      mapa: [],
     })
     const feitas = f.tirar()
     const porTabela = (tabela: string) => {
@@ -278,5 +279,21 @@ describe('criarRepositorioDoPalco', () => {
     ])
     f.responder('registro_acoes', { error: { code: '42501', message: 'x' }, status: 403 })
     expect(await motivoDe(f.palco.registrar({ episodioId: EP, origem: 'toque', acao: 'clipe', cenaId: null, somId: null, avisoId: null, membroId: UID, teste: false }))).toBe('negado')
+  })
+
+  test('palco-registra-gesto (PLA-006, D6): um autor só, o dispositivo do servidor', async () => {
+    const f = criarFalso()
+    const DISPOSITIVO = '0d000000-0000-4000-8000-0000000000d1'
+    await f.palco.registrar({ episodioId: EP, origem: 'gesto', acao: 'clipe', cenaId: null, somId: null, avisoId: null, dispositivoId: DISPOSITIVO, teste: false })
+    expect(f.tirar()).toEqual([
+      ['from', 'registro_acoes'],
+      ['insert', { episodio_id: EP, origem: 'gesto', acao: 'clipe', cena_id: null, som_id: null, aviso_id: null, dispositivo_id: DISPOSITIVO, teste: false }],
+    ])
+  })
+
+  test('palco-gestos-neutros (Tarefa 2): interruptor desligado até a Tarefa 4', async () => {
+    const f = criarFalso()
+    expect(await f.palco.gestosLigados(EP)).toBe(false)
+    expect(f.tirar()).toEqual([])
   })
 })
