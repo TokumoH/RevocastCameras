@@ -905,13 +905,17 @@ describe('aba Ao vivo — checklist (Tarefa 9; D13)', () => {
   const item = (texto: string) => automaticos().find((li) => textoDe(li) === texto)
   const comPalco = async (m: ReturnType<typeof montarEpisodio>, obs: SituacaoDoObs | null, camera = true) => {
     const presenca: Record<string, unknown[]> = { [SESSAO_PALCO]: [{ tipo: 'obs_palco', dispositivoId: PALCO, obs }] }
-    if (camera) presenca[SESSAO_ANTIGA] = [{ tipo: 'camera', dispositivoId: CAMERA, obs: null }]
+    // desde a E4 (Tarefa 6), a câmera e o `obs_camera` levam a situação do vídeo; tudo certo = vídeo chegando e tela travada
+    if (camera) {
+      presenca[SESSAO_ANTIGA] = [{ tipo: 'camera', dispositivoId: CAMERA, obs: null, video: { estado: 'conectado', telaLigada: 'travada', bateria: null } }]
+      presenca[SESSAO_OBS] = [{ tipo: 'obs_camera', dispositivoId: OBS_CAM, obs: null, video: { estado: 'conectado', telaLigada: null, bateria: null } }]
+    }
     act(() => m.canal.sincronizarPresenca('estudio', presenca))
     await esperar()
   }
 
   test('checklist-itens', async () => {
-    const m = montarEpisodio({ dispositivos: [CAMERA_PAREADA, PALCO_PAREADO] })
+    const m = montarEpisodio({ dispositivos: [CAMERA_PAREADA, PALCO_PAREADO, OBS_CAM_PAREADA] })
     await esperar()
     // a lista fixa do DES-001 §10.4
     const fixa = within(screen.getByRole('list', { name: TEXTO_DO_CHECKLIST.fixo })).getAllByRole('listitem')
@@ -949,15 +953,18 @@ describe('aba Ao vivo — checklist (Tarefa 9; D13)', () => {
       'OBS 31.0.1',
       'Replay Buffer ativo',
       'Gravação em andamento',
-      'Câmera conectada',
+      'Vídeo da câmera no OBS',
+      'Tela do celular ligada',
     ])
     expect(situacoes().every((s) => s === 'pronto')).toBe(true)
     // o leitor de tela ouve a situação (o sinal é só visual)
     expect(automaticos()[0].textContent).toBe('✓Palco conectado (pronto)')
     expect(automaticos()[0].querySelector('.checklist__sinal')?.getAttribute('aria-hidden')).toBe('true')
-    // câmera fora: só informativo (a câmera é da E4)
+    // câmera e `obs_camera` fora: desde a E4 (Tarefa 6) os dois itens do vídeo ficam pendentes (deixaram de ser informativos)
     await comPalco(m, OBS_OK, false)
-    expect(item(TEXTO_DO_CHECKLIST.cameraAusente)?.getAttribute('data-situacao')).toBe('info')
+    expect(item('Vídeo da câmera no OBS: a Fonte /obs/camera não está conectada')?.getAttribute('data-situacao')).toBe('pendente')
+    expect(item('Tela do celular: a câmera não está conectada')?.getAttribute('data-situacao')).toBe('pendente')
+    expect(situacoes()).not.toContain('info')
     // palco de outra sessão (a antiga, antes do corte) não conta
     act(() => m.canal.sincronizarPresenca('estudio', { [SESSAO_NOVA]: [{ tipo: 'obs_palco', dispositivoId: PALCO, obs: OBS_OK }] }))
     await esperar()
@@ -1159,5 +1166,351 @@ describe('aba Ao vivo — comandos (Tarefa 9)', () => {
     expect(canal.abertos()).not.toContain(`episodio:${EP_A}:controle`)
     expect(canal.abertos()).not.toContain(`episodio:${EP_A}:estado`)
     expect(within(secao('Episódio')).getByText('<b>Programa</b> de sexta')).toBeTruthy()
+  })
+})
+
+/*
+ * E4, Tarefa 6 (PLA-005 D13 e D2; revisão 4, N16): a situação do vídeo da presença na lista e no checklist, a troca do
+ * `obs_camera` (aviso à sessão antiga) e o `obs_camera` ativo ligado a outra câmera.
+ */
+const OBS_CAM = 'd0000000-0000-4000-8000-000000000003'
+const OUTRA_CAMERA = 'd0000000-0000-4000-8000-000000000004'
+const SESSAO_OBS = 'b0000000-0000-4000-8000-000000000004'
+const SESSAO_OBS_NOVA = 'b0000000-0000-4000-8000-000000000005'
+const SESSAO_OUTRA = 'b0000000-0000-4000-8000-000000000006'
+const OBS_CAM_PAREADA = dispositivo({ id: OBS_CAM, tipo: 'obs_camera', rotulo: 'Câmera do OBS', cameraId: CAMERA, usuarioAnonimoId: SESSAO_OBS, pareadoEm: PAREADO_EM })
+const OUTRA_PAREADA = dispositivo({ id: OUTRA_CAMERA, tipo: 'camera', rotulo: 'Celular reserva', usuarioAnonimoId: SESSAO_OUTRA, pareadoEm: PAREADO_EM })
+const OBS_DA_OUTRA = { ...OBS_CAM_PAREADA, cameraId: OUTRA_CAMERA }
+const FRASE_OUTRA_CAMERA = 'A câmera do OBS está ligada a outra câmera. Revogue a câmera do OBS e gere um link novo.'
+const FRASE_DUPLICADA = 'Já existe uma câmera do OBS ativa. Revogue-a antes.'
+const SEM_CONEXAO_DIRETA_NO_CHECKLIST =
+  'Vídeo da câmera no OBS: Sem conexão direta com o computador. Ponha o celular e o computador na mesma rede Wi-Fi (sem isolamento de clientes) ou use o roteador ou o hotspot do computador.'
+
+type Video = { estado: string; telaLigada: 'travada' | 'sem_trava' | null; bateria: number | null }
+const presencaDaCamera = (video?: Video, id = CAMERA) => ({ tipo: 'camera', dispositivoId: id, obs: null, ...(video === undefined ? {} : { video }) })
+const presencaDaObs = (video?: Video) => ({ tipo: 'obs_camera', dispositivoId: OBS_CAM, obs: null, ...(video === undefined ? {} : { video }) })
+
+describe('aba Ao vivo — vídeo da câmera (E4, Tarefa 6; D13, D2)', () => {
+  const presenca = async (m: ReturnType<typeof montar>, estado: Record<string, unknown[]>) => {
+    act(() => m.canal.sincronizarPresenca('estudio', estado))
+    await esperar()
+  }
+  const linhaDe = (rotulo: string) => screen.getByRole('cell', { name: rotulo }).closest('tr') as HTMLElement
+  const situacaoDe = (rotulo: string) => within(linhaDe(rotulo)).getAllByRole('cell')[2]
+  const fraseDe = (rotulo: string) => situacaoDe(rotulo).querySelector('.situacao-do-video')?.textContent ?? null
+  const automaticos = () => within(screen.getByRole('list', { name: TEXTO_DO_CHECKLIST.automatico })).getAllByRole('listitem')
+  const itens = () => automaticos().map((li) => [li.querySelector('.checklist__texto')?.textContent, li.getAttribute('data-situacao')])
+  /** O item do checklist que começa com `inicio` (cada um dos dois itens do vídeo aparece uma vez). */
+  const item = (...inicios: string[]) => {
+    const achados = itens().filter(([t]) => inicios.some((i) => t?.startsWith(i)))
+    expect(achados).toHaveLength(1)
+    return achados[0]
+  }
+  const itemDoVideo = () => item('Vídeo da câmera no OBS', 'Gere o link', 'A câmera do OBS')
+  const itemDaTela = () => item('Tela do celular')
+
+  test('situacao-do-video-na-lista', async () => {
+    const m = montar({ dispositivos: [CAMERA_PAREADA, PALCO_PAREADO, OBS_CAM_PAREADA] })
+    await esperar()
+    await presenca(m, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'conectado', telaLigada: 'travada', bateria: 0.5 })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'sem_conexao_direta', telaLigada: null, bateria: null })],
+      [SESSAO_PALCO]: [{ tipo: 'obs_palco', dispositivoId: PALCO, obs: null }],
+    })
+    expect(situacaoDe('Celular de gravação').querySelector('.dispositivos__situacao')?.textContent).toBe('Conectado')
+    expect(fraseDe('Celular de gravação')).toBe('vídeo chegando · bateria 50%')
+    // a bateria é arredondada (revisão, N3): 0,333 → 33%, nunca "33.300000000000004%"
+    await presenca(m, { [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'conectado', telaLigada: 'travada', bateria: 0.333 })] })
+    expect(fraseDe('Celular de gravação')).toBe('vídeo chegando · bateria 33%')
+    await presenca(m, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'conectado', telaLigada: 'travada', bateria: 0.5 })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'sem_conexao_direta', telaLigada: null, bateria: null })],
+    })
+    expect(fraseDe('Câmera do OBS')).toBe('sem conexão direta')
+    // o palco não tem vídeo: nenhuma frase
+    expect(fraseDe('PC do estúdio')).toBeNull()
+    // câmera esperando o toque e sem trava de tela
+    await presenca(m, { [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'aguardando_toque', telaLigada: 'sem_trava', bateria: null })] })
+    expect(fraseDe('Celular de gravação')).toBe('aguardando toque · tela pode apagar')
+    // o `obs_camera` fora da presença: desconectado e sem frase (a situação velha não fica na tela)
+    expect(situacaoDe('Câmera do OBS').textContent).toBe('Desconectado')
+    expect(fraseDe('Câmera do OBS')).toBeNull()
+    // presença inválida (estado fora da lista, bateria fora de [0, 1]) é descartada: desconectado, sem frase
+    await presenca(m, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: '<b>x</b>', telaLigada: null, bateria: null })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'conectado', telaLigada: null, bateria: 2 })],
+    })
+    expect(situacaoDe('Celular de gravação').textContent).toBe('Desconectado')
+    expect(situacaoDe('Câmera do OBS').textContent).toBe('Desconectado')
+    expect(document.body.innerHTML).not.toContain('<b>x</b>')
+    // a presença com o tipo de outro dispositivo (um `obs_camera` declarando o id da câmera) não dá frase à câmera
+    await presenca(m, { [SESSAO_ANTIGA]: [{ tipo: 'obs_camera', dispositivoId: CAMERA, obs: null, video: { estado: 'conectado', telaLigada: null, bateria: null } }] })
+    expect(situacaoDe('Celular de gravação').textContent).toBe('Conectado')
+    expect(fraseDe('Celular de gravação')).toBeNull()
+    // a presença da sessão antiga do `obs_camera` (antes do corte) não conta
+    await presenca(m, { [SESSAO_OBS_NOVA]: [presencaDaObs({ estado: 'conectado', telaLigada: null, bateria: null })] })
+    expect(fraseDe('Câmera do OBS')).toBeNull()
+    // as frases são fixas: cada situação do vídeo tem a sua, e nenhuma vem da presença
+    for (const [estado, frase] of [
+      ['aguardando_episodio', 'aguardando episódio'],
+      ['aguardando_par', 'aguardando a câmera do OBS'],
+      ['conectando', 'conectando'],
+      ['sem_permissao', 'sem permissão da câmera'],
+      ['sem_camera', 'sem câmera traseira'],
+      ['inseguro', 'endereço sem https'],
+      ['sinal_grande', 'sinal grande demais'],
+      ['sem_video_direto', 'navegador sem vídeo direto (WebRTC)'],
+    ] as const) {
+      await presenca(m, { [SESSAO_ANTIGA]: [presencaDaCamera({ estado, telaLigada: 'travada', bateria: null })] })
+      expect(fraseDe('Celular de gravação')).toBe(frase)
+    }
+    await presenca(m, { [SESSAO_OBS]: [presencaDaObs({ estado: 'aguardando_par', telaLigada: null, bateria: null })] })
+    expect(fraseDe('Câmera do OBS')).toBe('aguardando o celular')
+    await presenca(m, { [SESSAO_OBS]: [presencaDaObs({ estado: 'sem_video_direto', telaLigada: null, bateria: null })] })
+    expect(fraseDe('Câmera do OBS')).toBe('Fonte do OBS sem vídeo direto (WebRTC)')
+  })
+
+  test('checklist-video', async () => {
+    // sem `obs_camera`: pendente, com o que fazer
+    montar({ dispositivos: [CAMERA_PAREADA] })
+    await esperar()
+    expect(itemDoVideo()).toEqual(['Gere o link da câmera do OBS', 'pendente'])
+    cleanup()
+    // sem câmera nenhuma: pareie a câmera antes
+    montar({ dispositivos: [PALCO_PAREADO] })
+    await esperar()
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS: pareie a câmera antes', 'pendente'])
+    cleanup()
+    // `obs_camera` revogado ou nunca pareado: ainda não há câmera do OBS
+    montar({ dispositivos: [CAMERA_PAREADA, { ...OBS_CAM_PAREADA, revogadoEm: PAREADO_EM }] })
+    await esperar()
+    expect(itemDoVideo()).toEqual(['Gere o link da câmera do OBS', 'pendente'])
+    cleanup()
+    montar({ dispositivos: [CAMERA_PAREADA, { ...OBS_CAM_PAREADA, usuarioAnonimoId: null, pareadoEm: null }] })
+    await esperar()
+    expect(itemDoVideo()).toEqual(['Gere o link da câmera do OBS', 'pendente'])
+    cleanup()
+
+    const n = montar({ dispositivos: [CAMERA_PAREADA, OBS_CAM_PAREADA] })
+    await esperar()
+    // pareado, mas a Fonte não está na presença
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS: a Fonte /obs/camera não está conectada', 'pendente'])
+    // o `obs_camera` em `conectado`: pronto
+    await presenca(n, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'conectado', telaLigada: 'travada', bateria: null })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'conectado', telaLigada: null, bateria: null })],
+    })
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS', 'pronto'])
+    // a câmera diz `conectado`, mas o `obs_camera` não: pendente (quem decide é o lado do OBS)
+    await presenca(n, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'conectado', telaLigada: 'travada', bateria: null })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'sem_conexao_direta', telaLigada: null, bateria: null })],
+    })
+    expect(itemDoVideo()).toEqual([SEM_CONEXAO_DIRETA_NO_CHECKLIST, 'pendente'])
+    // o `obs_camera` aguardando e a câmera esperando o toque: a causa é a do celular
+    await presenca(n, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'aguardando_toque', telaLigada: null, bateria: null })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'aguardando_par', telaLigada: null, bateria: null })],
+    })
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS: aguardando toque', 'pendente'])
+    // o celular sem WebRTC (VER-052): a causa aparece
+    await presenca(n, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'sem_video_direto', telaLigada: null, bateria: null })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'aguardando_par', telaLigada: null, bateria: null })],
+    })
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS: navegador sem vídeo direto (WebRTC)', 'pendente'])
+    // a causa do `obs_camera` vence a da câmera em `sinal_grande` e `sem_video_direto` (revisão, N2)
+    await presenca(n, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'aguardando_toque', telaLigada: null, bateria: null })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'sinal_grande', telaLigada: null, bateria: null })],
+    })
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS: sinal grande demais', 'pendente'])
+    await presenca(n, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'aguardando_toque', telaLigada: null, bateria: null })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'sem_video_direto', telaLigada: null, bateria: null })],
+    })
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS: Fonte do OBS sem vídeo direto (WebRTC)', 'pendente'])
+    // a câmera conectando: a situação do `obs_camera`
+    await presenca(n, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'conectando', telaLigada: 'travada', bateria: null })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'aguardando_par', telaLigada: null, bateria: null })],
+    })
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS: aguardando o celular', 'pendente'])
+    // o celular fora da presença
+    await presenca(n, { [SESSAO_OBS]: [presencaDaObs({ estado: 'aguardando_par', telaLigada: null, bateria: null })] })
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS: o celular de gravação não está conectado', 'pendente'])
+    // o `obs_camera` sem a situação do vídeo (versão antiga da página)
+    await presenca(n, { [SESSAO_ANTIGA]: [presencaDaCamera()], [SESSAO_OBS]: [presencaDaObs()] })
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS: situação desconhecida', 'pendente'])
+  })
+
+  test('checklist-tela-ligada', async () => {
+    const m = montar({ dispositivos: [CAMERA_PAREADA, OBS_CAM_PAREADA] })
+    await esperar()
+    // câmera ausente: pendente
+    expect(itemDaTela()).toEqual(['Tela do celular: a câmera não está conectada', 'pendente'])
+    await presenca(m, { [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'conectado', telaLigada: 'travada', bateria: null })] })
+    expect(itemDaTela()).toEqual(['Tela do celular ligada', 'pronto'])
+    // sem a trava de tela: pendente com as instruções do DES-001 §10.4, item 3
+    await presenca(m, { [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'conectado', telaLigada: 'sem_trava', bateria: null })] })
+    expect(itemDaTela()).toEqual([
+      'Tela do celular pode apagar. iPhone: desligue o Modo de Pouca Energia (ele força o bloqueio em 30 s) e ponha o bloqueio automático em "Nunca". Android: desligue a economia de bateria e ative "Permanecer ativo" em Opções do desenvolvedor, com o celular no carregador.',
+      'pendente',
+    ])
+    // antes do toque (a trava ainda não foi pedida) ou sem situação do vídeo: desconhecida
+    await presenca(m, { [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'aguardando_toque', telaLigada: null, bateria: null })] })
+    expect(itemDaTela()).toEqual(['Tela do celular: situação desconhecida', 'pendente'])
+    await presenca(m, { [SESSAO_ANTIGA]: [presencaDaCamera()] })
+    expect(itemDaTela()).toEqual(['Tela do celular: situação desconhecida', 'pendente'])
+    // a trava do `obs_camera` não conta como a do celular
+    await presenca(m, { [SESSAO_OBS]: [presencaDaObs({ estado: 'conectado', telaLigada: 'travada', bateria: null })] })
+    expect(itemDaTela()).toEqual(['Tela do celular: a câmera não está conectada', 'pendente'])
+  })
+
+  test('revogado-na-presenca-nao-conta', async () => {
+    // revisão, N1: a câmera revogada cuja sessão ainda está na presença (até o corte) não mostra vídeo nem conta no checklist
+    const m = montar({ dispositivos: [{ ...CAMERA_PAREADA, revogadoEm: PAREADO_EM }, OBS_CAM_PAREADA] })
+    await esperar()
+    await presenca(m, {
+      [SESSAO_ANTIGA]: [presencaDaCamera({ estado: 'conectado', telaLigada: 'travada', bateria: 0.333 })],
+      [SESSAO_OBS]: [presencaDaObs({ estado: 'aguardando_par', telaLigada: null, bateria: null })],
+    })
+    expect(situacaoDe('Celular de gravação').textContent).toBe('Revogado')
+    expect(fraseDe('Celular de gravação')).toBeNull()
+    expect(itemDaTela()).toEqual(['Tela do celular: a câmera não está conectada', 'pendente'])
+    expect(itemDoVideo()).toEqual(['Vídeo da câmera no OBS: o celular de gravação não está conectado', 'pendente'])
+    expect(itens().some(([, s]) => s === 'pronto')).toBe(false)
+    // o `obs_camera` revogado na presença também não fala (o link pede um novo)
+    cleanup()
+    const n = montar({ dispositivos: [CAMERA_PAREADA, { ...OBS_CAM_PAREADA, revogadoEm: PAREADO_EM }] })
+    await esperar()
+    await presenca(n, { [SESSAO_OBS]: [presencaDaObs({ estado: 'conectado', telaLigada: null, bateria: null })] })
+    expect(situacaoDe('Câmera do OBS').textContent).toBe('Revogado')
+    expect(itemDoVideo()).toEqual(['Gere o link da câmera do OBS', 'pendente'])
+  })
+
+  test('obs-camera-de-outra-camera-avisa', async () => {
+    // duas câmeras (só pela API), e o `obs_camera` ativo ligado à outra: a aba não gera link
+    const m = montar({ dispositivos: [CAMERA_PAREADA, OUTRA_PAREADA, OBS_DA_OUTRA] })
+    await esperar()
+    const b = botao('Link da câmera do OBS')
+    expect(b.disabled).toBe(true)
+    const dica = screen.getByText(FRASE_OUTRA_CAMERA, { selector: '.dispositivos__dica' })
+    expect(b.getAttribute('aria-describedby')).toBe(dica.id)
+    fireEvent.click(b)
+    await esperar()
+    expect(m.criarCodigo).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('Link da câmera do OBS')).toBeNull()
+    expect(itemDoVideo()).toEqual([FRASE_OUTRA_CAMERA, 'pendente'])
+    // mesmo com o `obs_camera` conectado (ele mostra a outra câmera)
+    await presenca(m, { [SESSAO_OBS]: [presencaDaObs({ estado: 'conectado', telaLigada: null, bateria: null })] })
+    expect(itemDoVideo()).toEqual([FRASE_OUTRA_CAMERA, 'pendente'])
+    cleanup()
+
+    // a lista muda por fora entre a pintura e o clique: a releitura do clique decide, e nada é gerado
+    const n = montar({ dispositivos: [CAMERA_PAREADA, OUTRA_PAREADA, OBS_CAM_PAREADA] })
+    await esperar()
+    expect(botao('Link da câmera do OBS').disabled).toBe(false)
+    n.alterar(OBS_CAM, { cameraId: OUTRA_CAMERA })
+    fireEvent.click(botao('Link da câmera do OBS'))
+    await esperar()
+    expect(n.criarCodigo).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('Link da câmera do OBS')).toBeNull()
+    expect(screen.getByText(FRASE_OUTRA_CAMERA, { selector: '.mensagem' })).toBeTruthy()
+    cleanup()
+
+    // o `obs_camera` da própria câmera: reaproveitado como antes
+    const o = montar({ dispositivos: [CAMERA_PAREADA, OUTRA_PAREADA, OBS_CAM_PAREADA] })
+    await esperar()
+    fireEvent.click(botao('Link da câmera do OBS'))
+    await esperar()
+    expect(o.criarCodigo.mock.calls[0][0]).toEqual({ tipo: 'obs_camera', rotulo: 'Câmera do OBS', dispositivoId: OBS_CAM, cameraId: null })
+    expect((screen.getByLabelText('Link da câmera do OBS') as HTMLInputElement).value).toBe(`${ORIGEM}/obs/camera#${CODIGO}`)
+    cleanup()
+
+    // só um `obs_camera` revogado, da outra câmera: não é reaproveitado (reativaria a ligação errada); nasce um novo
+    const p = montar({ dispositivos: [CAMERA_PAREADA, OUTRA_PAREADA, { ...OBS_DA_OUTRA, revogadoEm: PAREADO_EM }] })
+    await esperar()
+    expect(botao('Link da câmera do OBS').disabled).toBe(false)
+    fireEvent.click(botao('Link da câmera do OBS'))
+    await esperar()
+    expect(p.criarCodigo.mock.calls[0][0]).toEqual({ tipo: 'obs_camera', rotulo: 'Câmera do OBS', dispositivoId: null, cameraId: CAMERA })
+    cleanup()
+
+    // corrida: outro painel criou um `obs_camera` entre a leitura e o pedido → `23505` → a frase defensiva da D2
+    const q = montar({ dispositivos: [CAMERA_PAREADA] })
+    await esperar()
+    q.criarCodigo.mockRejectedValueOnce(new ErroDoAoVivo('duplicado'))
+    const leituras = q.listarDispositivos.mock.calls.length
+    fireEvent.click(botao('Link da câmera do OBS'))
+    await esperar()
+    expect(screen.getByText(FRASE_DUPLICADA)).toBeTruthy()
+    expect(screen.queryByText(TEXTO_DA_ABA_AO_VIVO.naoGerou)).toBeNull()
+    expect(screen.queryByLabelText('Link da câmera do OBS')).toBeNull()
+    // a lista é relida (a do clique e a recarga depois da recusa)
+    expect(q.listarDispositivos.mock.calls.length).toBe(leituras + 2)
+    expect(q.reavaliar).not.toHaveBeenCalled()
+    // o `duplicado` de outro tipo continua com a frase comum
+    q.criarCodigo.mockRejectedValueOnce(new ErroDoAoVivo('duplicado'))
+    fireEvent.click(botao('Link do palco (OBS)'))
+    await esperar()
+    expect(screen.getByText(TEXTO_DA_ABA_AO_VIVO.naoGerou)).toBeTruthy()
+    expect(screen.queryByText(FRASE_DUPLICADA)).toBeNull()
+  })
+
+  test('repareamento-da-obs-camera-avisa-sessao-antiga', async () => {
+    const m = montar({ dispositivos: [CAMERA_PAREADA, OBS_CAM_PAREADA] })
+    await esperar()
+    fireEvent.click(botao('Link da câmera do OBS'))
+    await esperar()
+    expect(m.criarCodigo.mock.calls[0][0]).toEqual({ tipo: 'obs_camera', rotulo: 'Câmera do OBS', dispositivoId: OBS_CAM, cameraId: null })
+    // sem troca de sessão, nada é enviado
+    await esperar(INTERVALO_DA_CONSULTA_MS * 2)
+    expect(m.enviados()).toEqual([])
+    // a Fonte do OBS nova pareou: a sessão antiga é avisada uma vez
+    m.parear(OBS_CAM, SESSAO_OBS_NOVA)
+    await esperar(INTERVALO_DA_CONSULTA_MS)
+    expect(m.enviados()).toEqual([{ evento: 'revogacao', usuario: SESSAO_OBS, remetente: EU }])
+    expect(screen.getByText('🎥 Câmera do OBS conectada')).toBeTruthy()
+    expect(screen.queryByLabelText('Link da câmera do OBS')).toBeNull()
+    await esperar(INTERVALO_DA_CONSULTA_MS * 3)
+    expect(m.enviados()).toHaveLength(1)
+  })
+
+  test('revogar-camera-avisa', async () => {
+    // revogar o `obs_camera` ligado à outra câmera (o que a frase pede): `revogacao` e `dispositivo_mudou`, e o link volta
+    const m = montar({ dispositivos: [CAMERA_PAREADA, OUTRA_PAREADA, OBS_DA_OUTRA] })
+    await esperar()
+    const linha = linhaDe('Câmera do OBS')
+    fireEvent.click(within(linha).getByRole('button', { name: 'Revogar' }))
+    fireEvent.click(within(linha).getByRole('button', { name: 'Confirmar revogação' }))
+    await esperar()
+    expect(m.revogar).toHaveBeenCalledWith(OBS_CAM)
+    expect(m.enviados()).toEqual([
+      { evento: 'revogacao', usuario: SESSAO_OBS, remetente: EU },
+      { evento: 'dispositivo_mudou', dispositivoId: OBS_CAM, remetente: EU },
+    ])
+    expect(screen.getByText(TEXTO_DA_ABA_AO_VIVO.revogado)).toBeTruthy()
+    expect(botao('Link da câmera do OBS').disabled).toBe(false)
+    expect(screen.queryByText(FRASE_OUTRA_CAMERA)).toBeNull()
+    expect(itemDoVideo()).toEqual(['Gere o link da câmera do OBS', 'pendente'])
+    cleanup()
+
+    // o `obs_camera` da outra câmera nunca pareado também pode ser revogado (senão a frase pediria o impossível)
+    const n = montar({ dispositivos: [CAMERA_PAREADA, OUTRA_PAREADA, { ...OBS_DA_OUTRA, usuarioAnonimoId: null, pareadoEm: null }] })
+    await esperar()
+    const nunca = linhaDe('Câmera do OBS')
+    expect(within(nunca).getAllByRole('cell')[2].textContent).toBe('Nunca pareado')
+    fireEvent.click(within(nunca).getByRole('button', { name: 'Revogar' }))
+    fireEvent.click(within(nunca).getByRole('button', { name: 'Confirmar revogação' }))
+    await esperar()
+    expect(n.revogar).toHaveBeenCalledWith(OBS_CAM)
+    expect(n.enviados()).toEqual([{ evento: 'dispositivo_mudou', dispositivoId: OBS_CAM, remetente: EU }])
+    cleanup()
+
+    // um nunca pareado da própria câmera continua sem "Revogar" (como na E3)
+    montar({ dispositivos: [CAMERA_PAREADA, { ...OBS_CAM_PAREADA, usuarioAnonimoId: null, pareadoEm: null }] })
+    await esperar()
+    expect(within(linhaDe('Câmera do OBS')).queryByRole('button', { name: 'Revogar' })).toBeNull()
   })
 })

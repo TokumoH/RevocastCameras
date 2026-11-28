@@ -4,7 +4,8 @@ import { linkDePareamento, ROTULO_DO_TIPO, situacaoDoDispositivo } from '../../d
 import type { Dispositivo, TipoDeDispositivo } from '../../domains/acesso/dispositivos'
 import type { Papel } from '../../domains/acesso/papeis'
 import type { UsuarioDaSessao } from '../../domains/acesso/sessao'
-import type { MensagemDoEstudio, SituacaoDoObs } from '../../domains/aovivo/mensagens'
+import type { MensagemDoEstudio, PresencaNoEstudio, SituacaoDoObs } from '../../domains/aovivo/mensagens'
+import type { EstadoDoVideo, SituacaoDoVideo } from '../../domains/captura/sinais'
 import { ErroDoAoVivo } from '../../domains/aovivo/portas'
 import type { CanalDoEstudio, EstadoDoCanal, FabricaDeCanais, RepositorioDoAoVivo, RespostaDoEnvio } from '../../domains/aovivo/portas'
 import { NIVEL_DE_CONTROLE } from '../../domains/obs/portas'
@@ -19,6 +20,7 @@ import { avisoDoCanal, PainelDeComandos } from '../../shared/ui/PainelDeComandos
 import type { Dependencias } from '../dependencias'
 import { useAoVivo } from '../useAoVivo'
 import type { AoVivo } from '../useAoVivo'
+import { TEXTO_DA_CAMERA } from './CameraNoAr'
 
 /** Enquanto um código vale, a lista de dispositivos é consultada de 3 em 3 s para ver o pareamento (D5). */
 export const INTERVALO_DA_CONSULTA_MS = 3000
@@ -42,7 +44,49 @@ export const TEXTO_DA_ABA_AO_VIVO = Object.freeze({
   revogado: 'Dispositivo revogado.',
   revogadoSemCanal: 'Revogado no banco. O aviso pelo canal não saiu; o corte do canal vem em até 10 minutos.',
   naoRevogou: 'Não foi possível revogar. Tente de novo.',
+  /** O `obs_camera` ativo mostra outra câmera (só pela API; PLA-005, revisão 4, N16): a aba não gera link. */
+  outraCamera: 'A câmera do OBS está ligada a outra câmera. Revogue a câmera do OBS e gere um link novo.',
+  /** `23505` de `dispositivos_um_obs_camera_ativo` numa corrida (PLA-005, D2): frase defensiva. */
+  obsCameraDuplicada: 'Já existe uma câmera do OBS ativa. Revogue-a antes.',
 } as const)
+
+/**
+ * Frases curtas da situação do vídeo na lista de dispositivos (PLA-005 D13): fixas, nenhuma vem da presença; a bateria
+ * é o único número, arredondado aqui. `aguardando_par` e `sem_video_direto` dependem do lado (`camera` ou `obs_camera`).
+ */
+export const TEXTO_DO_VIDEO = Object.freeze({
+  aguardando_toque: 'aguardando toque',
+  aguardando_episodio: 'aguardando episódio',
+  conectando: 'conectando',
+  conectado: 'vídeo chegando',
+  sem_conexao_direta: 'sem conexão direta',
+  sem_permissao: 'sem permissão da câmera',
+  sem_camera: 'sem câmera traseira',
+  inseguro: 'endereço sem https',
+  sinal_grande: 'sinal grande demais',
+  aguardandoPar: Object.freeze({ camera: 'aguardando a câmera do OBS', obs_camera: 'aguardando o celular' }),
+  semVideoDireto: Object.freeze({ camera: 'navegador sem vídeo direto (WebRTC)', obs_camera: 'Fonte do OBS sem vídeo direto (WebRTC)' }),
+  semTrava: 'tela pode apagar',
+  bateria: (porcento: number): string => `bateria ${porcento}%`,
+} satisfies Record<Exclude<EstadoDoVideo, 'aguardando_par' | 'sem_video_direto'>, string> & Record<string, unknown>)
+
+/** Os dois lados do vídeo (os tipos cuja presença leva `video`). */
+type LadoDoVideo = 'camera' | 'obs_camera'
+
+/** A frase curta de uma situação do vídeo, do lado que a publicou. */
+export function fraseDoVideo(lado: LadoDoVideo, estado: EstadoDoVideo): string {
+  if (estado === 'aguardando_par') return TEXTO_DO_VIDEO.aguardandoPar[lado]
+  if (estado === 'sem_video_direto') return TEXTO_DO_VIDEO.semVideoDireto[lado]
+  return TEXTO_DO_VIDEO[estado]
+}
+
+/** A situação inteira na lista: a frase, "tela pode apagar" (só sem trava) e a bateria, quando o aparelho informa. */
+function frasesDoVideo(lado: LadoDoVideo, v: SituacaoDoVideo): string {
+  const partes = [fraseDoVideo(lado, v.estado)]
+  if (v.telaLigada === 'sem_trava') partes.push(TEXTO_DO_VIDEO.semTrava)
+  if (v.bateria !== null) partes.push(TEXTO_DO_VIDEO.bateria(Math.round(v.bateria * 100)))
+  return partes.join(' · ')
+}
 
 /** Frases fixas da seção Episódio (Tarefa 9; D7, D12). Nenhuma vem do servidor; o título entra como texto React. */
 export const TEXTO_DO_EPISODIO = Object.freeze({
@@ -107,12 +151,22 @@ export const TEXTO_DO_CHECKLIST = Object.freeze({
   gravacao: 'Gravação em andamento',
   gravacaoParada: 'Gravação parada',
   gravacaoDesconhecida: 'Gravação: situação desconhecida',
-  camera: 'Câmera conectada',
-  cameraAusente: 'Câmera não conectada (informativo)',
+  // Vídeo (PLA-005 D13, desde a E4): os dois itens que substituem "Câmera conectada" (informativo até a E4)
+  video: 'Vídeo da câmera no OBS',
+  videoSemObsCamera: 'Gere o link da câmera do OBS',
+  videoSemCamera: 'Vídeo da câmera no OBS: pareie a câmera antes',
+  videoObsAusente: 'Vídeo da câmera no OBS: a Fonte /obs/camera não está conectada',
+  videoCelularAusente: 'Vídeo da câmera no OBS: o celular de gravação não está conectado',
+  videoDesconhecido: 'Vídeo da câmera no OBS: situação desconhecida',
+  videoPendente: (frase: string): string => `Vídeo da câmera no OBS: ${frase}`,
+  tela: 'Tela do celular ligada',
+  telaAusente: 'Tela do celular: a câmera não está conectada',
+  telaDesconhecida: 'Tela do celular: situação desconhecida',
+  /** Sem a trava de tela: as instruções do DES-001 §10.4, item 3 (as mesmas do `/camera`, TEXTO_DA_CAMERA.semTrava). */
+  telaSemTrava: `Tela do celular pode apagar. ${TEXTO_DA_CAMERA.semTrava.iphone} ${TEXTO_DA_CAMERA.semTrava.android}`,
   pronto: 'pronto',
   pendente: 'pendente',
-  info: 'informativo',
-} as const)
+})
 
 const ROTULO_DA_SITUACAO: Readonly<Record<ReturnType<typeof situacaoDoDispositivo>, string>> = {
   conectado: 'Conectado',
@@ -170,25 +224,27 @@ type Pareamento =
   | { estado: 'pareado'; tipo: TipoDeDispositivo }
 
 type Carga = { tipo: 'carregando' } | { tipo: 'pronta'; lista: Dispositivo[] } | { tipo: 'falha' }
+/** A presença de um dispositivo em `estudio` (a de membro fica de fora). */
+type PresencaDeDispositivo = Exclude<PresencaNoEstudio, { tipo: 'membro' }>
 type Aviso = { tom: 'info' | 'erro'; texto: string }
 
-/** Um item da conferência automática: pronto, pendente ou só informativo (a câmera, até a E4). */
+/** Um item da conferência automática: pronto ou pendente (desde a E4 nenhum é só informativo). */
 export interface ItemDoChecklist {
   texto: string
-  situacao: 'pronto' | 'pendente' | 'info'
+  situacao: 'pronto' | 'pendente'
 }
 
 /**
  * Os itens automáticos do checklist (D13) a partir do palco na presença de `estudio` (`undefined` = palco
- * fora; `null` = palco sem situação do OBS) e da câmera. Avançado = nível 4 (`NIVEL_DE_CONTROLE.ADVANCED`);
- * a versão só vale com o obs-websocket conectado (sem ele, "desconhecida" e a do plugin como indicação).
+ * fora; `null` = palco sem situação do OBS), seguidos dos itens do vídeo (`itensDoVideo`). Avançado = nível 4
+ * (`NIVEL_DE_CONTROLE.ADVANCED`); a versão só vale com o obs-websocket conectado (sem ele, "desconhecida" e a do
+ * plugin como indicação).
  */
-export function itensDoChecklist(palco: SituacaoDoObs | null | undefined, cameraConectada: boolean): ItemDoChecklist[] {
+export function itensDoChecklist(palco: SituacaoDoObs | null | undefined, video: readonly ItemDoChecklist[]): ItemDoChecklist[] {
   const T = TEXTO_DO_CHECKLIST
-  const camera: ItemDoChecklist = cameraConectada ? { texto: T.camera, situacao: 'pronto' } : { texto: T.cameraAusente, situacao: 'info' }
-  if (palco === undefined) return [{ texto: T.palcoAusente, situacao: 'pendente' }, { texto: T.obsDesconhecido, situacao: 'pendente' }, camera]
+  if (palco === undefined) return [{ texto: T.palcoAusente, situacao: 'pendente' }, { texto: T.obsDesconhecido, situacao: 'pendente' }, ...video]
   const conectado: ItemDoChecklist = { texto: T.palco, situacao: 'pronto' }
-  if (palco === null) return [conectado, { texto: T.obsDesconhecido, situacao: 'pendente' }, camera]
+  if (palco === null) return [conectado, { texto: T.obsDesconhecido, situacao: 'pendente' }, ...video]
   const sim = (ok: boolean, pronto: string, pendente: string): ItemDoChecklist => (ok ? { texto: pronto, situacao: 'pronto' } : { texto: pendente, situacao: 'pendente' })
   const triplo = (v: boolean | null, pronto: string, parado: string, desconhecido: string): ItemDoChecklist =>
     v === true ? { texto: pronto, situacao: 'pronto' } : { texto: v === false ? parado : desconhecido, situacao: 'pendente' }
@@ -207,18 +263,89 @@ export function itensDoChecklist(palco: SituacaoDoObs | null | undefined, camera
     versao,
     triplo(palco.replayBuffer, T.replay, T.replayParado, T.replayDesconhecido),
     triplo(palco.gravando, T.gravacao, T.gravacaoParada, T.gravacaoDesconhecida),
-    camera,
+    ...video,
   ]
+}
+
+/**
+ * O `obs_camera` que o "Link da câmera do OBS" usa (PLA-005 D2; revisão 4, N16). A câmera da aba é `existente(lista,
+ * 'camera')`; o banco tem no máximo um `obs_camera` não revogado (`dispositivos_um_obs_camera_ativo`, VER-050):
+ * - ativo e ligado a esta câmera → reaproveitado (parear de novo avisa a sessão antiga);
+ * - ativo e ligado a **outra** câmera (só pela API) → `outra_camera`: nada é gerado, e a aba pede para revogá-lo;
+ * - nenhum ativo → o revogado **desta** câmera, se houver (parear de novo limpa a revogação), senão um novo. Um
+ *   revogado de outra câmera nunca é reaproveitado: voltaria ligado à câmera errada.
+ */
+export type ObsCameraDaAba =
+  | { tipo: 'sem_camera' }
+  | { tipo: 'outra_camera'; obs: Dispositivo }
+  | { tipo: 'reaproveitar'; camera: Dispositivo; obs: Dispositivo }
+  | { tipo: 'novo'; camera: Dispositivo }
+
+export function obsCameraDaAba(lista: readonly Dispositivo[]): ObsCameraDaAba {
+  const camera = existente(lista, 'camera')
+  if (camera === null) return { tipo: 'sem_camera' }
+  const ativo = lista.find((d) => d.tipo === 'obs_camera' && d.revogadoEm === null)
+  if (ativo !== undefined) return ativo.cameraId === camera.id ? { tipo: 'reaproveitar', camera, obs: ativo } : { tipo: 'outra_camera', obs: ativo }
+  const revogado = lista.find((d) => d.tipo === 'obs_camera' && d.cameraId === camera.id)
+  return revogado === undefined ? { tipo: 'novo', camera } : { tipo: 'reaproveitar', camera, obs: revogado }
+}
+
+/** Um lado do vídeo na presença: `undefined` = fora (sem a sessão atual); `null` = presente sem a situação do vídeo. */
+export type LadoNaPresenca = SituacaoDoVideo | null | undefined
+
+/** Situações do `obs_camera` que já são a causa (o par existe, e o problema é a conexão ou a Fonte). */
+const CAUSAS_DO_OBS: ReadonlySet<EstadoDoVideo> = new Set(['sem_conexao_direta', 'sinal_grande', 'sem_video_direto'])
+/** Situações da câmera que não explicam nada sozinhas (o celular está tentando ou esperando o outro lado). */
+const ESPERAS_DA_CAMERA: ReadonlySet<EstadoDoVideo> = new Set(['conectado', 'conectando', 'aguardando_par'])
+
+/**
+ * Os dois itens do vídeo no checklist (PLA-005 D13; DES-001 §10.4, item 3), a partir do `obs_camera` da aba e da
+ * presença da câmera e do `obs_camera` atuais:
+ * - **"Vídeo da câmera no OBS"**: pronto só com o `obs_camera` (ligado a esta câmera e pareado) em `conectado`;
+ *   pendente com o que fazer (parear a câmera, gerar o link, revogar o da outra câmera) ou com a causa: a do
+ *   `obs_camera` quando ela já é a causa; senão a da câmera, quando a câmera não está só esperando; senão o lado
+ *   ausente; senão a situação do `obs_camera`. `sem_conexao_direta` leva a instrução de rede do `/camera` (D6).
+ * - **"Tela do celular ligada"**: pronto com a trava (`travada`); `sem_trava` → pendente com as instruções; câmera
+ *   fora ou sem situação → pendente.
+ */
+export function itensDoVideo(vinculo: ObsCameraDaAba, camera: LadoNaPresenca, obs: LadoNaPresenca): ItemDoChecklist[] {
+  const T = TEXTO_DO_CHECKLIST
+  const pendente = (texto: string): ItemDoChecklist => ({ texto, situacao: 'pendente' })
+  const causa = (lado: LadoDoVideo, estado: EstadoDoVideo): ItemDoChecklist =>
+    pendente(estado === 'sem_conexao_direta' ? T.videoPendente(TEXTO_DA_CAMERA.sem_conexao_direta) : T.videoPendente(fraseDoVideo(lado, estado)))
+  const video = ((): ItemDoChecklist => {
+    if (vinculo.tipo === 'sem_camera') return pendente(T.videoSemCamera)
+    if (vinculo.tipo === 'outra_camera') return pendente(TEXTO_DA_ABA_AO_VIVO.outraCamera)
+    if (vinculo.tipo === 'novo' || vinculo.obs.revogadoEm !== null || vinculo.obs.pareadoEm === null) return pendente(T.videoSemObsCamera)
+    if (obs === undefined) return pendente(T.videoObsAusente)
+    if (obs !== null && obs.estado === 'conectado') return { texto: T.video, situacao: 'pronto' }
+    if (obs !== null && CAUSAS_DO_OBS.has(obs.estado)) return causa('obs_camera', obs.estado)
+    if (camera !== undefined && camera !== null && !ESPERAS_DA_CAMERA.has(camera.estado)) return causa('camera', camera.estado)
+    if (camera === undefined) return pendente(T.videoCelularAusente)
+    return obs === null ? pendente(T.videoDesconhecido) : causa('obs_camera', obs.estado)
+  })()
+  const tela: ItemDoChecklist =
+    camera === undefined
+      ? pendente(T.telaAusente)
+      : camera === null || camera.telaLigada === null
+        ? pendente(T.telaDesconhecida)
+        : camera.telaLigada === 'sem_trava'
+          ? pendente(T.telaSemTrava)
+          : { texto: T.tela, situacao: 'pronto' }
+  return [video, tela]
 }
 
 function pedeReavaliacao(erro: unknown): boolean {
   return erro instanceof ErroDoAoVivo && (erro.motivo === 'negado' || erro.motivo === 'sessao_expirada')
 }
 
-/** O dispositivo de um tipo que o painel reaproveita: o primeiro não revogado; senão, o primeiro (parear de novo limpa a revogação). */
-function existente(lista: readonly Dispositivo[], tipo: TipoDeDispositivo, preferir?: (d: Dispositivo) => boolean): Dispositivo | null {
+/**
+ * O dispositivo de um tipo que o painel reaproveita: o primeiro não revogado; senão, o primeiro (parear de novo limpa a
+ * revogação). Usado para a câmera e o palco; o `obs_camera` tem regra própria (`obsCameraDaAba`).
+ */
+function existente(lista: readonly Dispositivo[], tipo: TipoDeDispositivo): Dispositivo | null {
   const doTipo = lista.filter((d) => d.tipo === tipo)
-  return (preferir && doTipo.find(preferir)) ?? doTipo.find((d) => d.revogadoEm === null) ?? doTipo[0] ?? null
+  return doTipo.find((d) => d.revogadoEm === null) ?? doTipo[0] ?? null
 }
 
 /** `m:ss` arredondando para cima (2:00 no começo, 0:01 no último segundo). */
@@ -247,6 +374,12 @@ function minutosESegundos(ms: number): string {
  * a janela de perda dele (um `reavaliar()` por renovação de token); abaixo dos dispositivos vêm as seções
  * Episódio (`SecaoDoEpisodio`), Checklist (`ChecklistDoAoVivo`) e Comandos (`PainelDeComandos`, só com
  * episódio ativo). Um `dispositivo_mudou` de outro painel recarrega a lista (VER-042, Riscos).
+ *
+ * Parte 3 (PLA-005, Tarefa 6; D13, D2; revisão 4, N16): a câmera e o `obs_camera` conectados mostram na lista a
+ * situação do vídeo da presença (frases fixas, `TEXTO_DO_VIDEO`); no checklist, "Câmera conectada" (informativo) dá
+ * lugar a "Vídeo da câmera no OBS" e "Tela do celular ligada" (`itensDoVideo`). O "Link da câmera do OBS" reaproveita
+ * só o `obs_camera` desta câmera (`obsCameraDaAba`): com o ativo ligado a outra câmera, nada é gerado e a aba pede para
+ * revogá-lo (a linha dele ganha "Revogar" mesmo nunca pareada); o `23505` de uma corrida vira a frase defensiva da D2.
  */
 export function AbaAoVivo({
   repo,
@@ -285,8 +418,11 @@ export function AbaAoVivo({
   const [aviso, setAviso] = useState<Aviso | null>(null)
   const [confirmando, setConfirmando] = useState<string | null>(null)
   const [ocupado, setOcupado] = useState(false)
-  /** Presença de `estudio` dos dispositivos: chave `<sessão> <dispositivo>` → situação do OBS declarada (só o palco tem). */
-  const [presentes, setPresentes] = useState<{ alca: CanalDoEstudio | null; chaves: ReadonlyMap<string, SituacaoDoObs | null> }>({ alca: null, chaves: new Map() })
+  /**
+   * Presença de `estudio` dos dispositivos: chave `<sessão> <dispositivo>` → a presença declarada (o tipo, a situação do
+   * OBS, só do palco, e a do vídeo, só da câmera e do `obs_camera`; já validadas pelo adaptador, `lerPresenca`).
+   */
+  const [presentes, setPresentes] = useState<{ alca: CanalDoEstudio | null; chaves: ReadonlyMap<string, PresencaDeDispositivo> }>({ alca: null, chaves: new Map() })
   const av = useAoVivo({ repo, preparacao, canais, usuario, papel, reavaliar, aoVoltarAVer, estudio: { estudio, estado: estadoDoEstudio }, aoPerderCanal })
   /** Uma ação no episódio em curso (do clique até a nova consulta terminar): os comandos ficam desabilitados (rodada 1, I1). */
   const [episodioOcupado, setEpisodioOcupado] = useState(false)
@@ -342,8 +478,8 @@ export function AbaAoVivo({
   useEffect(() => {
     if (estudio === null) return
     return estudio.aoMudarPresenca((lista) => {
-      const chaves = new Map<string, SituacaoDoObs | null>()
-      for (const p of lista) if (p.presenca.tipo !== 'membro') chaves.set(`${p.usuario} ${p.presenca.dispositivoId}`, p.presenca.obs)
+      const chaves = new Map<string, PresencaDeDispositivo>()
+      for (const p of lista) if (p.presenca.tipo !== 'membro') chaves.set(`${p.usuario} ${p.presenca.dispositivoId}`, p.presenca)
       setPresentes({ alca: estudio, chaves })
     })
   }, [estudio])
@@ -411,20 +547,20 @@ export function AbaAoVivo({
       const lista = await repo.listarDispositivos()
       if (!atual()) return
       setCarga({ tipo: 'pronta', lista })
-      const camera = existente(lista, 'camera')
-      if (tipo === 'obs_camera' && camera === null) {
+      const vinculo = obsCameraDaAba(lista)
+      if (tipo === 'obs_camera' && (vinculo.tipo === 'sem_camera' || vinculo.tipo === 'outra_camera')) {
         setPareamento({ estado: 'nenhum' })
-        setAviso({ tom: 'erro', texto: TEXTO_DA_ABA_AO_VIVO.pareieACamera })
+        setAviso({ tom: 'erro', texto: vinculo.tipo === 'sem_camera' ? TEXTO_DA_ABA_AO_VIVO.pareieACamera : TEXTO_DA_ABA_AO_VIVO.outraCamera })
         return
       }
-      // a câmera do OBS reaproveitada é, de preferência, a que já exibe esta câmera
+      // a câmera do OBS reaproveitada é só a que exibe esta câmera (`obsCameraDaAba`; revisão 4, N16)
       const reaproveitado =
-        tipo === 'camera' ? camera : tipo === 'obs_palco' ? existente(lista, 'obs_palco') : existente(lista, 'obs_camera', (d) => d.cameraId === camera?.id && d.revogadoEm === null)
+        tipo === 'camera' ? existente(lista, 'camera') : tipo === 'obs_palco' ? existente(lista, 'obs_palco') : vinculo.tipo === 'reaproveitar' ? vinculo.obs : null
       const r = await repo.criarCodigo({
         tipo,
         rotulo: reaproveitado?.rotulo ?? ROTULO_NOVO[tipo],
         dispositivoId: reaproveitado?.id ?? null,
-        cameraId: tipo === 'obs_camera' && reaproveitado === null ? (camera?.id ?? null) : null,
+        cameraId: tipo === 'obs_camera' && reaproveitado === null && vinculo.tipo === 'novo' ? vinculo.camera.id : null,
       })
       if (!atual()) return
       const link = linkDePareamento(origem, tipo, r.codigo)
@@ -438,7 +574,10 @@ export function AbaAoVivo({
     } catch (erro) {
       if (!atual()) return
       setPareamento({ estado: 'nenhum' })
-      setAviso({ tom: 'erro', texto: TEXTO_DA_ABA_AO_VIVO.naoGerou })
+      // corrida (D2): outro painel criou um `obs_camera` entre a leitura e o pedido; a lista é relida para mostrá-lo
+      const duplicada = tipo === 'obs_camera' && erro instanceof ErroDoAoVivo && erro.motivo === 'duplicado'
+      setAviso({ tom: 'erro', texto: duplicada ? TEXTO_DA_ABA_AO_VIVO.obsCameraDuplicada : TEXTO_DA_ABA_AO_VIVO.naoGerou })
+      if (duplicada) void carregar()
       if (pedeReavaliacao(erro)) reavaliarAtual.current()
     }
   }
@@ -485,14 +624,26 @@ export function AbaAoVivo({
     () => new Set(chaves === null ? [] : lista.filter((d) => chaves.has(`${d.usuarioAnonimoId} ${d.id}`)).map((d) => d.id)),
     [lista, chaves],
   )
-  const temCamera = lista.some((d) => d.tipo === 'camera')
+  const vinculo = obsCameraDaAba(lista)
+  /** Por que o link da câmera do OBS não pode ser gerado agora (sem câmera; `obs_camera` ativo de outra câmera). */
+  const bloqueioDoLink = vinculo.tipo === 'sem_camera' ? TEXTO_DA_ABA_AO_VIVO.pareieACamera : vinculo.tipo === 'outra_camera' ? TEXTO_DA_ABA_AO_VIVO.outraCamera : null
   const idDaDica = `${prefixo}-dica`
   const idDoLink = `${prefixo}-link`
   const gerando = pareamento.estado === 'gerando'
   // O palco e a câmera do checklist são os da lista com a sessão atual na presença (a mesma regra de "Conectado").
   const palcoConectado = lista.find((d) => d.tipo === 'obs_palco' && conectados.has(d.id))
-  const situacaoDoPalco = palcoConectado === undefined || chaves === null ? undefined : (chaves.get(`${palcoConectado.usuarioAnonimoId} ${palcoConectado.id}`) ?? null)
-  const cameraConectada = lista.some((d) => d.tipo === 'camera' && conectados.has(d.id))
+  const situacaoDoPalco = palcoConectado === undefined || chaves === null ? undefined : (chaves.get(`${palcoConectado.usuarioAnonimoId} ${palcoConectado.id}`)?.obs ?? null)
+  /**
+   * A situação do vídeo de um dispositivo com a sessão atual na presença: `undefined` fora ou revogado (a sessão revogada
+   * pode seguir na presença até o corte, e não fala mais pelo aparelho; revisão da Tarefa 6, N1); `null` sem situação (ou
+   * com a presença de outro tipo, que não fala por ele). Só a câmera e o `obs_camera` levam `video` (`lerPresenca`).
+   */
+  const videoDe = (d: Dispositivo | null): LadoNaPresenca => {
+    if (d === null || d.revogadoEm !== null || chaves === null || !conectados.has(d.id)) return undefined
+    const p = chaves.get(`${d.usuarioAnonimoId} ${d.id}`)
+    return p !== undefined && p.tipo === d.tipo && p.video !== undefined ? p.video : null
+  }
+  const itensDoVideoNaAba = itensDoVideo(vinculo, videoDe(vinculo.tipo === 'sem_camera' ? null : existente(lista, 'camera')), videoDe(vinculo.tipo === 'reaproveitar' ? vinculo.obs : null))
 
   return (
     <div className="ao-vivo">
@@ -535,15 +686,19 @@ export function AbaAoVivo({
                   <tbody>
                     {lista.map((d) => {
                       const situacao = situacaoDoDispositivo(d, conectados)
+                      const video = videoDe(d)
+                      // o `obs_camera` de outra câmera pode ser revogado mesmo nunca pareado: é o que a frase da aba pede
+                      const podeRevogar = situacao !== 'revogado' && (situacao !== 'nunca_pareado' || (vinculo.tipo === 'outra_camera' && vinculo.obs.id === d.id))
                       return (
                         <tr key={d.id}>
                           <td>{ROTULO_DO_TIPO[d.tipo]}</td>
                           <td className="dispositivos__rotulo">{d.rotulo}</td>
                           <td>
                             <span className={`dispositivos__situacao dispositivos__situacao--${situacao}`}>{ROTULO_DA_SITUACAO[situacao]}</span>
+                            {video != null && d.tipo !== 'obs_palco' && <span className="situacao-do-video">{frasesDoVideo(d.tipo, video)}</span>}
                           </td>
                           <td>
-                            {situacao === 'revogado' || situacao === 'nunca_pareado' ? null : confirmando === d.id ? (
+                            {!podeRevogar ? null : confirmando === d.id ? (
                               <div className="tabela__acoes">
                                 <button type="button" className="botao botao--pequeno" disabled={ocupado || gerando} onClick={() => void revogar(d)}>
                                   Confirmar revogação
@@ -578,15 +733,15 @@ export function AbaAoVivo({
               <button
                 type="button"
                 className="botao botao--ciano"
-                disabled={gerando || ocupado || !temCamera}
-                aria-describedby={temCamera ? undefined : idDaDica}
+                disabled={gerando || ocupado || bloqueioDoLink !== null}
+                aria-describedby={bloqueioDoLink === null ? undefined : idDaDica}
                 onClick={() => void gerar('obs_camera')}
               >
                 {ACAO_DO_TIPO.obs_camera}
               </button>
-              {!temCamera && (
+              {bloqueioDoLink !== null && (
                 <span id={idDaDica} className="dispositivos__dica">
-                  {TEXTO_DA_ABA_AO_VIVO.pareieACamera}
+                  {bloqueioDoLink}
                 </span>
               )}
             </div>
@@ -630,7 +785,7 @@ export function AbaAoVivo({
         ocupado={episodioOcupado}
         definirOcupado={setEpisodioOcupado}
       />
-      <ChecklistDoAoVivo itens={itensDoChecklist(situacaoDoPalco, cameraConectada)} />
+      <ChecklistDoAoVivo itens={itensDoChecklist(situacaoDoPalco, itensDoVideoNaAba)} />
       {av.episodio !== null && <SecaoDosComandos av={av} bloqueado={episodioOcupado} />}
     </div>
   )
@@ -897,7 +1052,7 @@ function SecaoDoEpisodio({
 /** Checklist (D13; DES-001 §10.4): a lista fixa e a conferência automática, com o sinal e o nome da situação para o leitor de tela. */
 function ChecklistDoAoVivo({ itens }: { itens: readonly ItemDoChecklist[] }): ReactNode {
   const prefixo = useId()
-  const sinal = { pronto: '✓', pendente: '!', info: 'i' } as const
+  const sinal = { pronto: '✓', pendente: '!' } as const
   return (
     <section className="checklist" aria-labelledby={`${prefixo}-titulo`}>
       <h2 id={`${prefixo}-titulo`}>{TEXTO_DO_CHECKLIST.titulo}</h2>
